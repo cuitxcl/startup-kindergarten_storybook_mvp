@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kindleaf Storybook | 幼儿园个性化绘本平台</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#home" aria-label="Kindleaf Storybook 首页">
+      <span class="brand-mark">K</span>
+      <span>
+        <strong>Kindleaf Storybook</strong>
+        <small>幼儿园个性化绘本平台</small>
+      </span>
+    </a>
+    <nav class="site-nav" aria-label="首页导航">
+      <a href="dashboard.html">Dashboard</a>
+      <a href="#product">产品能力</a>
+      <a href="#workflow">使用流程</a>
+      <a href="#families">家园共育</a>
+      <a href="#gallery">案例展示</a>
+      <a href="#demo">预约演示</a>
+    </nav>
+    <button class="secondary nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav">菜单</button>
+    <div class="header-actions">
+      <a class="secondary" href="#gallery">看案例</a>
+      <a class="secondary" href="dashboard.html">进入控制台</a>
+      <a class="primary" href="#demo">进入演示</a>
+    </div>
+  </header>
+
+  <nav class="mobile-nav" id="mobile-nav" aria-label="移动端导航">
+    <a href="dashboard.html">Dashboard 控制台</a>
+    <a href="#product">产品能力</a>
+    <a href="#workflow">使用流程</a>
+    <a href="#families">家园共育</a>
+    <a href="#gallery">案例展示</a>
+    <a href="#demo">预约演示</a>
+  </nav>
+
+  <main id="home">
+    <section class="hero-section" aria-labelledby="hero-title">
+      <div class="hero-media" role="img" aria-label="幼儿园课堂里，老师把孩子成长时刻整理成绘本页面。"></div>
+      <div class="hero-overlay">
+        <p class="eyebrow">Imagine · Create · Learn</p>
+        <h1 id="hero-title">把幼儿园里的真实成长时刻，变成孩子愿意反复进入的故事世界。</h1>
+        <p class="hero-copy">老师先沉淀普通绘本母本，再按孩子档案派生定制绘本；课堂带读、家庭复述、园所内容资产在同一条路径里完成。</p>
+        <div class="hero-actions">
+          <a class="primary" href="dashboard.html">进入 Dashboard 控制台</a>
+          <a class="secondary hero-secondary" href="#demo">开始一个故事</a>
+          <a class="secondary hero-secondary" href="#workflow">了解流程</a>
+        </div>
+        <div class="hero-proof" aria-label="产品特点">
+          <span>3-6 岁幼儿适用</span>
+          <span>母本与定制双轨</span>
+          <span>导出前隐私确认</span>
+        </div>
+      </div>
+      <div class="hero-panel" aria-label="绘本生成结果预览">
+        <div class="panel-top">
+          <span class="status-pill">本周母本</span>
+          <span class="status-pill muted">12 个班级复用</span>
+        </div>
+        <h2>《勇敢去幼儿园》</h2>
+        <p>先生成班级共读版本，再替换主角、同伴和老师寄语，让每个孩子读到像自己的故事。</p>
+        <div class="storybook-spread">
+          <article>
+            <span>Cover</span>
+            <strong>果果今天敢和妈妈挥手了</strong>
+          </article>
+          <article>
+            <span>Page 4</span>
+            <strong>老师和小熊陪她走进教室</strong>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="适用场景">
+      <span>班级共读</span>
+      <span>个体支持</span>
+      <span>家长沟通</span>
+      <span>园本内容沉淀</span>
+    </section>
+
+    <section class="section product-section" id="product">
+      <div class="section-head">
+        <p class="eyebrow">What It Does</p>
+        <h2>不是一次性生成工具，而是一套幼儿园内容生产系统。</h2>
+        <p>首页结构参考 Kreebo 的清晰长页叙事，但所有模块都围绕幼儿园老师的真实工作流重写。</p>
+      </div>
+      <div class="feature-grid">
+        <article class="feature-card feature-card-accent">
+          <span class="card-index">01</span>
+          <h3>普通绘本母本</h3>
+          <p>先把整班可共读的主题故事沉淀下来，稳定页面节奏、角色关系和教学目标。</p>
+        </article>
+        <article class="feature-card">
+          <span class="card-index">02</span>
+          <h3>孩子档案派生</h3>
+          <p>根据年龄、性格、兴趣和最近挑战，把主角与关键情节替换为孩子能认出的内容。</p>
+        </article>
+        <article class="feature-card">
+          <span class="card-index">03</span>
+          <h3>家长沟通页</h3>
+          <p>同一份绘本自动整理离园复述建议，避免老师重复写零散反馈。</p>
+        </article>
+        <article class="feature-card">
+          <span class="card-index">04</span>
+          <h3>园所共享库</h3>
+          <p>母本、派生版本和导出记录统一留存，逐步形成园所自己的主题内容库。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section workflow-section" id="workflow">
+      <div class="section-head compact">
+        <p class="eyebrow">How It Works</p>
+        <h2>三步完成从课堂主题到家庭交付。</h2>
+      </div>
+      <div class="workflow-board">
+        <article class="workflow-step active">
+          <span>1</span>
+          <h3>选择母本</h3>
+          <p>从入园适应、分享合作、午睡常规等主题开始，先确认整班共读版本。</p>
+        </article>
+        <article class="workflow-step">
+          <span>2</span>
+          <h3>替换孩子画像</h3>
+          <p>输入昵称、兴趣、最近挑战和老师寄语，系统派生孩子定制版本。</p>
+        </article>
+        <article class="workflow-step">
+          <span>3</span>
+          <h3>导出与复述</h3>
+          <p>输出课堂版、打印版和家庭沟通版，共享前确认隐私范围。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split-section" id="families">
+      <article class="audience-card family-card">
+        <p class="eyebrow">For Families</p>
+        <h2>让家长看见孩子今天具体哪里进步了。</h2>
+        <p>不是泛泛的成长反馈，而是把孩子在故事里的关键动作、老师的支持方式和家庭可延续的话术一起交给家长。</p>
+        <ul>
+          <li>离园复述更具体</li>
+          <li>减少说教式沟通</li>
+          <li>课堂和家庭语言一致</li>
+        </ul>
+      </article>
+      <article class="audience-card school-card">
+        <p class="eyebrow">For Schools</p>
+        <h2>让园所拥有自己的主题绘本资产库。</h2>
+        <p>每次生成都不是一次性消耗，而是为教研、复盘和跨班级复制经验持续积累结构化内容。</p>
+        <ul>
+          <li>沉淀园本主题内容</li>
+          <li>跨班级快速复用</li>
+          <li>统一老师表达口径</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section safety-section" id="safety">
+      <div class="safety-copy">
+        <p class="eyebrow">Safety & Privacy</p>
+        <h2>儿童信息默认可控，共享前必须确认。</h2>
+        <p>孩子昵称、家庭描述、个体挑战和照片都不应默认公开。首页把隐私状态放在主路径里，而不是藏在设置页。</p>
+      </div>
+      <div class="safety-list">
+        <article>
+          <strong>园内可见</strong>
+          <span>母本默认只在园所内部复用。</span>
+        </article>
+        <article>
+          <strong>家庭版脱敏</strong>
+          <span>只保留复述所需内容，不公开完整儿童资料。</span>
+        </article>
+        <article>
+          <strong>导出确认</strong>
+          <span>打印、分享、共享库都需要老师确认范围。</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="section gallery-section" id="gallery">
+      <div class="section-head">
+        <p class="eyebrow">Gallery</p>
+        <h2>展示老师会反复使用的真实结果，而不是抽象功能点。</h2>
+      </div>
+      <div class="gallery-grid">
+        <article class="gallery-card large-card">
+          <span class="status-pill">入园适应</span>
+          <h3>《勇敢去幼儿园》</h3>
+          <p>针对分离焦虑，强调“敢走进教室”这种可见的小成功。</p>
+        </article>
+        <article class="gallery-card">
+          <span class="status-pill">社交合作</span>
+          <h3>《森林分享日记》</h3>
+          <p>先做整班共读，再替换成孩子与同伴的分享时刻。</p>
+        </article>
+        <article class="gallery-card">
+          <span class="status-pill">生活常规</span>
+          <h3>《午睡小勇士》</h3>
+          <p>让孩子看到“安静躺下”也可以被认可。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section demo-section" id="demo">
+      <div class="demo-copy">
+        <p class="eyebrow">Start From One Story</p>
+        <h2>从一个课堂主题开始，先生成母本，再派生孩子版本。</h2>
+        <p>当前首页表单是演示入口：提交后会展示明确的成功状态和下一步建议。</p>
+      </div>
+      <form class="demo-form" id="demo-form" novalidate>
+        <label>
+          园所或班级
+          <input name="school" placeholder="例如：彩虹幼儿园小一班">
+          <span class="field-error" data-error-for="school"></span>
+        </label>
+        <label>
+          试用主题
+          <select name="theme">
+            <option>勇敢去幼儿园</option>
+            <option>森林分享日记</option>
+            <option>午睡小勇士</option>
+            <option>排队也有魔法</option>
+          </select>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" name="privacy">
+          <span>我理解演示内容不应包含儿童完整姓名、照片或家庭隐私。</span>
+        </label>
+        <span class="field-error" data-error-for="privacy"></span>
+        <button class="primary" type="submit">预约首页演示</button>
+        <p class="form-note" id="form-note">提交后会生成一条演示请求状态。</p>
+      </form>
+    </section>
+  </main>
+
+  <div class="toast is-hidden" id="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Architect"
+  short_description: "Plan frontend structure, components, state, and integration"
+  default_prompt: "Use $frontend-architect to plan the frontend architecture for this feature."

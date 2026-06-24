@@ -1,0 +1,4 @@
+interface:
+  display_name: "UX Designer"
+  short_description: "Design user flows, screens, states, and interaction quality"
+  default_prompt: "Use $ux-designer to design the user experience for this feature."

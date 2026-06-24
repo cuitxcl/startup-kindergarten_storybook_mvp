@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Reviewer"
+  short_description: "Review frontend UI quality, behavior, and accessibility"
+  default_prompt: "Use $frontend-reviewer to review this frontend implementation before shipping."
