@@ -2,55 +2,43 @@ use sea_orm::entity::prelude::*;
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
-#[sea_orm(table_name = "character_profiles")]
+#[sea_orm(table_name = "parent_character_profiles")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub child_id: Uuid,
+    pub parent_id: Uuid,
+    pub child_id: Option<Uuid>,
     pub version: i32,
+    pub role: String,
     pub name: String,
-    pub nickname: Option<String>,
-    pub age_group: String,
-    pub gender_expression: Option<String>,
-    pub hair: String,
+    pub hair: Option<String>,
     pub skin_tone: Option<String>,
     pub face_shape: Option<String>,
-    pub body_proportion: String,
+    pub body_proportion: Option<String>,
     pub outfit_top: Option<String>,
     pub outfit_bottom: Option<String>,
-    pub shoe: Option<String>,
     pub accessory: Option<String>,
-    pub signature_colors: Value,
-    pub interest_elements: Value,
     pub visual_must_keep: Value,
     pub negative_rules: Value,
-    pub source_photo_id: Option<Uuid>,
     pub active_reference_image_id: Option<Uuid>,
     pub status: String,
-    pub created_by: Uuid,
     pub created_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
+        belongs_to = "super::parents::Entity",
+        from = "Column::ParentId",
+        to = "super::parents::Column::Id"
+    )]
+    Parent,
+    #[sea_orm(
         belongs_to = "super::children::Entity",
         from = "Column::ChildId",
         to = "super::children::Column::Id"
     )]
     Child,
-    #[sea_orm(
-        belongs_to = "super::teachers::Entity",
-        from = "Column::CreatedBy",
-        to = "super::teachers::Column::Id"
-    )]
-    Teacher,
-    #[sea_orm(
-        belongs_to = "super::child_photos::Entity",
-        from = "Column::SourcePhotoId",
-        to = "super::child_photos::Column::Id"
-    )]
-    SourcePhoto,
     #[sea_orm(
         belongs_to = "super::reference_images::Entity",
         from = "Column::ActiveReferenceImageId",
@@ -61,25 +49,17 @@ pub enum Relation {
     ReferenceImages,
     #[sea_orm(has_many = "super::storybook_roles::Entity")]
     StorybookRoles,
-    #[sea_orm(has_many = "super::image_generation_tasks::Entity")]
-    ImageGenerationTasks,
+}
+
+impl Related<super::parents::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Parent.def()
+    }
 }
 
 impl Related<super::children::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Child.def()
-    }
-}
-
-impl Related<super::teachers::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Teacher.def()
-    }
-}
-
-impl Related<super::child_photos::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::SourcePhoto.def()
     }
 }
 
@@ -92,12 +72,6 @@ impl Related<super::reference_images::Entity> for Entity {
 impl Related<super::storybook_roles::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::StorybookRoles.def()
-    }
-}
-
-impl Related<super::image_generation_tasks::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ImageGenerationTasks.def()
     }
 }
 

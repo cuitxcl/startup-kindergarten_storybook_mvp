@@ -202,6 +202,12 @@ impl MigrationTrait for Migration {
                     .col(string_null(Storybooks::TeachingGoal))
                     .col(string_null(Storybooks::StyleId))
                     .col(string_null(Storybooks::ReadingAgeGroup))
+                    .col(json_object_not_null(Storybooks::GenerationConfigJson))
+                    .col(string_default(Storybooks::StoryStatus, "draft"))
+                    .col(string_default(
+                        Storybooks::IllustrationStatus,
+                        "not_started",
+                    ))
                     .col(string_default(Storybooks::Status, "draft"))
                     .col(string_default(Storybooks::ExportStatus, "not_exported"))
                     .col(string_default(Storybooks::ShareStatus, "private"))
@@ -273,10 +279,17 @@ impl MigrationTrait for Migration {
                     .col(string_default(StorybookPages::PageRole, "story"))
                     .col(string_null(StorybookPages::PageTitle))
                     .col(text(StorybookPages::Body))
+                    .col(text_null(StorybookPages::PromptText))
                     .col(text_null(StorybookPages::TeacherTip))
                     .col(json_null(StorybookPages::SceneSpecJson))
+                    .col(string_default(StorybookPages::SceneSpecStatus, "missing"))
                     .col(json_null(StorybookPages::PageRolesJson))
                     .col(uuid_null(StorybookPages::ImageAssetId))
+                    .col(uuid_null(StorybookPages::CurrentImageTaskId))
+                    .col(string_default(
+                        StorybookPages::IllustrationStatus,
+                        "not_started",
+                    ))
                     .col(boolean_default(StorybookPages::IsLocked, false))
                     .col(string_default(StorybookPages::ContentSource, "generated"))
                     .col(timestamp_with_time_zone(StorybookPages::CreatedAt))
@@ -316,35 +329,63 @@ impl MigrationTrait for Migration {
                     .table(ImageGenerationTasks::Table)
                     .if_not_exists()
                     .col(uuid_pk(ImageGenerationTasks::Id))
+                    .col(string_null(ImageGenerationTasks::IdempotencyKey))
                     .col(string(ImageGenerationTasks::TaskType))
                     .col(uuid_null(ImageGenerationTasks::ParentTaskId))
+                    .col(uuid_null(ImageGenerationTasks::RetryOfTaskId))
                     .col(uuid_null(ImageGenerationTasks::StorybookId))
                     .col(uuid_null(ImageGenerationTasks::PageId))
-                    .col(uuid(ImageGenerationTasks::CharacterProfileId))
-                    .col(integer(ImageGenerationTasks::CharacterProfileVersion))
+                    .col(uuid_null(ImageGenerationTasks::CharacterProfileId))
+                    .col(integer_null(ImageGenerationTasks::CharacterProfileVersion))
                     .col(uuid_null(ImageGenerationTasks::ReferenceImageId))
                     .col(string(ImageGenerationTasks::StyleId))
                     .col(json_null(ImageGenerationTasks::SceneSpecJson))
+                    .col(json_object_not_null(
+                        ImageGenerationTasks::InputSnapshotJson,
+                    ))
                     .col(string(ImageGenerationTasks::PromptTemplateVersion))
                     .col(string_null(ImageGenerationTasks::ProviderName))
                     .col(string_null(ImageGenerationTasks::ModelName))
+                    .col(string_null(ImageGenerationTasks::ProviderRequestId))
                     .col(string_default(ImageGenerationTasks::Status, "queued"))
                     .col(integer_default(ImageGenerationTasks::RetryCount, 0))
+                    .col(integer_default(ImageGenerationTasks::MaxRetries, 2))
                     .col(string_null(ImageGenerationTasks::FailureReason))
                     .col(text_null(ImageGenerationTasks::RawPromptText))
+                    .col(timestamp_with_time_zone(ImageGenerationTasks::QueuedAt))
+                    .col(timestamp_with_time_zone_null(
+                        ImageGenerationTasks::StartedAt,
+                    ))
                     .col(timestamp_with_time_zone(ImageGenerationTasks::CreatedAt))
                     .col(timestamp_with_time_zone(ImageGenerationTasks::UpdatedAt))
-                    .col(timestamp_with_time_zone_null(ImageGenerationTasks::CompletedAt))
+                    .col(timestamp_with_time_zone_null(
+                        ImageGenerationTasks::CompletedAt,
+                    ))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_image_generation_tasks_parent")
-                            .from(ImageGenerationTasks::Table, ImageGenerationTasks::ParentTaskId)
+                            .from(
+                                ImageGenerationTasks::Table,
+                                ImageGenerationTasks::ParentTaskId,
+                            )
+                            .to(ImageGenerationTasks::Table, ImageGenerationTasks::Id),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_image_generation_tasks_retry_of")
+                            .from(
+                                ImageGenerationTasks::Table,
+                                ImageGenerationTasks::RetryOfTaskId,
+                            )
                             .to(ImageGenerationTasks::Table, ImageGenerationTasks::Id),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_image_generation_tasks_storybook")
-                            .from(ImageGenerationTasks::Table, ImageGenerationTasks::StorybookId)
+                            .from(
+                                ImageGenerationTasks::Table,
+                                ImageGenerationTasks::StorybookId,
+                            )
                             .to(Storybooks::Table, Storybooks::Id),
                     )
                     .foreign_key(
@@ -362,6 +403,17 @@ impl MigrationTrait for Migration {
                             )
                             .to(CharacterProfiles::Table, CharacterProfiles::Id),
                     )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("uidx_image_generation_tasks_idempotency_key")
+                    .table(ImageGenerationTasks::Table)
+                    .col(ImageGenerationTasks::IdempotencyKey)
+                    .unique()
                     .to_owned(),
             )
             .await?;
@@ -402,12 +454,68 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
+                    .table(ImageGenerationOutputs::Table)
+                    .if_not_exists()
+                    .col(uuid_pk(ImageGenerationOutputs::Id))
+                    .col(uuid(ImageGenerationOutputs::TaskId))
+                    .col(uuid(ImageGenerationOutputs::ImageAssetId))
+                    .col(integer_default(ImageGenerationOutputs::CandidateIndex, 0))
+                    .col(boolean_default(ImageGenerationOutputs::IsSelected, false))
+                    .col(string_default(
+                        ImageGenerationOutputs::ReviewStatus,
+                        "pending",
+                    ))
+                    .col(text_null(ImageGenerationOutputs::QualityNotes))
+                    .col(timestamp_with_time_zone(ImageGenerationOutputs::CreatedAt))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_image_generation_outputs_task")
+                            .from(
+                                ImageGenerationOutputs::Table,
+                                ImageGenerationOutputs::TaskId,
+                            )
+                            .to(ImageGenerationTasks::Table, ImageGenerationTasks::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_image_generation_outputs_image_asset")
+                            .from(
+                                ImageGenerationOutputs::Table,
+                                ImageGenerationOutputs::ImageAssetId,
+                            )
+                            .to(ImageAssets::Table, ImageAssets::Id),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("uidx_image_generation_outputs_task_candidate")
+                    .table(ImageGenerationOutputs::Table)
+                    .col(ImageGenerationOutputs::TaskId)
+                    .col(ImageGenerationOutputs::CandidateIndex)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
                     .table(GenerationCostLogs::Table)
                     .if_not_exists()
                     .col(uuid_pk(GenerationCostLogs::Id))
                     .col(uuid(GenerationCostLogs::TaskId))
+                    .col(uuid_null(GenerationCostLogs::TeacherId))
+                    .col(uuid_null(GenerationCostLogs::StorybookId))
+                    .col(uuid_null(GenerationCostLogs::PageId))
                     .col(string(GenerationCostLogs::ProviderName))
                     .col(string(GenerationCostLogs::ModelName))
+                    .col(decimal_null(GenerationCostLogs::InputUnits))
+                    .col(decimal_null(GenerationCostLogs::OutputUnits))
                     .col(decimal(GenerationCostLogs::InputCost))
                     .col(decimal(GenerationCostLogs::OutputCost))
                     .col(decimal(GenerationCostLogs::TotalCost))
@@ -420,6 +528,24 @@ impl MigrationTrait for Migration {
                             .from(GenerationCostLogs::Table, GenerationCostLogs::TaskId)
                             .to(ImageGenerationTasks::Table, ImageGenerationTasks::Id)
                             .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_generation_cost_logs_teacher")
+                            .from(GenerationCostLogs::Table, GenerationCostLogs::TeacherId)
+                            .to(Teachers::Table, Teachers::Id),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_generation_cost_logs_storybook")
+                            .from(GenerationCostLogs::Table, GenerationCostLogs::StorybookId)
+                            .to(Storybooks::Table, Storybooks::Id),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_generation_cost_logs_page")
+                            .from(GenerationCostLogs::Table, GenerationCostLogs::PageId)
+                            .to(StorybookPages::Table, StorybookPages::Id),
                     )
                     .to_owned(),
             )
@@ -441,6 +567,13 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .drop_table(Table::drop().table(GenerationCostLogs::Table).to_owned())
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(ImageGenerationOutputs::Table)
+                    .to_owned(),
+            )
             .await?;
         manager
             .drop_table(Table::drop().table(ImageGenerationTasks::Table).to_owned())
@@ -548,6 +681,14 @@ fn json_not_null(column: impl IntoIden) -> ColumnDef {
         .to_owned()
 }
 
+fn json_object_not_null(column: impl IntoIden) -> ColumnDef {
+    ColumnDef::new(column)
+        .json_binary()
+        .not_null()
+        .default(Expr::cust("'{}'::jsonb"))
+        .to_owned()
+}
+
 fn json_null(column: impl IntoIden) -> ColumnDef {
     ColumnDef::new(column).json_binary().null().to_owned()
 }
@@ -572,6 +713,10 @@ fn decimal(column: impl IntoIden) -> ColumnDef {
         .decimal_len(12, 4)
         .not_null()
         .to_owned()
+}
+
+fn decimal_null(column: impl IntoIden) -> ColumnDef {
+    ColumnDef::new(column).decimal_len(12, 4).null().to_owned()
 }
 
 #[derive(DeriveIden)]
@@ -643,6 +788,9 @@ enum Storybooks {
     TeachingGoal,
     StyleId,
     ReadingAgeGroup,
+    GenerationConfigJson,
+    StoryStatus,
+    IllustrationStatus,
     Status,
     ExportStatus,
     ShareStatus,
@@ -663,10 +811,14 @@ enum StorybookPages {
     PageRole,
     PageTitle,
     Body,
+    PromptText,
     TeacherTip,
     SceneSpecJson,
+    SceneSpecStatus,
     PageRolesJson,
     ImageAssetId,
+    CurrentImageTaskId,
+    IllustrationStatus,
     IsLocked,
     ContentSource,
     CreatedAt,
@@ -706,8 +858,10 @@ enum CharacterProfiles {
 enum ImageGenerationTasks {
     Table,
     Id,
+    IdempotencyKey,
     TaskType,
     ParentTaskId,
+    RetryOfTaskId,
     StorybookId,
     PageId,
     CharacterProfileId,
@@ -715,16 +869,34 @@ enum ImageGenerationTasks {
     ReferenceImageId,
     StyleId,
     SceneSpecJson,
+    InputSnapshotJson,
     PromptTemplateVersion,
     ProviderName,
     ModelName,
+    ProviderRequestId,
     Status,
     RetryCount,
+    MaxRetries,
     FailureReason,
     RawPromptText,
+    QueuedAt,
+    StartedAt,
     CreatedAt,
     UpdatedAt,
     CompletedAt,
+}
+
+#[derive(DeriveIden)]
+enum ImageGenerationOutputs {
+    Table,
+    Id,
+    TaskId,
+    ImageAssetId,
+    CandidateIndex,
+    IsSelected,
+    ReviewStatus,
+    QualityNotes,
+    CreatedAt,
 }
 
 #[derive(DeriveIden)]
@@ -747,8 +919,13 @@ enum GenerationCostLogs {
     Table,
     Id,
     TaskId,
+    TeacherId,
+    StorybookId,
+    PageId,
     ProviderName,
     ModelName,
+    InputUnits,
+    OutputUnits,
     InputCost,
     OutputCost,
     TotalCost,

@@ -10,11 +10,15 @@ pub struct Model {
     pub page_number: i32,
     pub page_role: String,
     pub page_title: Option<String>,
-    pub body: String,
+    pub body_text: String,
+    pub prompt_text: Option<String>,
     pub teacher_tip: Option<String>,
     pub scene_spec_json: Option<Value>,
-    pub page_roles_json: Option<Value>,
-    pub image_asset_id: Option<Uuid>,
+    pub scene_spec_status: String,
+    pub page_visual_subjects_json: Option<Value>,
+    pub current_image_asset_id: Option<Uuid>,
+    pub current_image_task_id: Option<Uuid>,
+    pub illustration_status: String,
     pub is_locked: bool,
     pub content_source: String,
     pub created_at: DateTimeWithTimeZone,
@@ -31,12 +35,22 @@ pub enum Relation {
     Storybook,
     #[sea_orm(
         belongs_to = "super::image_assets::Entity",
-        from = "Column::ImageAssetId",
+        from = "Column::CurrentImageAssetId",
         to = "super::image_assets::Column::Id"
     )]
-    ImageAsset,
+    CurrentImageAsset,
+    #[sea_orm(
+        belongs_to = "super::image_generation_tasks::Entity",
+        from = "Column::CurrentImageTaskId",
+        to = "super::image_generation_tasks::Column::Id"
+    )]
+    CurrentImageTask,
     #[sea_orm(has_many = "super::image_generation_tasks::Entity")]
     ImageGenerationTasks,
+    #[sea_orm(has_many = "super::storybook_page_visual_subjects::Entity")]
+    StorybookPageVisualSubjects,
+    #[sea_orm(has_many = "super::generation_cost_logs::Entity")]
+    GenerationCostLogs,
 }
 
 impl Related<super::storybooks::Entity> for Entity {
@@ -47,13 +61,25 @@ impl Related<super::storybooks::Entity> for Entity {
 
 impl Related<super::image_assets::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::ImageAsset.def()
+        Relation::CurrentImageAsset.def()
     }
 }
 
 impl Related<super::image_generation_tasks::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ImageGenerationTasks.def()
+    }
+}
+
+impl Related<super::storybook_page_visual_subjects::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::StorybookPageVisualSubjects.def()
+    }
+}
+
+impl Related<super::generation_cost_logs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::GenerationCostLogs.def()
     }
 }
 
