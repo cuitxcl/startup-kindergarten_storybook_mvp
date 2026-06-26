@@ -1,6 +1,7 @@
 const navToggle = document.querySelector(".nav-toggle");
 const mobileNav = document.querySelector("#mobile-nav");
 const navLinks = Array.from(document.querySelectorAll(".site-nav a, .mobile-nav a"));
+const sectionNavLinks = navLinks.filter((link) => link.getAttribute("href").startsWith("#"));
 const demoForm = document.querySelector("#demo-form");
 const toast = document.querySelector("#toast");
 const formNote = document.querySelector("#form-note");
@@ -38,7 +39,7 @@ navLinks.forEach((link) => {
   });
 });
 
-const sections = navLinks
+const sections = sectionNavLinks
   .map((link) => document.querySelector(link.getAttribute("href")))
   .filter(Boolean);
 

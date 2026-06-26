@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>控制台 | Kindleaf Storybook</title>
+  <link rel="stylesheet" href="dashboard.css?v=5">
+</head>
+<body class="ops-body">
+  <aside class="ops-sidebar" aria-label="控制台导航">
+    <a class="ops-brand" href="index.html" aria-label="返回 Kindleaf Storybook 首页">
+      <span class="brand-mark">K</span>
+      <span><strong>Kindleaf</strong><small>老师控制台</small></span>
+    </a>
+
+    <nav class="ops-nav">
+      <div><span>总览</span><a class="active" href="#today" data-page-link="today">今日工作台</a></div>
+      <div><span>内容生产</span><a href="#queue" data-page-link="queue">待办队列</a><a href="#studio" data-page-link="studio">绘本工作台</a><a href="#assets" data-page-link="assets">母本与绘本</a></div>
+      <div><span>班级资料</span><a href="#children" data-page-link="children">孩子档案</a><a href="#privacy" data-page-link="privacy">共享与隐私</a></div>
+    </nav>
+
+    <div class="ops-sidebar-note">
+      <strong>当前班级</strong>
+      <span>小一班 · 28 位孩子</span>
+    </div>
+  </aside>
+
+  <main class="ops-shell">
+    <section class="ops-page active" id="today" data-page="today">
+      <header class="ops-topbar">
+        <div>
+          <p class="eyebrow">Teacher Console</p>
+          <h1>今日工作台</h1>
+          <p>先处理待交付内容，再继续派生下一本定制绘本。</p>
+        </div>
+        <div class="ops-topbar-actions">
+          <a class="secondary" href="index.html">返回首页</a>
+          <button class="primary" type="button" data-toast="已打开新内容流程：先选择普通绘本母本。">新建绘本</button>
+        </div>
+      </header>
+
+      <section class="ops-alert" aria-label="今日重点提醒">
+        <div>
+          <span class="output-badge warning">需要处理</span>
+          <strong>3 本绘本还没有完成导出确认</strong>
+          <p>其中 1 本家庭版包含孩子挑战描述，分享前需要再次确认可见范围。</p>
+        </div>
+        <button class="secondary" type="button" data-toast="已筛选出所有待导出绘本。">查看待导出</button>
+      </section>
+
+      <section class="ops-metrics" aria-label="关键指标">
+        <article><span class="output-badge warning">待交付</span><strong>3</strong><p>打印版 / 家庭版待确认</p></article>
+        <article><span class="output-badge done">可复用母本</span><strong>12</strong><p>本周新增 2 个主题</p></article>
+        <article><span class="output-badge">孩子档案</span><strong>28</strong><p>3 份资料待补齐</p></article>
+        <article><span class="output-badge privacy">额度</span><strong>86</strong><p>本月剩余生成次数</p></article>
+      </section>
+    </section>
+
+    <section class="ops-page" id="queue" data-page="queue">
+      <header class="ops-topbar">
+        <div>
+          <p class="eyebrow">Priority Queue</p>
+          <h1>待办队列</h1>
+          <p>集中处理待导出、待派生和待补档任务。</p>
+        </div>
+        <div class="segmented-control" aria-label="队列筛选">
+          <button class="active" type="button" data-filter="all">全部</button>
+          <button type="button" data-filter="export">待导出</button>
+          <button type="button" data-filter="profile">待补档</button>
+        </div>
+      </header>
+
+      <section class="ops-panel work-queue">
+        <div class="work-list">
+          <article class="work-row" data-kind="export">
+            <div class="work-status high">1</div>
+            <div class="work-copy">
+              <span class="status-pill">待导出</span>
+              <h3>果果的《勇敢去幼儿园》</h3>
+              <p>4 岁 · 入园分离焦虑 · 家庭版需要隐私确认</p>
+            </div>
+            <div class="work-meta"><strong>今天 16:30 前</strong><span>离园沟通</span></div>
+            <div class="work-actions"><button class="primary" type="button" data-toast="已确认导出：家庭版将只保留昵称、故事和老师寄语。">确认导出</button><button class="secondary" type="button" data-toast="已打开绘本预览。">预览</button></div>
+          </article>
+          <article class="work-row" data-kind="story">
+            <div class="work-status">2</div>
+            <div class="work-copy">
+              <span class="status-pill muted">待派生</span>
+              <h3>《森林分享日记》普通绘本母本</h3>
+              <p>可替换主角，派生给安安的社交合作版本</p>
+            </div>
+            <div class="work-meta"><strong>本周教研</strong><span>母本制作</span></div>
+            <div class="work-actions"><button class="primary" type="button" data-toast="已进入派生流程：请先选择孩子档案。">派生</button><button class="secondary" type="button" data-toast="已保存为本周教研素材。">留档</button></div>
+          </article>
+          <article class="work-row" data-kind="profile">
+            <div class="work-status">3</div>
+            <div class="work-copy">
+              <span class="status-pill muted">待补档</span>
+              <h3>小雨的孩子档案</h3>
+              <p>缺少兴趣信息，生成前建议补齐</p>
+            </div>
+            <div class="work-meta"><strong>生成前</strong><span>孩子档案</span></div>
+            <div class="work-actions"><button class="primary" type="button" data-toast="已定位到小雨档案。">补充</button><button class="secondary" type="button" data-toast="已暂缓该任务。">稍后</button></div>
+          </article>
+        </div>
+      </section>
+    </section>
+
+    <section class="ops-page" id="studio" data-page="studio">
+      <header class="ops-topbar">
+        <div>
+          <p class="eyebrow">Story Studio</p>
+          <h1>绘本工作台</h1>
+          <p>逐页编辑读本文案，维护角色信息，并在不重生成整本的前提下完成替换、重绘、导出和分享。</p>
+        </div>
+        <div class="ops-topbar-actions">
+          <button class="secondary" type="button" data-toast="已保存当前绘本文案和页面锁定状态。">保存</button>
+          <button class="secondary" type="button" data-toast="正在生成电子翻页版分享链接。">分享</button>
+          <button class="primary" type="button" data-toast="正在准备 PDF 与打印版导出。">导出</button>
+        </div>
+      </header>
+
+      <section class="storybook-editor" aria-label="读本编辑工作台">
+        <aside class="ops-panel page-strip" aria-label="页面缩略图">
+          <div class="ops-section-head compact"><div><p class="eyebrow">Pages</p><h2>页面</h2></div><span class="output-badge">6 页</span></div>
+          <button class="page-thumb active" type="button" data-page-title="封面" data-page-copy="果果今天敢和妈妈挥手了" data-page-note="封面标题可直接修改，导出时会同步到 PDF 与电子版。">
+            <span>Cover</span>
+            <strong>果果今天敢和妈妈挥手了</strong>
+          </button>
+          <button class="page-thumb" type="button" data-page-title="第 1 页" data-page-copy="早晨，果果牵着妈妈的手来到幼儿园门口。她有一点想妈妈，也有一点想看看教室里的新玩具。" data-page-note="正文适合 4 岁儿童朗读，语句需要短而具体。">
+            <span>Page 1</span>
+            <strong>来到幼儿园门口</strong>
+          </button>
+          <button class="page-thumb locked" type="button" data-page-title="第 2 页" data-page-copy="老师蹲下来和果果打招呼：我们先把小书包放好，再一起去看看小熊积木。" data-page-note="本页已锁定，重绘或重新生成文案时会默认跳过。">
+            <span>Page 2</span>
+            <strong>老师和小熊等她</strong>
+          </button>
+          <button class="page-thumb" type="button" data-page-title="第 3 页" data-page-copy="果果深吸一口气，轻轻和妈妈挥挥手。妈妈也笑着说：放学见。" data-page-note="本页是情绪转折页，建议保留正向鼓励。">
+            <span>Page 3</span>
+            <strong>勇敢挥手</strong>
+          </button>
+          <button class="page-thumb" type="button" data-page-title="第 4 页" data-page-copy="在教室里，果果把红色积木递给安安。两个小朋友一起搭了一座高高的桥。" data-page-note="可在这里替换同伴角色，优先复用现有插图结构。">
+            <span>Page 4</span>
+            <strong>和同伴一起搭桥</strong>
+          </button>
+          <button class="page-thumb" type="button" data-page-title="互动页" data-page-copy="今天果果做到了哪一件勇敢的小事？你也可以和家人说一说。" data-page-note="结尾互动提问用于家庭共读，不应包含压力式评价。">
+            <span>Ask</span>
+            <strong>和家人说一说</strong>
+          </button>
+          <button class="secondary full-button" type="button" data-toast="已在当前页后新增一页草稿。">增加页面</button>
+        </aside>
+
+        <section class="ops-panel page-canvas" aria-label="当前页预览">
+          <div class="ops-section-head compact">
+            <div><p class="eyebrow">Preview</p><h2 id="studio-page-title">封面</h2></div>
+            <span class="output-badge warning">待导出</span>
+          </div>
+          <div class="storybook-page-preview">
+            <div class="storybook-illustration" aria-hidden="true">
+              <span>统一卡通画风</span>
+              <strong>果果 · 妈妈 · 李老师</strong>
+            </div>
+            <article>
+              <h3 id="studio-preview-title">果果今天敢和妈妈挥手了</h3>
+              <p id="studio-preview-copy">封面标题可直接修改，导出时会同步到 PDF 与电子版。</p>
+            </article>
+          </div>
+          <div class="studio-inline-actions">
+            <button class="secondary" type="button" data-toast="当前页已锁定，后续重绘和文案重生成会跳过。">锁定页面</button>
+            <button class="secondary" type="button" data-toast="已删除当前页草稿。">删除页面</button>
+            <button class="primary" type="button" data-toast="正在为当前页重新生成文案。">单页重写</button>
+          </div>
+        </section>
+
+        <aside class="ops-panel edit-drawer" aria-label="编辑与生成设置">
+          <div class="editor-block">
+            <div class="ops-section-head compact"><div><p class="eyebrow">Text</p><h2>文字编辑</h2></div></div>
+            <label>
+              页面标题
+              <input id="studio-title-input" value="果果今天敢和妈妈挥手了">
+            </label>
+            <label>
+              页面正文
+              <textarea id="studio-copy-input" rows="6">封面标题可直接修改，导出时会同步到 PDF 与电子版。</textarea>
+            </label>
+          </div>
+
+          <div class="editor-block">
+            <div class="ops-section-head compact"><div><p class="eyebrow">Roles</p><h2>角色信息</h2></div><button class="secondary compact-button" type="button" data-toast="已打开角色替换面板。">替换</button></div>
+            <div class="role-list">
+              <article><span class="avatar">果</span><div><strong>主角 · 果果</strong><p>4 岁，代表色红色，分离焦虑支持</p></div></article>
+              <article><span class="avatar">妈</span><div><strong>配角 · 妈妈</strong><p>家庭场景角色，使用家长卡通形象</p></div></article>
+              <article><span class="avatar">师</span><div><strong>配角 · 李老师</strong><p>班级固定角色，可跨绘本复用</p></div></article>
+            </div>
+          </div>
+
+          <div class="editor-block">
+            <div class="ops-section-head compact"><div><p class="eyebrow">Image</p><h2>插图重绘</h2></div></div>
+            <div class="choice-grid" aria-label="画风选择">
+              <button class="active" type="button">柔和彩铅</button>
+              <button type="button">扁平贴纸</button>
+              <button type="button">水彩绘本</button>
+            </div>
+            <button class="primary full-button" type="button" data-toast="已提交当前页重绘任务，将复用本书角色设定。">单页重绘</button>
+          </div>
+
+          <div class="editor-block">
+            <div class="ops-section-head compact"><div><p class="eyebrow">Tasks</p><h2>任务状态</h2></div></div>
+            <div class="task-list">
+              <article><span class="output-badge done">完成</span><strong>6 页正文已生成</strong></article>
+              <article><span class="output-badge done">完成</span><strong>角色设定已保存</strong></article>
+              <article><span class="output-badge warning">待确认</span><strong>家庭版分享范围</strong></article>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </section>
+
+    <section class="ops-page" id="assets" data-page="assets">
+      <header class="ops-topbar">
+        <div>
+          <p class="eyebrow">Assets</p>
+          <h1>母本与绘本</h1>
+          <p>管理普通绘本母本、孩子定制绘本和复用状态。</p>
+        </div>
+        <button class="primary" type="button" data-toast="已进入母本创建流程。">新建母本</button>
+      </header>
+
+      <section class="ops-panel">
+        <div class="asset-table" role="table" aria-label="母本与绘本列表">
+          <div role="row" class="asset-head"><span>名称</span><span>类型</span><span>状态</span><span>复用</span><span>操作</span></div>
+          <div role="row"><strong>勇敢去幼儿园</strong><span>普通绘本母本</span><span>可派生</span><span>12 班</span><button class="secondary compact-button" type="button" data-toast="已打开《勇敢去幼儿园》。">打开</button></div>
+          <div role="row"><strong>果果的勇敢去幼儿园</strong><span>定制绘本</span><span>待导出</span><span>1 次</span><button class="secondary compact-button" type="button" data-toast="已打开果果的定制绘本。">打开</button></div>
+          <div role="row"><strong>森林分享日记</strong><span>普通绘本母本</span><span>已保存</span><span>8 班</span><button class="secondary compact-button" type="button" data-toast="已打开《森林分享日记》。">打开</button></div>
+        </div>
+      </section>
+    </section>
+
+    <section class="ops-page" id="children" data-page="children">
+      <header class="ops-topbar">
+        <div>
+          <p class="eyebrow">Children</p>
+          <h1>孩子档案</h1>
+          <p>维护生成绘本所需的年龄、兴趣、挑战和家庭沟通信息。</p>
+        </div>
+        <button class="primary" type="button" data-toast="新增档案时只保存生成所需信息。">新增档案</button>
+      </header>
+
+      <section class="ops-panel">
+        <div class="profile-table" role="table" aria-label="孩子档案列表">
+          <div role="row" class="asset-head"><span>孩子</span><span>年龄</span><span>最近挑战</span><span>兴趣</span><span>状态</span><span>操作</span></div>
+          <div role="row"><strong><span class="avatar">果</span>果果</strong><span>4 岁</span><span>入园分离焦虑</span><span>草莓蛋糕</span><span>可生成</span><button class="secondary compact-button" type="button" data-toast="已定位到果果档案。">编辑</button></div>
+          <div role="row"><strong><span class="avatar">安</span>安安</strong><span>5 岁</span><span>不愿分享玩具</span><span>恐龙</span><span>可生成</span><button class="secondary compact-button" type="button" data-toast="已定位到安安档案。">编辑</button></div>
+          <div role="row"><strong><span class="avatar">雨</span>小雨</strong><span>4 岁</span><span>资料待补齐</span><span>缺少兴趣</span><span>待补档</span><button class="secondary compact-button" type="button" data-toast="已定位到小雨档案。">补充</button></div>
+        </div>
+      </section>
+    </section>
+
+    <section class="ops-page" id="privacy" data-page="privacy">
+      <header class="ops-topbar">
+        <div>
+          <p class="eyebrow">Safety & Privacy</p>
+          <h1>共享与隐私</h1>
+          <p>导出、家庭版共享和园内复用都需要明确可见范围。</p>
+        </div>
+        <button class="primary" type="button" data-toast="已打开共享范围检查。">检查共享范围</button>
+      </header>
+
+      <section class="ops-panel">
+        <div class="privacy-list">
+          <article><span class="output-badge done">园内可见</span><div><strong>母本库</strong><p>普通绘本母本可园内复用，不包含具体家庭信息。</p></div><button class="secondary compact-button" type="button" data-toast="已查看母本库权限。">查看</button></article>
+          <article><span class="output-badge warning">需确认</span><div><strong>家庭版</strong><p>定制绘本分享前检查孩子昵称、挑战描述和老师寄语。</p></div><button class="secondary compact-button" type="button" data-toast="已进入家庭版确认。">确认</button></article>
+          <article><span class="output-badge privacy">额度数据</span><div><strong>86 次</strong><p>预览和导出不消耗额度，正式生成会记录到园所额度。</p></div><button class="secondary compact-button" type="button" data-toast="已打开额度记录。">记录</button></article>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast is-hidden" id="toast" role="status"></div>
+  <script src="dashboard.js?v=6"></script>
+</body>
+</html>

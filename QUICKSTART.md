@@ -4,19 +4,19 @@
 
 在 Finder 或浏览器中打开：
 
-- `kindergarten_storybook_mvp/index.html`
+- `kindergarten_storybook_mvp/frontend/index.html`
 
 ## 用本地静态服务打开
 
 在仓库根目录执行：
 
 ```sh
-python3 -m http.server 8080
+python3 -m http.server 8081 --directory frontend
 ```
 
 然后访问：
 
-- `http://localhost:8080/kindergarten_storybook_mvp/`
+- `http://localhost:8081/`
 
 ## 当前版本包含什么
 
