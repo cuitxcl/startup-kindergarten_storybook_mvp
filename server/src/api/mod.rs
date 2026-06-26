@@ -2,6 +2,7 @@ pub mod children;
 pub mod content;
 pub mod organization;
 pub mod storybooks;
+pub mod visuals;
 
 use axum::{
     Json,
@@ -20,6 +21,7 @@ pub struct AppState {
     pub content: content::ContentStore,
     pub organization: organization::OrganizationStore,
     pub storybooks: storybooks::StorybookStore,
+    pub visuals: visuals::VisualConsistencyStore,
 }
 
 impl AppState {
@@ -30,6 +32,7 @@ impl AppState {
             content: content::ContentStore::demo(),
             organization,
             storybooks: storybooks::StorybookStore::demo(),
+            visuals: visuals::VisualConsistencyStore::demo(),
         }
     }
 }
@@ -40,6 +43,7 @@ pub fn router(state: SharedState) -> axum::Router {
         .nest("/api", children::router())
         .nest("/api", content::router())
         .nest("/api", storybooks::router())
+        .nest("/api", visuals::router())
         .with_state(state)
 }
 
