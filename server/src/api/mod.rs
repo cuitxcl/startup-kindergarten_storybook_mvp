@@ -1,3 +1,4 @@
+pub mod children;
 pub mod organization;
 
 use axum::{
@@ -13,13 +14,16 @@ pub type SharedState = Arc<RwLock<AppState>>;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
+    pub children: children::ChildrenStore,
     pub organization: organization::OrganizationStore,
 }
 
 impl AppState {
     pub fn demo() -> Self {
+        let organization = organization::OrganizationStore::demo();
         Self {
-            organization: organization::OrganizationStore::demo(),
+            children: children::ChildrenStore::demo(&organization),
+            organization,
         }
     }
 }
@@ -27,6 +31,7 @@ impl AppState {
 pub fn router(state: SharedState) -> axum::Router {
     axum::Router::new()
         .nest("/api", organization::router())
+        .nest("/api", children::router())
         .with_state(state)
 }
 
