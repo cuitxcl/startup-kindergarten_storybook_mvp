@@ -1945,6 +1945,7 @@ dependencies = [
 name = "kindergarten-storybook-server"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "chrono",
  "loco-rs",
  "migration",
@@ -1952,6 +1953,8 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
+ "tokio",
+ "tower 0.5.3",
  "uuid",
 ]
 
