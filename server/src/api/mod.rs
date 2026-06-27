@@ -1,6 +1,7 @@
 pub mod children;
 pub mod content;
 pub mod dashboard;
+pub mod delivery;
 pub mod images;
 pub mod organization;
 pub mod storybooks;
@@ -21,6 +22,7 @@ pub type SharedState = Arc<RwLock<AppState>>;
 pub struct AppState {
     pub children: children::ChildrenStore,
     pub content: content::ContentStore,
+    pub delivery: delivery::DeliveryStore,
     pub images: images::ImageGenerationStore,
     pub organization: organization::OrganizationStore,
     pub storybooks: storybooks::StorybookStore,
@@ -33,6 +35,7 @@ impl AppState {
         Self {
             children: children::ChildrenStore::demo(&organization),
             content: content::ContentStore::demo(),
+            delivery: delivery::DeliveryStore::demo(),
             images: images::ImageGenerationStore::demo(),
             organization,
             storybooks: storybooks::StorybookStore::demo(),
@@ -47,6 +50,7 @@ pub fn router(state: SharedState) -> axum::Router {
         .nest("/api", dashboard::router())
         .nest("/api", children::router())
         .nest("/api", content::router())
+        .nest("/api", delivery::router())
         .nest("/api", images::router())
         .nest("/api", storybooks::router())
         .nest("/api", visuals::router())
