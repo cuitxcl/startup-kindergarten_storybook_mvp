@@ -465,6 +465,45 @@ async fn list_content_item_activity(
             });
         }
     }
+    for export in state
+        .delivery
+        .exports
+        .values()
+        .filter(|export| export.storybook_id == storybook.id)
+    {
+        items.push(ActivityItem {
+            id: format!("export:{}", export.id),
+            activity_type: "export_updated".to_string(),
+            occurred_at: export.updated_at,
+            summary: format!("{} 导出任务：{}", export.export_type, export.status),
+            metadata_json: json!({
+                "export_id": export.id,
+                "export_type": export.export_type,
+                "status": export.status,
+                "asset_id": export.asset_id
+            }),
+        });
+    }
+    for share in state
+        .delivery
+        .share_links
+        .values()
+        .filter(|share| share.storybook_id == storybook.id)
+    {
+        items.push(ActivityItem {
+            id: format!("share_link:{}", share.id),
+            activity_type: "share_link_updated".to_string(),
+            occurred_at: share.updated_at,
+            summary: format!("{} 分享链接：{}", share.share_scope, share.status),
+            metadata_json: json!({
+                "share_link_id": share.id,
+                "share_scope": share.share_scope,
+                "status": share.status,
+                "anonymize_child_name": share.anonymize_child_name,
+                "anonymize_parent_info": share.anonymize_parent_info
+            }),
+        });
+    }
     items.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
     Ok(Json(paginate(items, Some(1), Some(50))))
 }
@@ -675,6 +714,31 @@ mod tests {
     async fn returns_content_item_activity_stream() {
         let app = test_app();
         let storybook_id = create_storybook(app.clone()).await;
+        let (status, export) = json_request(
+            app.clone(),
+            "POST",
+            format!("/api/storybooks/{storybook_id}/exports"),
+            json!({
+                "export_type": "pdf",
+                "include_teacher_tips": false,
+                "page_size": "A4",
+                "quality": "print"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{export}");
+        let (status, share) = json_request(
+            app.clone(),
+            "POST",
+            format!("/api/storybooks/{storybook_id}/share-links"),
+            json!({
+                "share_scope": "family",
+                "anonymize_child_name": false,
+                "anonymize_parent_info": true
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{share}");
 
         let (status, body) =
             get_json(app, &format!("/api/content-items/{storybook_id}/activity")).await;
@@ -689,6 +753,16 @@ mod tests {
             items
                 .iter()
                 .any(|item| item["activity_type"] == "page_updated")
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item["activity_type"] == "export_updated")
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item["activity_type"] == "share_link_updated")
         );
     }
 }
