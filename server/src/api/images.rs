@@ -30,8 +30,14 @@ pub fn router() -> Router<SharedState> {
             get(list_review_events),
         )
         .route("/image-tasks/{task_id}/retry", post(retry_image_task))
-        .route("/image-outputs/{output_id}/select", post(select_image_output))
-        .route("/image-outputs/{output_id}/review", post(review_image_output))
+        .route(
+            "/image-outputs/{output_id}/select",
+            post(select_image_output),
+        )
+        .route(
+            "/image-outputs/{output_id}/review",
+            post(review_image_output),
+        )
         .route("/admin/generation-costs", get(list_generation_costs))
 }
 
@@ -428,7 +434,9 @@ async fn create_page_image_task(
     let (storybook_id, page) = page_snapshot(&state, page_id)?;
     validate_storybook_ready_for_images(&state, storybook_id)?;
     if page.scene_spec_status != "ready" {
-        return Err(ApiError::state_conflict("页面 scene_spec_status 必须为 ready"));
+        return Err(ApiError::state_conflict(
+            "页面 scene_spec_status 必须为 ready",
+        ));
     }
     let scene_spec_json = payload
         .override_scene_spec_json
@@ -588,7 +596,9 @@ async fn retry_image_task(
         }),
     )?;
     let detail = run_seedream_task(&mut state, retry_task)?;
-    if let (Some(storybook_id), Some(page_id)) = (detail.task.storybook_id, detail.task.storybook_page_id) {
+    if let (Some(storybook_id), Some(page_id)) =
+        (detail.task.storybook_id, detail.task.storybook_page_id)
+    {
         mark_page_running_or_ready(&mut state, storybook_id, page_id, &detail);
     }
     Ok(Json(detail))
@@ -646,8 +656,18 @@ async fn review_image_output(
     Json(payload): Json<ReviewImageOutputRequest>,
 ) -> Result<Json<ImageGenerationOutputRecord>, ApiError> {
     validate_review_action(&payload.review_action)?;
-    if payload.review_action == "reject" && payload.reason_code.as_deref().unwrap_or("").trim().is_empty() {
-        return Err(ApiError::validation("reason_code", "拒绝候选图必须提供 reason_code"));
+    if payload.review_action == "reject"
+        && payload
+            .reason_code
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+    {
+        return Err(ApiError::validation(
+            "reason_code",
+            "拒绝候选图必须提供 reason_code",
+        ));
     }
     let mut state = state.write().expect("state lock poisoned");
     let output = state
@@ -692,7 +712,11 @@ async fn list_generation_costs(
                 .as_deref()
                 .is_none_or(|provider| cost.provider_name == provider)
         })
-        .filter(|cost| query.storybook_id.is_none_or(|id| cost.storybook_id == Some(id)))
+        .filter(|cost| {
+            query
+                .storybook_id
+                .is_none_or(|id| cost.storybook_id == Some(id))
+        })
         .cloned()
         .collect::<Vec<_>>();
     items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -713,7 +737,10 @@ fn build_task(
 ) -> Result<ImageGenerationTaskRecord, ApiError> {
     validate_task_type(task_type)?;
     if task_type == "page_image_generation" && storybook_page_id.is_none() {
-        return Err(ApiError::validation("storybook_page_id", "单页图片任务必须绑定页面"));
+        return Err(ApiError::validation(
+            "storybook_page_id",
+            "单页图片任务必须绑定页面",
+        ));
     }
     let now = now();
     Ok(ImageGenerationTaskRecord {
@@ -730,7 +757,10 @@ fn build_task(
         character_profile_version: None,
         reference_image_id: None,
         style_id: required_trimmed(style_id, "style_id")?,
-        prompt_template_version: required_trimmed(prompt_template_version, "prompt_template_version")?,
+        prompt_template_version: required_trimmed(
+            prompt_template_version,
+            "prompt_template_version",
+        )?,
         scene_spec_json,
         input_snapshot_json,
         raw_prompt_text: None,
@@ -740,7 +770,13 @@ fn build_task(
         status: "queued".to_string(),
         failure_reason: None,
         retry_count: retry_of_task_id
-            .and_then(|task_id| state.images.tasks.get(&task_id).map(|task| task.retry_count + 1))
+            .and_then(|task_id| {
+                state
+                    .images
+                    .tasks
+                    .get(&task_id)
+                    .map(|task| task.retry_count + 1)
+            })
             .unwrap_or(0),
         max_retries: 2,
         queued_at: now,
@@ -872,7 +908,11 @@ fn mark_page_running_or_ready(
             } else {
                 "needs_review".to_string()
             };
-            if let Some(output) = detail.outputs.iter().find(|output| output.output.is_selected) {
+            if let Some(output) = detail
+                .outputs
+                .iter()
+                .find(|output| output.output.is_selected)
+            {
                 page.current_image_asset_id = Some(output.image_asset.id);
             }
             page.updated_at = now();
@@ -892,9 +932,15 @@ fn update_storybook_illustration_status(state: &mut crate::api::AppState, storyb
         .collect::<Vec<_>>();
     let status = if statuses.iter().all(|status| status == "ready") {
         "ready"
-    } else if statuses.iter().any(|status| status == "needs_review" || status == "failed") {
+    } else if statuses
+        .iter()
+        .any(|status| status == "needs_review" || status == "failed")
+    {
         "partial_failed"
-    } else if statuses.iter().any(|status| status == "queued" || status == "running") {
+    } else if statuses
+        .iter()
+        .any(|status| status == "queued" || status == "running")
+    {
         "running"
     } else {
         "not_started"
@@ -1366,7 +1412,11 @@ mod tests {
         assert_eq!(retry["retry_count"], 1);
         assert_eq!(retry["retry_of_task_id"], task_id);
 
-        let (status, costs) = get_json(app, "/api/admin/generation-costs?provider_name=fake_seedream").await;
+        let (status, costs) = get_json(
+            app,
+            "/api/admin/generation-costs?provider_name=fake_seedream",
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(costs["total"], 2);
     }

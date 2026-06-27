@@ -1,5 +1,6 @@
 pub mod children;
 pub mod content;
+pub mod dashboard;
 pub mod images;
 pub mod organization;
 pub mod storybooks;
@@ -43,6 +44,7 @@ impl AppState {
 pub fn router(state: SharedState) -> axum::Router {
     axum::Router::new()
         .nest("/api", organization::router())
+        .nest("/api", dashboard::router())
         .nest("/api", children::router())
         .nest("/api", content::router())
         .nest("/api", images::router())
