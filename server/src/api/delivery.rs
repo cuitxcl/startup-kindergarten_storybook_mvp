@@ -243,6 +243,7 @@ async fn create_share_link(
     Json(payload): Json<CreateShareLinkRequest>,
 ) -> Result<Json<StorybookShareLinkRecord>, ApiError> {
     validate_share_scope(&payload.share_scope)?;
+    reject_direct_platform_public_share(&payload.share_scope)?;
     validate_share_privacy(
         &payload.share_scope,
         payload.anonymize_child_name.unwrap_or(false),
@@ -312,6 +313,7 @@ async fn update_share_link(
     validate_optional(payload.status.as_deref(), &["active", "disabled"], "status")?;
     if let Some(scope) = payload.share_scope.as_deref() {
         validate_share_scope(scope)?;
+        reject_direct_platform_public_share(scope)?;
     }
     let mut state = state.write().expect("state lock poisoned");
     let storybook_id = state
@@ -383,7 +385,7 @@ async fn list_shared_library(
         .storybooks
         .storybooks
         .values()
-        .filter(|storybook| shared_library_visible(storybook, school_id))
+        .filter(|storybook| shared_library_visible(&state, storybook, school_id))
         .filter(|storybook| {
             query
                 .share_scope
@@ -432,7 +434,7 @@ async fn clone_shared_storybook(
         .get(&storybook_id)
         .cloned()
         .ok_or_else(|| ApiError::not_found("storybook"))?;
-    if !shared_library_visible(&source, school_id) {
+    if !shared_library_visible(&state, &source, school_id) {
         return Err(ApiError::forbidden("不能复制不可见的共享内容"));
     }
     let child = match payload.target_child_id {
@@ -471,7 +473,9 @@ async fn clone_shared_storybook(
     clone.share_status = "private".to_string();
     clone.export_status = "not_exported".to_string();
     clone.status = "ready".to_string();
-    clone.illustration_status = if payload.regenerate_images.unwrap_or(false) {
+    clone.illustration_status = if payload.regenerate_images.unwrap_or(false)
+        || source.content_type == "custom_storybook"
+    {
         "not_started".to_string()
     } else {
         source.illustration_status.clone()
@@ -507,7 +511,9 @@ async fn clone_shared_storybook(
         .map(|mut page| {
             page.id = Uuid::new_v4();
             page.storybook_id = clone.id;
-            if payload.regenerate_images.unwrap_or(false) {
+            if payload.regenerate_images.unwrap_or(false)
+                || source.content_type == "custom_storybook"
+            {
                 page.current_image_asset_id = None;
                 page.current_image_task_id = None;
                 page.illustration_status = "not_started".to_string();
@@ -567,9 +573,16 @@ fn visible_storybook(
 }
 
 fn shared_library_visible(
+    state: &crate::api::AppState,
     storybook: &crate::api::storybooks::StorybookRecord,
     school_id: Uuid,
 ) -> bool {
+    let Some(share) = active_share_for_storybook(state, storybook.id) else {
+        return false;
+    };
+    if !share_link_currently_active(share) || share.share_scope != storybook.share_scope {
+        return false;
+    }
     (storybook.school_id == Some(school_id) && storybook.share_scope == "school")
         || storybook.share_scope == "platform_public"
 }
@@ -610,6 +623,10 @@ fn active_share_for_storybook(
         .max_by_key(|share| share.created_at)
 }
 
+fn share_link_currently_active(share: &StorybookShareLinkRecord) -> bool {
+    share.expires_at.is_none_or(|expires_at| expires_at > now())
+}
+
 fn sync_storybook_share_state(state: &mut crate::api::AppState, storybook_id: Uuid) {
     let active_share = active_share_for_storybook(state, storybook_id).cloned();
     if let Some(storybook) = state.storybooks.storybooks.get_mut(&storybook_id) {
@@ -638,6 +655,15 @@ fn validate_share_scope(share_scope: &str) -> Result<(), ApiError> {
     } else {
         Err(ApiError::validation("share_scope", "分享范围枚举不合法"))
     }
+}
+
+fn reject_direct_platform_public_share(share_scope: &str) -> Result<(), ApiError> {
+    if share_scope == "platform_public" {
+        return Err(ApiError::state_conflict(
+            "平台公开共享必须先提交平台审核，不能直接创建公开链接",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_share_privacy(
@@ -770,6 +796,27 @@ mod tests {
         body["storybook"]["id"].as_str().unwrap().to_string()
     }
 
+    async fn create_custom_storybook(app: axum::Router) -> String {
+        let case_id = crate::api::demo_uuid(31);
+        let child_id = crate::api::demo_uuid(10);
+        let (status, body) = request_json(
+            app,
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "custom_storybook",
+                "child_id": child_id,
+                "case_storybook_id": case_id,
+                "title_override": "乐乐的共享故事",
+                "style_id": "storybook_flat_v1",
+                "reading_age_group": "5-6"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["storybook"]["id"].as_str().unwrap().to_string()
+    }
+
     #[tokio::test]
     async fn creates_and_reads_export_job() {
         let app = test_app();
@@ -836,6 +883,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn blocks_direct_platform_public_share_link() {
+        let app = test_app();
+        let storybook_id = create_storybook(app.clone()).await;
+        let (status, body) = request_json(
+            app,
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/share-links"),
+            json!({
+                "share_scope": "platform_public",
+                "anonymize_child_name": true,
+                "anonymize_parent_info": true
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn removes_disabled_share_from_library_and_clone_access() {
+        let app = test_app();
+        let storybook_id = create_storybook(app.clone()).await;
+        let (status, share) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/share-links"),
+            json!({
+                "share_scope": "school",
+                "anonymize_child_name": true,
+                "anonymize_parent_info": true
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{share}");
+        let share_link_id = share["id"].as_str().unwrap();
+
+        let (status, updated) = request_json(
+            app.clone(),
+            "PATCH",
+            &format!("/api/share-links/{share_link_id}"),
+            json!({ "status": "disabled" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{updated}");
+
+        let (status, library) =
+            get_json(app.clone(), "/api/shared-library?share_scope=school").await;
+        assert_eq!(status, StatusCode::OK, "{library}");
+        assert_eq!(library["total"], 0);
+
+        let (status, body) = request_json(
+            app,
+            "POST",
+            &format!("/api/shared-library/{storybook_id}/clone"),
+            json!({
+                "replace_sensitive_roles": true,
+                "regenerate_images": false
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    #[tokio::test]
     async fn clones_shared_storybook_as_private_copy() {
         let app = test_app();
         let storybook_id = create_storybook(app.clone()).await;
@@ -869,6 +980,76 @@ mod tests {
         assert_eq!(cloned["share_scope"], "private");
         assert_eq!(cloned["content_type"], "custom_storybook");
         assert_eq!(cloned["illustration_status"], "not_started");
+    }
+
+    #[tokio::test]
+    async fn cloning_custom_shared_storybook_requires_fresh_images() {
+        let app = test_app();
+        let storybook_id = create_custom_storybook(app.clone()).await;
+        let (_, detail) = get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let (status, task) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{task}");
+        let output_id = task["outputs"][0]["id"].as_str().unwrap();
+        let (status, selected) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/image-outputs/{output_id}/select"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{selected}");
+
+        let (status, _) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/share-links"),
+            json!({
+                "share_scope": "school",
+                "anonymize_child_name": true,
+                "anonymize_parent_info": true
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, cloned) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/shared-library/{storybook_id}/clone"),
+            json!({
+                "replace_sensitive_roles": true,
+                "regenerate_images": false
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{cloned}");
+        assert_eq!(cloned["illustration_status"], "not_started");
+
+        let cloned_id = cloned["id"].as_str().unwrap();
+        let (status, cloned_detail) = get_json(app, &format!("/api/storybooks/{cloned_id}")).await;
+        assert_eq!(status, StatusCode::OK, "{cloned_detail}");
+        assert_eq!(
+            cloned_detail["pages"][0]["current_image_asset_id"],
+            Value::Null
+        );
+        assert_eq!(
+            cloned_detail["pages"][0]["current_image_task_id"],
+            Value::Null
+        );
+        assert_eq!(
+            cloned_detail["pages"][0]["illustration_status"],
+            "not_started"
+        );
     }
 
     #[tokio::test]
