@@ -438,6 +438,12 @@ async fn create_page_image_task(
             "页面 scene_spec_status 必须为 ready",
         ));
     }
+    validate_reference_images_for_page(
+        &state,
+        storybook_id,
+        &payload.reference_image_ids,
+        &payload.style_id,
+    )?;
     let scene_spec_json = payload
         .override_scene_spec_json
         .clone()
@@ -1011,6 +1017,63 @@ fn eligible_page_ids(
         .collect()
 }
 
+fn validate_reference_images_for_page(
+    state: &crate::api::AppState,
+    storybook_id: Uuid,
+    reference_image_ids: &[Uuid],
+    style_id: &str,
+) -> Result<(), ApiError> {
+    for reference_image_id in reference_image_ids {
+        let reference = state
+            .visuals
+            .reference_images
+            .get(reference_image_id)
+            .ok_or_else(|| ApiError::not_found("reference_image"))?;
+        if !reference.is_active || reference.review_status != "approved" {
+            return Err(ApiError::state_conflict("只能使用已启用且审核通过的参考图"));
+        }
+        if reference.style_id != style_id {
+            return Err(ApiError::validation(
+                "reference_image_ids",
+                "参考图画风必须和本次生成 style_id 一致",
+            ));
+        }
+        if !reference_belongs_to_storybook_subject(state, storybook_id, reference) {
+            return Err(ApiError::validation(
+                "reference_image_ids",
+                "参考图必须属于当前读本的角色或关键道具",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reference_belongs_to_storybook_subject(
+    state: &crate::api::AppState,
+    storybook_id: Uuid,
+    reference: &crate::api::visuals::ReferenceImageRecord,
+) -> bool {
+    if let Some(profile_id) = reference.character_profile_id {
+        return state.visuals.storybook_roles.values().any(|role| {
+            role.storybook_id == storybook_id && role.character_profile_id == Some(profile_id)
+        });
+    }
+    if let Some(profile_id) = reference.parent_character_profile_id {
+        return state.visuals.storybook_roles.values().any(|role| {
+            role.storybook_id == storybook_id
+                && role.parent_character_profile_id == Some(profile_id)
+        });
+    }
+    if let Some(prop_id) = reference.prop_profile_id {
+        return state
+            .visuals
+            .prop_profiles
+            .get(&prop_id)
+            .is_some_and(|prop| prop.storybook_id == Some(storybook_id));
+    }
+    false
+}
+
 fn visible_task(
     state: &crate::api::AppState,
     task_id: Uuid,
@@ -1242,6 +1305,11 @@ mod tests {
         detail
     }
 
+    async fn first_child_id(app: axum::Router) -> String {
+        let (_, children) = get_json(app, "/api/children").await;
+        children["items"][0]["id"].as_str().unwrap().to_string()
+    }
+
     #[tokio::test]
     async fn creates_upload_intent_and_asset() {
         let app = test_app();
@@ -1301,6 +1369,111 @@ mod tests {
         let task_id = task["id"].as_str().unwrap();
         let (_, fetched) = get_json(app, &format!("/api/image-tasks/{task_id}")).await;
         assert_eq!(fetched["outputs"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn validates_page_task_reference_images_against_storybook_roles() {
+        let app = test_app();
+        let detail = create_storybook(app.clone()).await;
+        let storybook_id = detail["id"].as_str().unwrap();
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let child_id = first_child_id(app.clone()).await;
+        let (status, profile) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/children/{child_id}/character-profiles"),
+            json!({
+                "hair": "黑色短发",
+                "body_proportion": "幼儿比例",
+                "visual_must_keep": ["黑色短发", "黄色卫衣", "圆脸"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{profile}");
+        let profile_id = profile["id"].as_str().unwrap();
+        let (status, reference) = request_json(
+            app.clone(),
+            "POST",
+            "/api/reference-images/generate",
+            json!({
+                "subject_type": "child_character",
+                "character_profile_id": profile_id,
+                "style_id": "storybook_flat_v1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{reference}");
+        let reference_id = reference["id"].as_str().unwrap();
+        let (status, active) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/reference-images/{reference_id}/activate"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{active}");
+
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1",
+                "reference_image_ids": [reference_id]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "reference_image_ids");
+
+        let (_, roles) = get_json(
+            app.clone(),
+            &format!("/api/storybooks/{storybook_id}/roles"),
+        )
+        .await;
+        let role_key = roles["items"][0]["role_key"].as_str().unwrap();
+        let (status, role) = request_json(
+            app.clone(),
+            "PATCH",
+            &format!("/api/storybooks/{storybook_id}/roles/{role_key}"),
+            json!({
+                "child_id": child_id,
+                "character_profile_id": profile_id
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{role}");
+
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v2",
+                "prompt_template_version": "page_image_v1",
+                "reference_image_ids": [reference_id]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, task) = request_json(
+            app,
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1",
+                "reference_image_ids": [reference_id]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{task}");
+        assert_eq!(
+            task["input_snapshot_json"]["reference_image_ids"][0],
+            reference_id
+        );
     }
 
     #[tokio::test]
