@@ -376,6 +376,7 @@ async fn create_child(
 ) -> Result<Json<ChildRecord>, ApiError> {
     let name = required_trimmed(payload.name, "name")?;
     validate_age(payload.age)?;
+    validate_optional_age_group(payload.age_group.as_deref(), "age_group")?;
     let interest_tags = normalize_tags(payload.interest_tags, "interest_tags")?;
     let teacher_observation_tags =
         normalize_tags(payload.teacher_observation_tags, "teacher_observation_tags")?;
@@ -430,6 +431,7 @@ async fn update_child(
     Json(payload): Json<UpdateChildRequest>,
 ) -> Result<Json<ChildRecord>, ApiError> {
     validate_age(payload.age)?;
+    validate_optional_age_group(payload.age_group.as_deref(), "age_group")?;
     validate_optional_status(payload.status.as_deref(), &["active", "archived"], "status")?;
     if let Some(tags) = payload.interest_tags.as_ref() {
         normalize_tags(tags.clone(), "interest_tags")?;
@@ -605,6 +607,7 @@ async fn create_parent_intake(
     let parent_name = required_trimmed(payload.parent.name, "parent.name")?;
     let child_name = required_trimmed(payload.child.name.clone(), "child.name")?;
     validate_age(payload.child.age)?;
+    validate_optional_age_group(payload.child.age_group.as_deref(), "child.age_group")?;
     let child_payload = IntakeChildPayload {
         name: child_name.clone(),
         nickname: payload.child.nickname.and_then(normalize_optional_owned),
@@ -928,6 +931,18 @@ fn validate_age(age: Option<i32>) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn validate_optional_age_group(
+    age_group: Option<&str>,
+    field: &'static str,
+) -> Result<(), ApiError> {
+    if let Some(age_group) = age_group {
+        if !["3-4", "4-5", "5-6", "6-7"].contains(&age_group.trim()) {
+            return Err(ApiError::validation(field, "年龄段不支持"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_photo_type(photo_type: &str) -> Result<(), ApiError> {
     if ["portrait", "daily", "other"].contains(&photo_type) {
         Ok(())
@@ -1096,6 +1111,42 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "VALIDATION_ERROR");
         assert_eq!(body["error"]["details"][0]["field"], "age");
+    }
+
+    #[tokio::test]
+    async fn rejects_unsupported_child_age_group() {
+        let (status, body) = request_json(
+            test_app(),
+            "POST",
+            "/api/children",
+            json!({
+                "name": "小雨",
+                "age": 5,
+                "age_group": "9-10"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "age_group");
+
+        let (status, body) = request_json(
+            test_app(),
+            "POST",
+            "/api/parent-intakes",
+            json!({
+                "invite_token": "invite-demo",
+                "parent": {
+                    "name": "李女士"
+                },
+                "child": {
+                    "name": "小雨",
+                    "age_group": "9-10"
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "child.age_group");
     }
 
     #[tokio::test]
