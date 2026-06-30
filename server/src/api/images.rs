@@ -681,6 +681,7 @@ async fn select_image_output(
         return Err(ApiError::state_conflict("已拒绝候选图不能选中"));
     }
     let task = visible_task(&state, output.task_id)?.clone();
+    validate_output_belongs_to_current_page_task(&state, &task)?;
     for candidate in state.images.outputs.values_mut() {
         if candidate.task_id == output.task_id {
             candidate.is_selected = false;
@@ -1261,6 +1262,27 @@ fn task_detail(
     }
 }
 
+fn validate_output_belongs_to_current_page_task(
+    state: &crate::api::AppState,
+    task: &ImageGenerationTaskRecord,
+) -> Result<(), ApiError> {
+    let (Some(storybook_id), Some(page_id)) = (task.storybook_id, task.storybook_page_id) else {
+        return Err(ApiError::state_conflict("只有页面图片任务输出可以被选中"));
+    };
+    let page = state
+        .storybooks
+        .pages
+        .get(&storybook_id)
+        .and_then(|pages| pages.iter().find(|page| page.id == page_id))
+        .ok_or_else(|| ApiError::not_found("storybook_page"))?;
+    if page.current_image_task_id != Some(task.id) {
+        return Err(ApiError::state_conflict(
+            "只能选择页面最近有效图片任务的候选图",
+        ));
+    }
+    Ok(())
+}
+
 fn append_review_event(
     state: &mut crate::api::AppState,
     task_id: Uuid,
@@ -1720,6 +1742,56 @@ mod tests {
             updated["pages"][0]["current_image_asset_id"],
             selected["image_asset_id"]
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_selecting_output_from_stale_page_task() {
+        let app = test_app();
+        let detail = create_storybook(app.clone()).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let (_, first_task) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1"
+            }),
+        )
+        .await;
+        let stale_output_id = first_task["outputs"][0]["id"].as_str().unwrap();
+        let (_, second_task) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1",
+                "regeneration_reason": "composition_mismatch"
+            }),
+        )
+        .await;
+
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/image-outputs/{stale_output_id}/select"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+
+        let current_output_id = second_task["outputs"][0]["id"].as_str().unwrap();
+        let (status, selected) = request_json(
+            app,
+            "POST",
+            &format!("/api/image-outputs/{current_output_id}/select"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{selected}");
+        assert_eq!(selected["is_selected"], true);
     }
 
     #[tokio::test]
