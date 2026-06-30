@@ -332,6 +332,8 @@ async fn generate_storybook(
     Json(payload): Json<GenerateStorybookRequest>,
 ) -> Result<Json<GenerateStorybookResponse>, ApiError> {
     validate_content_type(&payload.content_type)?;
+    validate_optional_style_id(payload.style_id.as_deref())?;
+    validate_optional_age_group(payload.reading_age_group.as_deref(), "reading_age_group")?;
     let mut state = state.write().expect("state lock poisoned");
     let school_id = state.organization.current_school_id;
     let teacher_id = state.organization.current_teacher_id;
@@ -1141,6 +1143,27 @@ fn validate_optional_content_type(content_type: Option<&str>) -> Result<(), ApiE
     Ok(())
 }
 
+fn validate_optional_style_id(style_id: Option<&str>) -> Result<(), ApiError> {
+    if let Some(style_id) = style_id {
+        if !["storybook_flat_v1", "watercolor_soft_v1"].contains(&style_id.trim()) {
+            return Err(ApiError::validation("style_id", "画风不支持"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_age_group(
+    age_group: Option<&str>,
+    field: &'static str,
+) -> Result<(), ApiError> {
+    if let Some(age_group) = age_group {
+        if !["3-4", "4-5", "5-6", "6-7"].contains(&age_group.trim()) {
+            return Err(ApiError::validation(field, "年龄段不支持"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_page_role(page_role: &str) -> Result<(), ApiError> {
     if ["cover", "story", "closing"].contains(&page_role) {
         Ok(())
@@ -1559,6 +1582,40 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["details"][0]["field"], "child_id");
+    }
+
+    #[tokio::test]
+    async fn rejects_unsupported_generation_style_and_age_group() {
+        let app = test_app();
+        let (_, cases) = get_json(app.clone(), "/api/cases").await;
+        let case_id = cases["items"][0]["id"].as_str().unwrap();
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "plain_storybook",
+                "case_storybook_id": case_id,
+                "style_id": "unknown_style"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "style_id");
+
+        let (status, body) = request_json(
+            app,
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "plain_storybook",
+                "case_storybook_id": case_id,
+                "reading_age_group": "9-10"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "reading_age_group");
     }
 
     #[tokio::test]
