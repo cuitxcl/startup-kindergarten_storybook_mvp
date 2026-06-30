@@ -24,6 +24,12 @@ let dashboardState = {
   roles: [],
   latestImageTask: null,
   workItems: [],
+  adminContext: {
+    classrooms: [],
+    teachers: [],
+    templates: [],
+    parentIntakes: [],
+  },
 };
 
 function showDashboardToast(message) {
@@ -79,6 +85,10 @@ function selectedStorybookChild() {
     return null;
   }
   return dashboardState.children.find((child) => child.id === selected.child.id) || selected.child;
+}
+
+function apiMethodCount() {
+  return Object.keys(window.KindleleafApi || {}).filter((key) => typeof window.KindleleafApi[key] === "function").length;
 }
 
 function showPage(pageId, updateHash = true) {
@@ -420,6 +430,7 @@ async function loadDashboardData(options = {}) {
     renderWorkList(document.querySelector("[data-filter].active")?.dataset.filter || "all");
     renderAssets();
     renderChildren();
+    setText("#metric-admin-api-count", apiMethodCount());
     await loadStudioPages();
     if (!options.silent) {
       showDashboardToast("已从后端接口同步控制台数据。");
@@ -430,6 +441,35 @@ async function loadDashboardData(options = {}) {
     if (workList) {
       workList.replaceChildren(Object.assign(document.createElement("article"), { className: "empty-state", textContent: message }));
     }
+  }
+}
+
+async function syncAdminContext(options = {}) {
+  const [school, teacher, classrooms, teachers, templates, parentIntakes] = await Promise.allSettled([
+    window.KindleleafApi.getCurrentSchool(),
+    window.KindleleafApi.getCurrentTeacher(),
+    window.KindleleafApi.listClassrooms(),
+    window.KindleleafApi.listTeachers(),
+    window.KindleleafApi.listTemplates(),
+    window.KindleleafApi.listParentIntakes(),
+  ]);
+  if (school.status === "fulfilled") {
+    setText("#today-subtitle", `${school.value.name} · ${school.value.status}`);
+  }
+  if (teacher.status === "fulfilled") {
+    setText("#teacher-name", `${teacher.value.name} 控制台`);
+  }
+  dashboardState.adminContext.classrooms = classrooms.status === "fulfilled" ? classrooms.value.items || [] : [];
+  dashboardState.adminContext.teachers = teachers.status === "fulfilled" ? teachers.value.items || [] : [];
+  dashboardState.adminContext.templates = templates.status === "fulfilled" ? templates.value.items || [] : [];
+  dashboardState.adminContext.parentIntakes = parentIntakes.status === "fulfilled" ? parentIntakes.value.items || [] : [];
+  setText("#metric-classroom-count", dashboardState.adminContext.classrooms.length);
+  setText("#metric-template-count", dashboardState.adminContext.templates.length);
+  setText("#metric-intake-count", dashboardState.adminContext.parentIntakes.length);
+  setText("#metric-admin-api-count", apiMethodCount());
+  const blocked = [school, teacher, classrooms, teachers, templates, parentIntakes].filter((item) => item.status === "rejected").length;
+  if (!options.silent) {
+    showDashboardToast(blocked ? `系统上下文已同步，${blocked} 组接口受权限限制。` : "系统上下文已同步。");
   }
 }
 
@@ -719,6 +759,269 @@ async function submitPlatformReview() {
   await refreshDashboard();
 }
 
+async function manageOrganization() {
+  const [school, currentTeacher, classrooms] = await Promise.all([
+    window.KindleleafApi.getCurrentSchool(),
+    window.KindleleafApi.getCurrentTeacher(),
+    window.KindleleafApi.listClassrooms(),
+  ]);
+  const name = window.prompt("测试班级名称", `接口验证班-${Date.now().toString().slice(-4)}`);
+  if (!name) {
+    showDashboardToast(`当前园所：${school.name}，默认老师：${currentTeacher.name}。`);
+    return;
+  }
+  const created = await window.KindleleafApi.createClassroom({
+    name,
+    teacher_id: currentTeacher.id,
+    grade_level: "混龄",
+  });
+  await window.KindleleafApi.updateClassroom(created.id, {
+    status: "archived",
+  });
+  await window.KindleleafApi.updateCurrentSchool({
+    name: school.name,
+  });
+  await syncAdminContext({ silent: true });
+  showDashboardToast(`组织接口已验证：${classrooms.total || 0} 个原班级，新增后已归档。`);
+}
+
+async function manageTemplates() {
+  const sourceCase = dashboardState.cases[0];
+  if (!sourceCase) {
+    throw new Error("当前没有可读取的案例。");
+  }
+  const detail = await window.KindleleafApi.getCase(sourceCase.id);
+  await window.KindleleafApi.cloneCase(sourceCase.id, {
+    mode: "plain_storybook",
+    title_override: `${sourceCase.title} 接口副本`,
+  });
+  let templateStatus = "模板接口已验证";
+  try {
+    const templates = await window.KindleleafApi.listTemplates();
+    let template = (templates.items || [])[0];
+    if (!template) {
+      template = await window.KindleleafApi.createTemplate({
+        title: `${sourceCase.title} 模板`,
+        content_type: "plain_storybook",
+        theme: sourceCase.theme,
+        teaching_goal: sourceCase.teaching_goal,
+        target_age_group: sourceCase.target_age_group,
+        page_count: 2,
+        template_outline_json: {
+          pages: [{ page_role: "cover" }, { page_role: "closing" }],
+        },
+        default_role_manifest_json: {
+          protagonist: { role_type: "default_character", display_name: "小朋友" },
+        },
+        status: "draft",
+      });
+    }
+    await window.KindleleafApi.getTemplate(template.id);
+    await window.KindleleafApi.updateTemplate(template.id, {
+      teaching_goal: template.teaching_goal || sourceCase.teaching_goal,
+    });
+  } catch (error) {
+    templateStatus = `模板接口受权限限制：${error.message}`;
+  }
+  await syncAdminContext({ silent: true });
+  showDashboardToast(`内容接口已验证：案例 ${detail.pages?.length || 0} 页，${templateStatus}。`);
+}
+
+async function manageParentIntake() {
+  const child = selectedStorybookChild() || dashboardState.children[0];
+  const link = await window.KindleleafApi.createParentIntakeLink({
+    child_id: child?.id,
+  });
+  const intake = await window.KindleleafApi.createParentIntake({
+    invite_token: link.invite_token,
+    parent: {
+      name: "接口验证家长",
+      relationship_to_child: "妈妈",
+      phone: "13800000001",
+    },
+    child: {
+      name: child?.name || "接口验证孩子",
+      nickname: child?.nickname || child?.name || "验证孩子",
+      age: child?.age || 5,
+      age_group: child?.age_group || "5-6",
+      hair: child?.hair || "黑色短发",
+      usual_outfit: child?.usual_outfit || "黄色卫衣",
+      interest_tags: child?.interest_tags || ["积木"],
+    },
+    parent_character_profile: {
+      role: "mother",
+      hair: "黑色长发",
+      outfit_top: "绿色外套",
+      visual_must_keep: ["黑色长发", "绿色外套", "温和表情"],
+    },
+    photo_asset_ids: [],
+  });
+  await window.KindleleafApi.listParentIntakes();
+  const accepted = await window.KindleleafApi.acceptParentIntake(intake.id);
+  await refreshDashboard();
+  await syncAdminContext({ silent: true });
+  showDashboardToast(`家长采集已接收为孩子档案：${accepted.child_id}`);
+}
+
+async function createChildPhotoAsset() {
+  const intent = await window.KindleleafApi.createUploadIntent({
+    asset_type: "child_photo",
+    filename: "profile-photo.jpg",
+    mime_type: "image/jpeg",
+    file_size: 2048,
+  });
+  return window.KindleleafApi.createAsset({
+    asset_type: intent.asset_type,
+    storage_url: intent.upload_url,
+    storage_key: intent.storage_key,
+    mime_type: intent.mime_type,
+    file_size: intent.file_size,
+    metadata_json: {
+      upload_intent_id: intent.id,
+      source: "child_photo_management",
+    },
+  });
+}
+
+async function manageChildPhoto() {
+  const child = selectedStorybookChild() || dashboardState.children[0];
+  if (!child?.id) {
+    throw new Error("请先创建孩子档案。");
+  }
+  const asset = await createChildPhotoAsset();
+  await window.KindleleafApi.getAsset(asset.id);
+  const photo = await window.KindleleafApi.addChildPhoto(child.id, {
+    image_asset_id: asset.id,
+    photo_type: "portrait",
+    is_primary: true,
+    consent_status: "granted",
+  });
+  await window.KindleleafApi.updateChildPhoto(child.id, photo.id, {
+    is_primary: true,
+    consent_status: "granted",
+  });
+  const detail = await window.KindleleafApi.getChild(child.id);
+  await refreshDashboard();
+  showDashboardToast(`照片接口已验证：${detail.photos?.length || 0} 张照片。`);
+}
+
+async function manageVisualSubjects() {
+  const storybook = requireSelectedStorybook();
+  const page = requireSelectedPage();
+  const prop = await window.KindleleafApi.createPropProfile(storybook.storybook_id, {
+    child_id: selectedStorybookChild()?.id,
+    name: "黄色小书包",
+    shape: "圆角书包",
+    primary_color: "黄色",
+    material_style: "布面",
+    size_description: "适合幼儿背的小号书包",
+    visual_must_keep: ["黄色", "圆角书包", "小号"],
+  });
+  const activeRole = dashboardState.roles[0];
+  const subjects = [];
+  if (activeRole?.id) {
+    subjects.push({
+      subject_type: "storybook_role",
+      storybook_role_id: activeRole.id,
+      importance: "primary",
+      placement_hint: "画面中央",
+    });
+  }
+  subjects.push({
+    subject_type: "prop",
+    prop_profile_id: prop.id,
+    importance: "secondary",
+    placement_hint: "角色旁边",
+  });
+  await window.KindleleafApi.putPageVisualSubjects(page.id, { subjects });
+  if (activeRole) {
+    await window.KindleleafApi.replaceStorybookRoles(storybook.storybook_id, {
+      replacements: [{
+        role_key: activeRole.role_key,
+        role_type: activeRole.role_type,
+        child_id: activeRole.child_id,
+        character_profile_id: activeRole.character_profile_id,
+        parent_character_profile_id: activeRole.parent_character_profile_id,
+        prop_profile_id: activeRole.prop_profile_id,
+      }],
+    });
+  }
+  await window.KindleleafApi.updatePropProfile(prop.id, {
+    status: "active",
+  });
+  await loadStudioPages();
+  showDashboardToast("视觉主体、道具画像和角色替换接口已验证。");
+}
+
+async function manageDeliveryDetails() {
+  const storybook = requireSelectedStorybook();
+  const exports = await window.KindleleafApi.listExports(storybook.storybook_id);
+  let exportItem = (exports.items || [])[0];
+  if (!exportItem) {
+    exportItem = await window.KindleleafApi.createExport(storybook.storybook_id, {
+      export_type: "pdf",
+      include_teacher_tips: true,
+      page_size: "A4",
+      quality: "preview",
+      allow_text_only: true,
+    });
+  }
+  await window.KindleleafApi.getExport(exportItem.id);
+  const activity = await window.KindleleafApi.listContentItemActivity(storybook.storybook_id);
+  const shares = await window.KindleleafApi.listShareLinks(storybook.storybook_id);
+  const share = (shares.items || [])[0] || await window.KindleleafApi.createShareLink(storybook.storybook_id, {
+    share_scope: "family",
+    anonymize_child_name: true,
+    anonymize_parent_info: true,
+  });
+  await window.KindleleafApi.updateShareLink(share.id, {
+    anonymize_child_name: true,
+    anonymize_parent_info: true,
+  });
+  showDashboardToast(`交付明细已验证：活动 ${activity.total || 0} 条，分享 ${shares.total || 0} 个。`);
+}
+
+async function manageStorybookVariants() {
+  const storybook = requireSelectedStorybook();
+  await window.KindleleafApi.getStorybook(storybook.storybook_id);
+  const duplicate = await window.KindleleafApi.duplicateStorybook(storybook.storybook_id, {
+    title_override: `${storybook.title} 复制版`,
+  });
+  const child = selectedStorybookChild() || dashboardState.children[0];
+  const plainSource = dashboardState.contentItems.find((item) => item.content_type === "plain_storybook") || duplicate;
+  if (child?.id && plainSource?.content_type === "plain_storybook") {
+    await window.KindleleafApi.deriveCustomStorybook(plainSource.storybook_id || plainSource.id, {
+      child_id: child.id,
+      title_override: `${child.nickname || child.name}的${plainSource.title}`,
+    });
+  }
+  await refreshDashboard();
+  showDashboardToast(`读本明细、复制和派生接口已验证：${duplicate.title}`);
+}
+
+async function manageImageDetails() {
+  const task = dashboardState.latestImageTask;
+  if (task?.outputs?.[0]?.image_asset?.id) {
+    await window.KindleleafApi.getAsset(task.outputs[0].image_asset.id);
+  }
+  if (task?.status === "failed") {
+    const retried = await window.KindleleafApi.retryImageTask(task.id, {
+      retry_reason: "provider_timeout",
+      override_scene_spec_json: task.scene_spec_json || {},
+    });
+    setLatestImageTask(retried);
+    showDashboardToast(`图片任务已重试：${retried.status}`);
+    return;
+  }
+  const costs = await window.KindleleafApi.listGenerationCosts();
+  showDashboardToast(`图片明细接口已验证，成本记录 ${costs.total || 0} 条。`);
+}
+
+function showRouteCoverage() {
+  const covered = apiMethodCount();
+  showDashboardToast(`前端 API client 当前暴露 ${covered} 个方法，系统页提供 8 组管理入口。`);
+}
+
 function activeStyleId() {
   const active = document.querySelector(".choice-grid button.active");
   return {
@@ -866,6 +1169,16 @@ async function handleAction(action, target) {
     else if (action === "view-shared-library") await viewSharedLibrary();
     else if (action === "create-family-share") await shareStorybook();
     else if (action === "submit-platform-review") await submitPlatformReview();
+    else if (action === "sync-admin-context") await syncAdminContext();
+    else if (action === "manage-organization") await manageOrganization();
+    else if (action === "manage-templates") await manageTemplates();
+    else if (action === "manage-parent-intake") await manageParentIntake();
+    else if (action === "manage-child-photo") await manageChildPhoto();
+    else if (action === "manage-visual-subjects") await manageVisualSubjects();
+    else if (action === "manage-delivery-details") await manageDeliveryDetails();
+    else if (action === "manage-storybook-variants") await manageStorybookVariants();
+    else if (action === "manage-image-details") await manageImageDetails();
+    else if (action === "show-route-coverage") showRouteCoverage();
     else if (action === "filter-export") {
       const exportFilter = document.querySelector('[data-filter="export"]');
       if (exportFilter) exportFilter.click();

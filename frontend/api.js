@@ -44,22 +44,43 @@
     baseUrl: apiBase,
     getDashboard: () => request("/api/dashboard/teacher"),
     listContentItems: () => request("/api/content-items?page_size=20"),
+    listContentItemActivity: (storybookId) => request(`/api/content-items/${storybookId}/activity`),
+    getCurrentSchool: () => request("/api/schools/current"),
+    updateCurrentSchool: (payload) => request("/api/schools/current", json("PATCH", payload)),
+    listClassrooms: (params = {}) => request(`/api/classrooms${queryString(params)}`),
+    createClassroom: (payload) => request("/api/classrooms", json("POST", payload)),
+    updateClassroom: (classroomId, payload) => request(`/api/classrooms/${classroomId}`, json("PATCH", payload)),
+    getCurrentTeacher: () => request("/api/teachers/me"),
+    listTeachers: (params = {}) => request(`/api/teachers${queryString(params)}`),
     listChildren: () => request("/api/children?page_size=50"),
+    getChild: (childId) => request(`/api/children/${childId}`),
     listCases: () => request("/api/cases?page_size=50"),
     listCasesByTheme: (theme) => request(`/api/cases?page_size=20&theme=${encodeURIComponent(theme)}`),
-    listStorybooks: () => request("/api/storybooks?page_size=20"),
+    getCase: (caseId) => request(`/api/cases/${caseId}`),
+    cloneCase: (caseId, payload) => request(`/api/cases/${caseId}/clone`, json("POST", payload)),
+    listTemplates: (params = {}) => request(`/api/story-templates${queryString(params)}`),
+    getTemplate: (templateId) => request(`/api/story-templates/${templateId}`),
+    createTemplate: (payload) => request("/api/story-templates", json("POST", payload)),
+    updateTemplate: (templateId, payload) => request(`/api/story-templates/${templateId}`, json("PATCH", payload)),
+    listStorybooks: (params = {}) => request(`/api/storybooks${queryString({ page_size: "20", ...params })}`),
+    getStorybook: (storybookId) => request(`/api/storybooks/${storybookId}`),
     listPages: (storybookId) => request(`/api/storybooks/${storybookId}/pages`),
     generateStorybook: (payload) => request("/api/storybooks/generate", json("POST", payload)),
     updateStorybook: (storybookId, payload) => request(`/api/storybooks/${storybookId}`, json("PATCH", payload)),
+    duplicateStorybook: (storybookId, payload = {}) => request(`/api/storybooks/${storybookId}/duplicate`, json("POST", payload)),
+    deriveCustomStorybook: (storybookId, payload) => request(`/api/storybooks/${storybookId}/derive-custom`, json("POST", payload)),
     addPage: (storybookId, payload) => request(`/api/storybooks/${storybookId}/pages`, json("POST", payload)),
     updatePage: (storybookId, pageId, payload) => request(`/api/storybooks/${storybookId}/pages/${pageId}`, json("PATCH", payload)),
     deletePage: (storybookId, pageId) => request(`/api/storybooks/${storybookId}/pages/${pageId}`, { method: "DELETE" }),
     rewritePage: (storybookId, pageId, payload = {}) => request(`/api/storybooks/${storybookId}/pages/${pageId}/rewrite`, json("POST", payload)),
     createExport: (storybookId, payload) =>
       request(`/api/storybooks/${storybookId}/exports`, json("POST", payload, idempotencyHeaders("export"))),
+    listExports: (storybookId) => request(`/api/storybooks/${storybookId}/exports`),
+    getExport: (exportId) => request(`/api/exports/${exportId}`),
     createShareLink: (storybookId, payload) =>
       request(`/api/storybooks/${storybookId}/share-links`, json("POST", payload, idempotencyHeaders("share"))),
     listShareLinks: (storybookId) => request(`/api/storybooks/${storybookId}/share-links`),
+    updateShareLink: (shareLinkId, payload) => request(`/api/share-links/${shareLinkId}`, json("PATCH", payload)),
     listSharedLibrary: (params = {}) => {
       const query = new URLSearchParams({ page_size: "20" });
       Object.entries(params).forEach(([key, value]) => {
@@ -83,14 +104,41 @@
     listGenerationCosts: (storybookId) => request(`/api/admin/generation-costs${storybookId ? `?storybook_id=${storybookId}` : ""}`),
     createUploadIntent: (payload) => request("/api/assets/upload-intents", json("POST", payload)),
     createAsset: (payload) => request("/api/assets", json("POST", payload)),
+    getAsset: (assetId) => request(`/api/assets/${assetId}`),
     createChild: (payload) => request("/api/children", json("POST", payload)),
     updateChild: (childId, payload) => request(`/api/children/${childId}`, json("PATCH", payload)),
+    addChildPhoto: (childId, payload) => request(`/api/children/${childId}/photos`, json("POST", payload)),
+    updateChildPhoto: (childId, photoId, payload) => request(`/api/children/${childId}/photos/${photoId}`, json("PATCH", payload)),
+    listParentIntakes: (params = {}) => request(`/api/parent-intakes${queryString(params)}`),
+    createParentIntake: (payload) => request("/api/parent-intakes", json("POST", payload)),
+    createParentIntakeLink: (payload) => request("/api/parent-intake-links", json("POST", payload)),
+    acceptParentIntake: (intakeId) => request(`/api/parent-intakes/${intakeId}/accept`, json("POST", {})),
     listCharacterProfiles: (childId) => request(`/api/children/${childId}/character-profiles`),
     createCharacterProfile: (childId, payload) => request(`/api/children/${childId}/character-profiles`, json("POST", payload)),
+    getCharacterProfile: (profileId) => request(`/api/character-profiles/${profileId}`),
+    updateCharacterProfile: (profileId, payload) => request(`/api/character-profiles/${profileId}`, json("PATCH", payload)),
+    createParentCharacterProfile: (parentId, payload) => request(`/api/parents/${parentId}/character-profiles`, json("POST", payload)),
+    listPropProfiles: (storybookId) => request(`/api/storybooks/${storybookId}/props`),
+    createPropProfile: (storybookId, payload) => request(`/api/storybooks/${storybookId}/props`, json("POST", payload)),
+    updatePropProfile: (propId, payload) => request(`/api/prop-profiles/${propId}`, json("PATCH", payload)),
+    putPageVisualSubjects: (pageId, payload) => request(`/api/storybook-pages/${pageId}/visual-subjects`, json("PUT", payload)),
     generateReferenceImage: (payload) => request("/api/reference-images/generate", json("POST", payload)),
+    getReferenceImage: (referenceImageId) => request(`/api/reference-images/${referenceImageId}`),
     activateReferenceImage: (referenceImageId) => request(`/api/reference-images/${referenceImageId}/activate`, json("POST", {})),
     listStorybookRoles: (storybookId) => request(`/api/storybooks/${storybookId}/roles`),
     updateStorybookRole: (storybookId, roleKey, payload) =>
       request(`/api/storybooks/${storybookId}/roles/${encodeURIComponent(roleKey)}`, json("PATCH", payload)),
+    replaceStorybookRoles: (storybookId, payload) => request(`/api/storybooks/${storybookId}/replace-roles`, json("POST", payload)),
   };
+
+  function queryString(params = {}) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        query.set(key, value);
+      }
+    });
+    const serialized = query.toString();
+    return serialized ? `?${serialized}` : "";
+  }
 })();

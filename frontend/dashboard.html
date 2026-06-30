@@ -16,7 +16,7 @@
     <nav class="ops-nav">
       <div><span>总览</span><a class="active" href="#today" data-page-link="today">今日工作台</a></div>
       <div><span>内容生产</span><a href="#queue" data-page-link="queue">待办队列</a><a href="#studio" data-page-link="studio">绘本工作台</a><a href="#assets" data-page-link="assets">母本与绘本</a></div>
-      <div><span>班级资料</span><a href="#children" data-page-link="children">孩子档案</a><a href="#privacy" data-page-link="privacy">共享与隐私</a></div>
+      <div><span>班级资料</span><a href="#children" data-page-link="children">孩子档案</a><a href="#privacy" data-page-link="privacy">共享与隐私</a><a href="#system" data-page-link="system">系统接口</a></div>
     </nav>
 
     <div class="ops-sidebar-note">
@@ -215,6 +215,41 @@
           <article><span class="output-badge done">园内可见</span><div><strong>母本库</strong><p>普通绘本母本可园内复用，不包含具体家庭信息。</p></div><button class="secondary compact-button" type="button" data-action="view-shared-library">查看</button></article>
           <article><span class="output-badge warning">需确认</span><div><strong>家庭版</strong><p>定制绘本分享前检查孩子昵称、挑战描述和老师寄语。</p></div><button class="secondary compact-button" type="button" data-action="create-family-share">确认</button></article>
           <article><span class="output-badge privacy">平台审核</span><div><strong>公开复用</strong><p>提交 ready 读本进入平台公开审核，审核前不会扩大可见范围。</p></div><button class="secondary compact-button" type="button" data-action="submit-platform-review">提交</button></article>
+        </div>
+      </section>
+    </section>
+
+    <section class="ops-page" id="system" data-page="system">
+      <header class="ops-topbar">
+        <div>
+          <p class="eyebrow">API Console</p>
+          <h1>系统接口</h1>
+          <p>集中暴露园所、班级、模板、采集、视觉主体和交付明细接口。</p>
+        </div>
+        <button class="primary" type="button" data-action="sync-admin-context">同步上下文</button>
+      </header>
+
+      <section class="ops-metrics" aria-label="接口覆盖概览">
+        <article><span class="output-badge done">园所</span><strong id="metric-classroom-count">-</strong><p>班级与老师接口</p></article>
+        <article><span class="output-badge">模板</span><strong id="metric-template-count">-</strong><p>故事模板接口</p></article>
+        <article><span class="output-badge warning">采集</span><strong id="metric-intake-count">-</strong><p>待处理家长提交</p></article>
+        <article><span class="output-badge privacy">明细</span><strong id="metric-admin-api-count">-</strong><p>已映射 API 方法</p></article>
+      </section>
+
+      <section class="ops-panel">
+        <div class="ops-section-head compact">
+          <div><p class="eyebrow">Operations</p><h2>接口操作</h2></div>
+          <button class="secondary compact-button" type="button" data-action="show-route-coverage">覆盖检查</button>
+        </div>
+        <div class="privacy-list">
+          <article><span class="output-badge done">组织</span><div><strong>园所与班级</strong><p>读取当前园所、老师、班级列表，可创建并归档测试班级。</p></div><button class="secondary compact-button" type="button" data-action="manage-organization">执行</button></article>
+          <article><span class="output-badge">内容</span><div><strong>模板与案例</strong><p>读取案例详情，复制案例响应，创建/更新故事模板。</p></div><button class="secondary compact-button" type="button" data-action="manage-templates">执行</button></article>
+          <article><span class="output-badge warning">采集</span><div><strong>家长采集</strong><p>创建采集链接、提交家长资料并接受为孩子档案。</p></div><button class="secondary compact-button" type="button" data-action="manage-parent-intake">执行</button></article>
+          <article><span class="output-badge privacy">照片</span><div><strong>孩子照片</strong><p>创建照片资产，绑定到孩子档案，读取详情并更新授权状态。</p></div><button class="secondary compact-button" type="button" data-action="manage-child-photo">执行</button></article>
+          <article><span class="output-badge done">视觉</span><div><strong>道具与页面主体</strong><p>创建道具画像、绑定页面视觉主体、替换角色清单。</p></div><button class="secondary compact-button" type="button" data-action="manage-visual-subjects">执行</button></article>
+          <article><span class="output-badge">交付</span><div><strong>导出与分享明细</strong><p>读取导出详情、分享列表、活动流，并可禁用分享链接。</p></div><button class="secondary compact-button" type="button" data-action="manage-delivery-details">执行</button></article>
+          <article><span class="output-badge warning">故事</span><div><strong>读本明细与派生</strong><p>读取读本详情、复制普通副本、为孩子派生定制读本。</p></div><button class="secondary compact-button" type="button" data-action="manage-storybook-variants">执行</button></article>
+          <article><span class="output-badge privacy">图片</span><div><strong>任务重试与资产详情</strong><p>读取图片资产详情，并对失败任务暴露重试入口。</p></div><button class="secondary compact-button" type="button" data-action="manage-image-details">执行</button></article>
         </div>
       </section>
     </section>
