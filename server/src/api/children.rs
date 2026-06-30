@@ -22,6 +22,7 @@ pub fn router() -> Router<SharedState> {
             "/parent-intakes",
             get(list_parent_intakes).post(create_parent_intake),
         )
+        .route("/parent-intake-links", post(create_parent_intake_link))
         .route(
             "/parent-intakes/{intake_id}/accept",
             post(accept_parent_intake),
@@ -33,6 +34,7 @@ pub struct ChildrenStore {
     pub children: BTreeMap<Uuid, ChildRecord>,
     pub parents: BTreeMap<Uuid, ParentRecord>,
     pub photos: BTreeMap<Uuid, ChildPhotoRecord>,
+    pub parent_intake_links: BTreeMap<Uuid, ParentIntakeLinkRecord>,
     pub parent_intakes: BTreeMap<Uuid, ParentIntakeRecord>,
 }
 
@@ -105,6 +107,7 @@ impl ChildrenStore {
             children,
             parents,
             photos,
+            parent_intake_links: BTreeMap::new(),
             parent_intakes: BTreeMap::new(),
         }
     }
@@ -174,6 +177,18 @@ pub struct ParentIntakeRecord {
     pub created_at: DateTime<Utc>,
     pub accepted_at: Option<DateTime<Utc>>,
     pub accepted_child_id: Option<Uuid>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ParentIntakeLinkRecord {
+    pub id: Uuid,
+    pub invite_token: String,
+    pub child_id: Option<Uuid>,
+    pub classroom_id: Option<Uuid>,
+    pub status: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -269,6 +284,13 @@ pub struct CreateParentIntakeRequest {
     pub parent_character_profile: Option<ParentCharacterProfileInput>,
     #[serde(default)]
     pub photo_asset_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateParentIntakeLinkRequest {
+    pub child_id: Option<Uuid>,
+    pub classroom_id: Option<Uuid>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -599,6 +621,35 @@ async fn update_child_photo(
     Ok(Json(photo))
 }
 
+async fn create_parent_intake_link(
+    State(state): State<SharedState>,
+    Json(payload): Json<CreateParentIntakeLinkRequest>,
+) -> Result<Json<ParentIntakeLinkRecord>, ApiError> {
+    validate_parent_intake_link_target(&state, payload.child_id, payload.classroom_id)?;
+    let expires_at = payload
+        .expires_at
+        .unwrap_or_else(|| now() + chrono::Duration::days(14));
+    validate_parent_intake_link_expiry(expires_at)?;
+    let mut state = state.write().expect("state lock poisoned");
+    let id = Uuid::new_v4();
+    let created_at = now();
+    let link = ParentIntakeLinkRecord {
+        id,
+        invite_token: format!("intake-{}", id.simple()),
+        child_id: payload.child_id,
+        classroom_id: payload.classroom_id,
+        status: "active".to_string(),
+        expires_at,
+        created_at,
+        used_at: None,
+    };
+    state
+        .children
+        .parent_intake_links
+        .insert(link.id, link.clone());
+    Ok(Json(link))
+}
+
 async fn create_parent_intake(
     State(state): State<SharedState>,
     Json(payload): Json<CreateParentIntakeRequest>,
@@ -631,6 +682,7 @@ async fn create_parent_intake(
     };
     {
         let state = state.read().expect("state lock poisoned");
+        validate_parent_intake_token(&state, &invite_token)?;
         validate_child_photo_assets(&state, &payload.photo_asset_ids)?;
     }
 
@@ -759,6 +811,15 @@ async fn accept_parent_intake(
     stored_intake.status = "accepted".to_string();
     stored_intake.accepted_at = Some(created_at);
     stored_intake.accepted_child_id = Some(child_id);
+    if let Some(link) = state
+        .children
+        .parent_intake_links
+        .values_mut()
+        .find(|link| link.invite_token == intake.invite_token)
+    {
+        link.status = "used".to_string();
+        link.used_at = Some(created_at);
+    }
 
     Ok(Json(AcceptParentIntakeResponse {
         intake_id,
@@ -856,6 +917,56 @@ fn validate_parent_option(
                 "家长状态必须为 active",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_parent_intake_link_target(
+    state: &SharedState,
+    child_id: Option<Uuid>,
+    classroom_id: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let state = state.read().expect("state lock poisoned");
+    let school_id = state.organization.current_school_id;
+    if let Some(child_id) = child_id {
+        visible_child(&state, child_id)?;
+    }
+    validate_classroom_option(&state, classroom_id, school_id)?;
+    Ok(())
+}
+
+fn validate_parent_intake_link_expiry(expires_at: DateTime<Utc>) -> Result<(), ApiError> {
+    let current = now();
+    if expires_at <= current {
+        return Err(ApiError::validation(
+            "expires_at",
+            "邀请过期时间必须晚于当前时间",
+        ));
+    }
+    if expires_at > current + chrono::Duration::days(90) {
+        return Err(ApiError::validation(
+            "expires_at",
+            "邀请有效期不能超过 90 天",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_parent_intake_token(
+    state: &crate::api::AppState,
+    invite_token: &str,
+) -> Result<(), ApiError> {
+    let link = state
+        .children
+        .parent_intake_links
+        .values()
+        .find(|link| link.invite_token == invite_token)
+        .ok_or_else(|| ApiError::validation("invite_token", "邀请 token 无效"))?;
+    if link.status != "active" {
+        return Err(ApiError::state_conflict("邀请 token 已使用或已失效"));
+    }
+    if link.expires_at <= now() {
+        return Err(ApiError::validation("invite_token", "邀请 token 已过期"));
     }
     Ok(())
 }
@@ -1129,12 +1240,17 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert_eq!(body["error"]["details"][0]["field"], "age_group");
 
+        let app = test_app();
+        let (status, link) =
+            request_json(app.clone(), "POST", "/api/parent-intake-links", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{link}");
+        let invite_token = link["invite_token"].as_str().unwrap();
         let (status, body) = request_json(
-            test_app(),
+            app,
             "POST",
             "/api/parent-intakes",
             json!({
-                "invite_token": "invite-demo",
+                "invite_token": invite_token,
                 "parent": {
                     "name": "李女士"
                 },
@@ -1262,6 +1378,10 @@ mod tests {
     #[tokio::test]
     async fn accepts_parent_intake_once() {
         let app = test_app();
+        let (status, link) =
+            request_json(app.clone(), "POST", "/api/parent-intake-links", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{link}");
+        let invite_token = link["invite_token"].as_str().unwrap();
         let (status, asset) = request_json(
             app.clone(),
             "POST",
@@ -1280,7 +1400,7 @@ mod tests {
             "POST",
             "/api/parent-intakes",
             json!({
-                "invite_token": "invite-demo",
+                "invite_token": invite_token,
                 "parent": {
                     "name": "李女士",
                     "relationship_to_child": "妈妈",
@@ -1324,6 +1444,10 @@ mod tests {
     #[tokio::test]
     async fn rejects_parent_intake_with_invalid_photo_asset() {
         let app = test_app();
+        let (status, link) =
+            request_json(app.clone(), "POST", "/api/parent-intake-links", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{link}");
+        let invite_token = link["invite_token"].as_str().unwrap();
         let (status, asset) = request_json(
             app.clone(),
             "POST",
@@ -1343,7 +1467,7 @@ mod tests {
             "POST",
             "/api/parent-intakes",
             json!({
-                "invite_token": "invite-demo",
+                "invite_token": invite_token,
                 "parent": {
                     "name": "李女士"
                 },
@@ -1357,5 +1481,72 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert_eq!(body["error"]["details"][0]["field"], "image_asset_id");
+    }
+
+    #[tokio::test]
+    async fn parent_intake_requires_active_invite_token() {
+        let app = test_app();
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            "/api/parent-intakes",
+            json!({
+                "invite_token": "missing-token",
+                "parent": {
+                    "name": "李女士"
+                },
+                "child": {
+                    "name": "小雨"
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "invite_token");
+
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            "/api/parent-intake-links",
+            json!({ "expires_at": "2099-01-01T00:00:00Z" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "expires_at");
+
+        let (status, link) =
+            request_json(app.clone(), "POST", "/api/parent-intake-links", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{link}");
+        let invite_token = link["invite_token"].as_str().unwrap();
+        let intake_payload = json!({
+            "invite_token": invite_token,
+            "parent": {
+                "name": "李女士"
+            },
+            "child": {
+                "name": "小雨"
+            }
+        });
+        let (status, intake) = request_json(
+            app.clone(),
+            "POST",
+            "/api/parent-intakes",
+            intake_payload.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{intake}");
+        let intake_id = intake["id"].as_str().unwrap();
+        let (status, accepted) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/parent-intakes/{intake_id}/accept"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{accepted}");
+
+        let (status, body) = request_json(app, "POST", "/api/parent-intakes", intake_payload).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
     }
 }
