@@ -207,14 +207,14 @@
           <h1>共享与隐私</h1>
           <p>导出、家庭版共享和园内复用都需要明确可见范围。</p>
         </div>
-        <button class="primary" type="button" data-toast="已打开共享范围检查。">检查共享范围</button>
+        <button class="primary" type="button" data-action="check-share-scope">检查共享范围</button>
       </header>
 
       <section class="ops-panel">
         <div class="privacy-list">
-          <article><span class="output-badge done">园内可见</span><div><strong>母本库</strong><p>普通绘本母本可园内复用，不包含具体家庭信息。</p></div><button class="secondary compact-button" type="button" data-toast="已查看母本库权限。">查看</button></article>
-          <article><span class="output-badge warning">需确认</span><div><strong>家庭版</strong><p>定制绘本分享前检查孩子昵称、挑战描述和老师寄语。</p></div><button class="secondary compact-button" type="button" data-toast="已进入家庭版确认。">确认</button></article>
-          <article><span class="output-badge privacy">额度数据</span><div><strong>86 次</strong><p>预览和导出不消耗额度，正式生成会记录到园所额度。</p></div><button class="secondary compact-button" type="button" data-toast="已打开额度记录。">记录</button></article>
+          <article><span class="output-badge done">园内可见</span><div><strong>母本库</strong><p>普通绘本母本可园内复用，不包含具体家庭信息。</p></div><button class="secondary compact-button" type="button" data-action="view-shared-library">查看</button></article>
+          <article><span class="output-badge warning">需确认</span><div><strong>家庭版</strong><p>定制绘本分享前检查孩子昵称、挑战描述和老师寄语。</p></div><button class="secondary compact-button" type="button" data-action="create-family-share">确认</button></article>
+          <article><span class="output-badge privacy">平台审核</span><div><strong>公开复用</strong><p>提交 ready 读本进入平台公开审核，审核前不会扩大可见范围。</p></div><button class="secondary compact-button" type="button" data-action="submit-platform-review">提交</button></article>
         </div>
       </section>
     </section>

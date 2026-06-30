@@ -59,6 +59,18 @@
       request(`/api/storybooks/${storybookId}/exports`, json("POST", payload, idempotencyHeaders("export"))),
     createShareLink: (storybookId, payload) =>
       request(`/api/storybooks/${storybookId}/share-links`, json("POST", payload, idempotencyHeaders("share"))),
+    listShareLinks: (storybookId) => request(`/api/storybooks/${storybookId}/share-links`),
+    listSharedLibrary: (params = {}) => {
+      const query = new URLSearchParams({ page_size: "20" });
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          query.set(key, value);
+        }
+      });
+      return request(`/api/shared-library?${query.toString()}`);
+    },
+    cloneSharedStorybook: (storybookId, payload) => request(`/api/shared-library/${storybookId}/clone`, json("POST", payload)),
+    submitPlatformReview: (storybookId) => request(`/api/storybooks/${storybookId}/submit-platform-review`, json("POST", {})),
     createPageImageTask: (pageId, payload) =>
       request(`/api/storybook-pages/${pageId}/image-tasks`, json("POST", payload, idempotencyHeaders("page-image"))),
     createStorybookImageTask: (storybookId, payload) =>
@@ -73,6 +85,10 @@
     createAsset: (payload) => request("/api/assets", json("POST", payload)),
     createChild: (payload) => request("/api/children", json("POST", payload)),
     updateChild: (childId, payload) => request(`/api/children/${childId}`, json("PATCH", payload)),
+    listCharacterProfiles: (childId) => request(`/api/children/${childId}/character-profiles`),
+    createCharacterProfile: (childId, payload) => request(`/api/children/${childId}/character-profiles`, json("POST", payload)),
+    generateReferenceImage: (payload) => request("/api/reference-images/generate", json("POST", payload)),
+    activateReferenceImage: (referenceImageId) => request(`/api/reference-images/${referenceImageId}/activate`, json("POST", {})),
     listStorybookRoles: (storybookId) => request(`/api/storybooks/${storybookId}/roles`),
     updateStorybookRole: (storybookId, roleKey, payload) =>
       request(`/api/storybooks/${storybookId}/roles/${encodeURIComponent(roleKey)}`, json("PATCH", payload)),

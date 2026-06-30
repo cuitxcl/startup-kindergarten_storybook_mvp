@@ -73,6 +73,14 @@ function statusLabel(value) {
   }[value] || text(value);
 }
 
+function selectedStorybookChild() {
+  const selected = dashboardState.selectedStorybook;
+  if (!selected?.child?.id) {
+    return null;
+  }
+  return dashboardState.children.find((child) => child.id === selected.child.id) || selected.child;
+}
+
 function showPage(pageId, updateHash = true) {
   const nextPage = pages.find((page) => page.dataset.page === pageId) || pages[0];
 
@@ -314,6 +322,9 @@ function renderRoles(rolesResponse) {
       <span class="avatar">${escapeHtml(firstChar(role.display_name || role.role_key))}</span>
       <div><strong>${escapeHtml(role.role_key)} · ${escapeHtml(role.display_name)}</strong><p>${escapeHtml(role.role_type)} · ${role.character_profile_id ? "已绑定角色画像" : "未绑定画像"}</p></div>
     `;
+    if (role.role_type === "child" || role.child_id) {
+      item.append(actionButton(role.character_profile_id ? "重建参考图" : "生成参考图", "generate-reference-image", { roleKey: role.role_key }));
+    }
     roleList.append(item);
   });
 }
@@ -545,6 +556,73 @@ async function registerUploadedAsset() {
   showDashboardToast(`资产已登记：${asset.id}`);
 }
 
+function profilePayloadFromChild(child) {
+  const name = text(child.nickname || child.name, "孩子");
+  const hair = child.hair || window.prompt("角色发型", "黑色短发");
+  const outfit = child.usual_outfit || window.prompt("常穿服装", "黄色卫衣");
+  if (!hair || !outfit) {
+    return null;
+  }
+  const interests = Array.isArray(child.interest_tags) ? child.interest_tags.filter(Boolean) : [];
+  return {
+    name: child.name || name,
+    nickname: child.nickname || name,
+    age_group: child.age_group || normalizeAgeGroup(child.age) || "5-6",
+    gender_expression: child.gender_expression,
+    hair,
+    body_proportion: "幼儿比例",
+    outfit_top: outfit,
+    signature_colors: child.favorite_color ? [child.favorite_color] : [],
+    interest_elements: interests,
+    visual_must_keep: [hair, outfit, `${name}的圆脸辨识度`],
+    negative_rules: ["不要成人化比例", "不要改变主要发型"],
+  };
+}
+
+async function ensureCharacterProfileForRole(role, child) {
+  if (role.character_profile_id) {
+    return role.character_profile_id;
+  }
+  const profiles = await window.KindleleafApi.listCharacterProfiles(child.id);
+  const existing = (profiles.items || []).find((item) => item.status !== "superseded");
+  if (existing) {
+    return existing.id;
+  }
+  const payload = profilePayloadFromChild(child);
+  if (!payload) {
+    throw new Error("已取消角色画像创建。");
+  }
+  const profile = await window.KindleleafApi.createCharacterProfile(child.id, payload);
+  return profile.id;
+}
+
+async function generateReferenceImageForRole(roleKey) {
+  const storybook = requireSelectedStorybook();
+  const role = dashboardState.roles.find((item) => item.role_key === roleKey) || dashboardState.roles[0];
+  if (!role) {
+    throw new Error("当前绘本没有可绑定的角色。");
+  }
+  const child = role.child_id
+    ? dashboardState.children.find((item) => item.id === role.child_id)
+    : selectedStorybookChild();
+  if (!child?.id) {
+    throw new Error("当前角色没有关联孩子档案，无法生成儿童参考图。");
+  }
+  const characterProfileId = await ensureCharacterProfileForRole(role, child);
+  const reference = await window.KindleleafApi.generateReferenceImage({
+    subject_type: "child_character",
+    character_profile_id: characterProfileId,
+    style_id: activeStyleId(),
+  });
+  const activeReference = await window.KindleleafApi.activateReferenceImage(reference.id);
+  await window.KindleleafApi.updateStorybookRole(storybook.storybook_id, role.role_key, {
+    character_profile_id: characterProfileId,
+    child_id: child.id,
+  });
+  showDashboardToast(`参考图已启用：${activeReference.style_id}`);
+  await loadStudioPages();
+}
+
 async function deleteCurrentPage() {
   const storybook = requireSelectedStorybook();
   const page = requireSelectedPage();
@@ -599,6 +677,45 @@ async function shareStorybook() {
     create_qrcode: true,
   });
   showDashboardToast(`分享链接已创建：${share.url}`);
+  await refreshDashboard();
+}
+
+async function checkShareScope() {
+  const storybook = requireSelectedStorybook();
+  const [shares, library] = await Promise.all([
+    window.KindleleafApi.listShareLinks(storybook.storybook_id),
+    window.KindleleafApi.listSharedLibrary({ content_type: storybook.content_type || "" }),
+  ]);
+  showDashboardToast(`当前绘本分享链接 ${shares.total || 0} 个，母本库可见 ${library.total || 0} 本。`);
+}
+
+async function viewSharedLibrary() {
+  const library = await window.KindleleafApi.listSharedLibrary({ share_scope: "school", content_type: "plain_storybook" });
+  const first = (library.items || [])[0];
+  if (!first) {
+    showDashboardToast("当前没有可复用的园内母本。");
+    return;
+  }
+  if (!window.confirm(`复制《${first.title}》到当前园所工作区？`)) {
+    showDashboardToast(`母本库可见 ${library.total || 0} 本。`);
+    return;
+  }
+  const child = selectedStorybookChild() || dashboardState.children[0];
+  const clone = await window.KindleleafApi.cloneSharedStorybook(first.storybook_id, {
+    target_child_id: child?.id,
+    title_override: child ? `${child.nickname || child.name}的${first.title}` : `${first.title} 改编`,
+    replace_sensitive_roles: true,
+    regenerate_images: Boolean(child),
+  });
+  showDashboardToast(`已复制母本：${clone.title}`);
+  await refreshDashboard();
+  await openStorybook(clone.id);
+}
+
+async function submitPlatformReview() {
+  const storybook = requireSelectedStorybook();
+  const result = await window.KindleleafApi.submitPlatformReview(storybook.storybook_id);
+  showDashboardToast(`平台审核已提交：${result.review_status}`);
   await refreshDashboard();
 }
 
@@ -744,6 +861,11 @@ async function handleAction(action, target) {
     else if (action === "open-storybook") await openStorybook(target.dataset.storybookId);
     else if (action === "generate-storybook") await generateStorybookFromCase(target.dataset.caseId);
     else if (action === "rename-role") await renameFirstRole();
+    else if (action === "generate-reference-image") await generateReferenceImageForRole(target.dataset.roleKey);
+    else if (action === "check-share-scope") await checkShareScope();
+    else if (action === "view-shared-library") await viewSharedLibrary();
+    else if (action === "create-family-share") await shareStorybook();
+    else if (action === "submit-platform-review") await submitPlatformReview();
     else if (action === "filter-export") {
       const exportFilter = document.querySelector('[data-filter="export"]');
       if (exportFilter) exportFilter.click();
