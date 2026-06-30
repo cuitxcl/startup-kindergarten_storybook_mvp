@@ -2,6 +2,7 @@ use super::{ApiError, SharedState, now};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
@@ -428,9 +429,11 @@ async fn get_asset(
 async fn create_page_image_task(
     State(state): State<SharedState>,
     Path(page_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(payload): Json<CreatePageImageTaskRequest>,
 ) -> Result<Json<ImageTaskDetailResponse>, ApiError> {
     let mut state = state.write().expect("state lock poisoned");
+    let idempotency_key = idempotency_key_from_headers(&headers)?;
     let (storybook_id, page) = page_snapshot(&state, page_id)?;
     validate_storybook_ready_for_images(&state, storybook_id)?;
     if page.scene_spec_status != "ready" {
@@ -448,6 +451,16 @@ async fn create_page_image_task(
         .override_scene_spec_json
         .clone()
         .or_else(|| page.scene_spec_json.clone());
+    let fingerprint = page_image_task_fingerprint(&payload, scene_spec_json.as_ref());
+    if let Some(existing) = find_idempotent_image_task(
+        &state,
+        storybook_id,
+        Some(page_id),
+        idempotency_key.as_deref(),
+        &fingerprint,
+    )? {
+        return Ok(Json(task_detail(&state, existing)));
+    }
     let task = build_task(
         &state,
         "page_image_generation",
@@ -461,9 +474,11 @@ async fn create_page_image_task(
         json!({
             "page": page,
             "reference_image_ids": payload.reference_image_ids,
-            "regeneration_reason": payload.regeneration_reason
+            "regeneration_reason": payload.regeneration_reason,
+            "idempotency_fingerprint": fingerprint
         }),
     )?;
+    let task = with_idempotency_key(task, idempotency_key);
     let detail = run_seedream_task(&mut state, task)?;
     mark_page_running_or_ready(&mut state, storybook_id, page_id, &detail);
     Ok(Json(detail))
@@ -1074,6 +1089,74 @@ fn reference_belongs_to_storybook_subject(
     false
 }
 
+fn find_idempotent_image_task(
+    state: &crate::api::AppState,
+    storybook_id: Uuid,
+    storybook_page_id: Option<Uuid>,
+    idempotency_key: Option<&str>,
+    fingerprint: &Value,
+) -> Result<Option<ImageGenerationTaskRecord>, ApiError> {
+    let Some(idempotency_key) = idempotency_key else {
+        return Ok(None);
+    };
+    let existing = state.images.tasks.values().find(|task| {
+        task.storybook_id == Some(storybook_id)
+            && task.storybook_page_id == storybook_page_id
+            && task.idempotency_key.as_deref() == Some(idempotency_key)
+    });
+    if let Some(task) = existing {
+        if task.input_snapshot_json.get("idempotency_fingerprint") == Some(fingerprint) {
+            return Ok(Some(task.clone()));
+        }
+        return Err(idempotency_conflict());
+    }
+    Ok(None)
+}
+
+fn page_image_task_fingerprint(
+    payload: &CreatePageImageTaskRequest,
+    scene_spec_json: Option<&Value>,
+) -> Value {
+    json!({
+        "style_id": payload.style_id,
+        "prompt_template_version": payload.prompt_template_version,
+        "reference_image_ids": payload.reference_image_ids,
+        "regeneration_reason": payload.regeneration_reason,
+        "scene_spec_json": scene_spec_json
+    })
+}
+
+fn with_idempotency_key(
+    mut task: ImageGenerationTaskRecord,
+    idempotency_key: Option<String>,
+) -> ImageGenerationTaskRecord {
+    task.idempotency_key = idempotency_key;
+    task
+}
+
+fn idempotency_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let Some(value) = headers.get("idempotency-key") else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| ApiError::validation("Idempotency-Key", "幂等键必须是有效字符串"))?
+        .trim();
+    if value.is_empty() {
+        return Err(ApiError::validation("Idempotency-Key", "幂等键不能为空"));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn idempotency_conflict() -> ApiError {
+    ApiError {
+        status: axum::http::StatusCode::CONFLICT,
+        code: "IDEMPOTENCY_CONFLICT",
+        message: "同一个 Idempotency-Key 的请求参数不一致".to_string(),
+        details: vec![],
+    }
+}
+
 fn visible_task(
     state: &crate::api::AppState,
     task_id: Uuid,
@@ -1271,6 +1354,29 @@ mod tests {
         (status, body)
     }
 
+    async fn request_json_with_idempotency_key(
+        app: axum::Router,
+        method: &str,
+        uri: &str,
+        body: Value,
+        idempotency_key: &str,
+    ) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("Idempotency-Key", idempotency_key)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, body)
+    }
+
     async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Value) {
         let request = Request::builder()
             .method("GET")
@@ -1369,6 +1475,56 @@ mod tests {
         let task_id = task["id"].as_str().unwrap();
         let (_, fetched) = get_json(app, &format!("/api/image-tasks/{task_id}")).await;
         assert_eq!(fetched["outputs"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn page_image_task_creation_is_idempotent_per_key_and_payload() {
+        let app = test_app();
+        let detail = create_storybook(app.clone()).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let uri = format!("/api/storybook-pages/{page_id}/image-tasks");
+        let payload = json!({
+            "style_id": "storybook_flat_v1",
+            "prompt_template_version": "page_image_v1"
+        });
+        let (status, first) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            &uri,
+            payload.clone(),
+            "page-image-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let (status, second) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            &uri,
+            payload,
+            "page-image-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert_eq!(second["id"], first["id"]);
+        assert_eq!(second["outputs"][0]["id"], first["outputs"][0]["id"]);
+
+        let task_id = first["id"].as_str().unwrap();
+        let (_, task_detail) = get_json(app.clone(), &format!("/api/image-tasks/{task_id}")).await;
+        assert_eq!(task_detail["outputs"].as_array().unwrap().len(), 1);
+
+        let (status, conflict) = request_json_with_idempotency_key(
+            app,
+            "POST",
+            &uri,
+            json!({
+                "style_id": "storybook_flat_v2",
+                "prompt_template_version": "page_image_v1"
+            }),
+            "page-image-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+        assert_eq!(conflict["error"]["code"], "IDEMPOTENCY_CONFLICT");
     }
 
     #[tokio::test]
