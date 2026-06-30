@@ -1595,6 +1595,7 @@ mod tests {
             &format!("/api/children/{child_id}/character-profiles"),
             json!({
                 "hair": "黑色短发",
+                "age_group": "5-6",
                 "body_proportion": "幼儿比例",
                 "visual_must_keep": ["黑色短发", "黄色卫衣", "圆脸"]
             }),

@@ -363,6 +363,7 @@ async fn create_character_profile(
 ) -> Result<Json<CharacterProfileRecord>, ApiError> {
     let hair = required_trimmed(payload.hair, "hair")?;
     let body_proportion = required_trimmed(payload.body_proportion, "body_proportion")?;
+    let age_group = required_trimmed(payload.age_group.unwrap_or_default(), "age_group")?;
     let visual_must_keep = normalize_rules(payload.visual_must_keep, "visual_must_keep")?;
     let negative_rules = normalize_rules(payload.negative_rules, "negative_rules")?;
     let mut state = state.write().expect("state lock poisoned");
@@ -380,11 +381,7 @@ async fn create_character_profile(
             .and_then(normalize_optional_owned)
             .unwrap_or_else(|| child.name.clone()),
         nickname: payload.nickname.and_then(normalize_optional_owned),
-        age_group: payload
-            .age_group
-            .and_then(normalize_optional_owned)
-            .or_else(|| child.age_group.clone())
-            .unwrap_or_else(|| "unknown".to_string()),
+        age_group,
         gender_expression: payload.gender_expression.and_then(normalize_optional_owned),
         hair,
         skin_tone: payload.skin_tone.and_then(normalize_optional_owned),
@@ -451,6 +448,11 @@ async fn update_character_profile(
         .unwrap();
     if profile.status == "superseded" {
         return Err(ApiError::state_conflict("已废弃角色卡不可编辑"));
+    }
+    if profile.status == "active" && character_profile_visual_fields_changed(&payload) {
+        return Err(ApiError::state_conflict(
+            "active 角色卡的视觉特征变更必须新建版本",
+        ));
     }
     if let Some(hair) = payload.hair {
         profile.hair = required_trimmed(hair, "hair")?;
@@ -1050,6 +1052,16 @@ fn validate_role_targets(
     Ok(())
 }
 
+fn character_profile_visual_fields_changed(payload: &UpdateCharacterProfileRequest) -> bool {
+    payload.hair.is_some()
+        || payload.body_proportion.is_some()
+        || payload.outfit_top.is_some()
+        || payload.outfit_bottom.is_some()
+        || payload.accessory.is_some()
+        || payload.visual_must_keep.is_some()
+        || payload.negative_rules.is_some()
+}
+
 fn validate_role_replacement(
     state: &crate::api::AppState,
     payload: &RoleReplacementRequest,
@@ -1367,6 +1379,7 @@ mod tests {
             &format!("/api/children/{child_id}/character-profiles"),
             json!({
                 "hair": "黑色短发",
+                "age_group": "5-6",
                 "body_proportion": "幼儿比例",
                 "visual_must_keep": ["黑色短发", "黄色卫衣"]
             }),
@@ -1392,6 +1405,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn character_profile_requires_age_group() {
+        let app = test_app();
+        let child_id = first_child_id(app.clone()).await;
+        let (status, body) = request_json(
+            app,
+            "POST",
+            &format!("/api/children/{child_id}/character-profiles"),
+            json!({
+                "hair": "黑色短发",
+                "body_proportion": "幼儿比例",
+                "visual_must_keep": ["黑色短发", "黄色卫衣", "圆脸"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "age_group");
+    }
+
+    #[tokio::test]
     async fn activates_reference_image_for_character_profile() {
         let app = test_app();
         let child_id = first_child_id(app.clone()).await;
@@ -1401,6 +1433,7 @@ mod tests {
             &format!("/api/children/{child_id}/character-profiles"),
             json!({
                 "hair": "黑色短发",
+                "age_group": "5-6",
                 "body_proportion": "幼儿比例",
                 "visual_must_keep": ["黑色短发", "黄色卫衣", "圆脸"]
             }),
@@ -1433,6 +1466,55 @@ mod tests {
         let (_, updated_profile) =
             get_json(app, &format!("/api/character-profiles/{profile_id}")).await;
         assert_eq!(updated_profile["active_reference_image_id"], reference_id);
+    }
+
+    #[tokio::test]
+    async fn rejects_visual_edits_to_active_character_profile() {
+        let app = test_app();
+        let child_id = first_child_id(app.clone()).await;
+        let (_, profile) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/children/{child_id}/character-profiles"),
+            json!({
+                "hair": "黑色短发",
+                "age_group": "5-6",
+                "body_proportion": "幼儿比例",
+                "visual_must_keep": ["黑色短发", "黄色卫衣", "圆脸"]
+            }),
+        )
+        .await;
+        let profile_id = profile["id"].as_str().unwrap();
+        let (_, reference) = request_json(
+            app.clone(),
+            "POST",
+            "/api/reference-images/generate",
+            json!({
+                "subject_type": "child_character",
+                "character_profile_id": profile_id,
+                "style_id": "storybook_flat_v1"
+            }),
+        )
+        .await;
+        let reference_id = reference["id"].as_str().unwrap();
+        let (status, _) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/reference-images/{reference_id}/activate"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_json(
+            app,
+            "PATCH",
+            &format!("/api/character-profiles/{profile_id}"),
+            json!({ "hair": "棕色短发" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
     }
 
     #[tokio::test]
@@ -1483,6 +1565,7 @@ mod tests {
             &format!("/api/children/{child_id}/character-profiles"),
             json!({
                 "hair": "黑色短发",
+                "age_group": "5-6",
                 "body_proportion": "幼儿比例",
                 "visual_must_keep": ["黑色短发", "黄色卫衣", "圆脸"]
             }),
