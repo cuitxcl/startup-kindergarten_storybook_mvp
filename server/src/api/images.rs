@@ -487,11 +487,45 @@ async fn create_page_image_task(
 async fn create_storybook_image_task(
     State(state): State<SharedState>,
     Path(storybook_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(payload): Json<CreateStorybookImageTaskRequest>,
 ) -> Result<Json<StorybookImageTaskResponse>, ApiError> {
     let mut state = state.write().expect("state lock poisoned");
+    let idempotency_key = idempotency_key_from_headers(&headers)?;
     validate_storybook_ready_for_images(&state, storybook_id)?;
     let page_ids = eligible_page_ids(&state, storybook_id, &payload);
+    let fingerprint = storybook_image_task_fingerprint(&payload, &page_ids);
+    if let Some(existing) = find_idempotent_image_task(
+        &state,
+        storybook_id,
+        None,
+        idempotency_key.as_deref(),
+        &fingerprint,
+    )? {
+        let skipped_page_ids = existing
+            .input_snapshot_json
+            .get("skipped_page_ids")
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(Value::as_str)
+                    .filter_map(|id| Uuid::parse_str(id).ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let page_task_count = existing
+            .input_snapshot_json
+            .get("page_task_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        return Ok(Json(StorybookImageTaskResponse {
+            task_id: existing.id,
+            task_type: existing.task_type,
+            status: existing.status,
+            page_task_count,
+            skipped_page_ids,
+        }));
+    }
     let requested = if payload.page_ids.is_empty() {
         state
             .storybooks
@@ -520,10 +554,17 @@ async fn create_storybook_image_task(
         payload.style_id.clone(),
         payload.prompt_template_version.clone(),
         None,
-        json!({ "storybook_id": storybook_id, "page_ids": page_ids }),
+        json!({
+            "storybook_id": storybook_id,
+            "page_ids": page_ids,
+            "skipped_page_ids": skipped_page_ids,
+            "page_task_count": page_ids.len(),
+            "idempotency_fingerprint": fingerprint
+        }),
     )?;
     let parent_task_id = parent_task.id;
     let mut parent_task = parent_task;
+    parent_task.idempotency_key = idempotency_key;
     parent_task.status = "succeeded".to_string();
     parent_task.provider_name = Some(state.images.image_provider.provider_name().to_string());
     parent_task.model_name = Some(state.images.image_provider.model_name().to_string());
@@ -1123,6 +1164,20 @@ fn page_image_task_fingerprint(
         "reference_image_ids": payload.reference_image_ids,
         "regeneration_reason": payload.regeneration_reason,
         "scene_spec_json": scene_spec_json
+    })
+}
+
+fn storybook_image_task_fingerprint(
+    payload: &CreateStorybookImageTaskRequest,
+    page_ids: &[Uuid],
+) -> Value {
+    json!({
+        "style_id": payload.style_id,
+        "prompt_template_version": payload.prompt_template_version,
+        "requested_page_ids": payload.page_ids,
+        "eligible_page_ids": page_ids,
+        "skip_locked_pages": payload.skip_locked_pages.unwrap_or(false),
+        "only_pages_without_current_image": payload.only_pages_without_current_image.unwrap_or(false)
     })
 }
 
@@ -1769,5 +1824,55 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(batch["task_type"], "storybook_image_generation");
         assert_eq!(batch["page_task_count"], 6);
+    }
+
+    #[tokio::test]
+    async fn storybook_image_task_creation_is_idempotent_per_key_and_payload() {
+        let app = test_app();
+        let detail = create_storybook(app.clone()).await;
+        let storybook_id = detail["id"].as_str().unwrap();
+        let uri = format!("/api/storybooks/{storybook_id}/image-tasks");
+        let payload = json!({
+            "style_id": "storybook_flat_v1",
+            "prompt_template_version": "page_image_v1",
+            "skip_locked_pages": true,
+            "only_pages_without_current_image": false
+        });
+        let (status, first) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            &uri,
+            payload.clone(),
+            "storybook-image-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let (status, second) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            &uri,
+            payload,
+            "storybook-image-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert_eq!(second["task_id"], first["task_id"]);
+        assert_eq!(second["page_task_count"], first["page_task_count"]);
+
+        let (status, conflict) = request_json_with_idempotency_key(
+            app,
+            "POST",
+            &uri,
+            json!({
+                "style_id": "storybook_flat_v2",
+                "prompt_template_version": "page_image_v1",
+                "skip_locked_pages": true,
+                "only_pages_without_current_image": false
+            }),
+            "storybook-image-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+        assert_eq!(conflict["error"]["code"], "IDEMPOTENCY_CONFLICT");
     }
 }
