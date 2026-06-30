@@ -490,6 +490,12 @@ async fn create_parent_character_profile(
     let version = payload
         .version
         .unwrap_or_else(|| next_parent_character_version(&state, parent_id, payload.child_id));
+    if parent_character_version_exists(&state, parent_id, payload.child_id, version) {
+        return Err(ApiError::validation(
+            "version",
+            "同一家长和儿童下角色卡版本不能重复",
+        ));
+    }
     let profile = ParentCharacterProfileRecord {
         id: Uuid::new_v4(),
         parent_id,
@@ -567,6 +573,7 @@ async fn update_storybook_role(
     role.updated_at = now();
     let role = role.clone();
     sync_role_manifest(&mut state, storybook_id);
+    mark_affected_pages_stale(&mut state, storybook_id, &[role.id]);
     Ok(Json(role))
 }
 
@@ -594,6 +601,14 @@ async fn replace_storybook_roles(
         changed_roles.push(role.role_key.clone());
     }
     sync_role_manifest(&mut state, storybook_id);
+    let changed_role_ids = state
+        .visuals
+        .storybook_roles
+        .values()
+        .filter(|role| role.storybook_id == storybook_id && changed_roles.contains(&role.role_key))
+        .map(|role| role.id)
+        .collect::<Vec<_>>();
+    mark_affected_pages_stale(&mut state, storybook_id, &changed_role_ids);
     let affected_page_ids = state
         .storybooks
         .pages
@@ -679,6 +694,11 @@ async fn update_prop_profile(
         .ok_or_else(|| ApiError::not_found("prop_profile"))?;
     validate_storybook_visible(&state, storybook_id)?;
     let prop = state.visuals.prop_profiles.get_mut(&prop_id).unwrap();
+    if prop.active_reference_image_id.is_some() && prop_profile_visual_fields_changed(&payload) {
+        return Err(ApiError::state_conflict(
+            "active 道具参考图存在时，视觉特征变更必须重新生成参考图",
+        ));
+    }
     apply_optional_string(&mut prop.shape, payload.shape);
     apply_optional_string(&mut prop.primary_color, payload.primary_color);
     apply_optional_string(&mut prop.secondary_color, payload.secondary_color);
@@ -1062,6 +1082,58 @@ fn character_profile_visual_fields_changed(payload: &UpdateCharacterProfileReque
         || payload.negative_rules.is_some()
 }
 
+fn prop_profile_visual_fields_changed(payload: &UpdatePropProfileRequest) -> bool {
+    payload.shape.is_some()
+        || payload.primary_color.is_some()
+        || payload.secondary_color.is_some()
+        || payload.material_style.is_some()
+        || payload.size_description.is_some()
+        || payload.visual_must_keep.is_some()
+        || payload.negative_rules.is_some()
+}
+
+fn mark_affected_pages_stale(
+    state: &mut crate::api::AppState,
+    storybook_id: Uuid,
+    changed_role_ids: &[Uuid],
+) {
+    if changed_role_ids.is_empty() {
+        return;
+    }
+    let affected_page_ids = state
+        .visuals
+        .page_visual_subjects
+        .iter()
+        .filter_map(|(page_id, subjects)| {
+            subjects
+                .iter()
+                .any(|subject| {
+                    subject
+                        .storybook_role_id
+                        .is_some_and(|role_id| changed_role_ids.contains(&role_id))
+                })
+                .then_some(*page_id)
+        })
+        .collect::<Vec<_>>();
+    if affected_page_ids.is_empty() {
+        return;
+    }
+    if let Some(pages) = state.storybooks.pages.get_mut(&storybook_id) {
+        for page in pages {
+            if affected_page_ids.contains(&page.id) {
+                page.current_image_asset_id = None;
+                page.current_image_task_id = None;
+                page.illustration_status = "not_started".to_string();
+                page.updated_at = now();
+            }
+        }
+    }
+    if let Some(storybook) = state.storybooks.storybooks.get_mut(&storybook_id) {
+        storybook.illustration_status = "not_started".to_string();
+        storybook.updated_at = now();
+    }
+}
+
 fn validate_role_replacement(
     state: &crate::api::AppState,
     payload: &RoleReplacementRequest,
@@ -1217,6 +1289,23 @@ fn next_parent_character_version(
         .max()
         .unwrap_or(0)
         + 1
+}
+
+fn parent_character_version_exists(
+    state: &crate::api::AppState,
+    parent_id: Uuid,
+    child_id: Option<Uuid>,
+    version: i32,
+) -> bool {
+    state
+        .visuals
+        .parent_character_profiles
+        .values()
+        .any(|profile| {
+            profile.parent_id == parent_id
+                && profile.child_id == child_id
+                && profile.version == version
+        })
 }
 
 fn validate_importance(importance: &str) -> Result<(), ApiError> {
@@ -1554,10 +1643,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_duplicate_parent_character_version() {
+        let app = test_app();
+        let parent_id = first_parent_id(app.clone()).await;
+        let (status, first) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/parents/{parent_id}/character-profiles"),
+            json!({
+                "version": 1,
+                "role": "妈妈",
+                "name": "张女士",
+                "visual_must_keep": ["黑色长发"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+
+        let (status, body) = request_json(
+            app,
+            "POST",
+            &format!("/api/parents/{parent_id}/character-profiles"),
+            json!({
+                "version": 1,
+                "role": "妈妈",
+                "name": "张女士",
+                "visual_must_keep": ["黑色长发"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "version");
+    }
+
+    #[tokio::test]
+    async fn rejects_visual_edits_to_prop_with_active_reference() {
+        let app = test_app();
+        let storybook = create_storybook(app.clone()).await;
+        let storybook_id = storybook["id"].as_str().unwrap();
+        let (_, prop) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/props"),
+            json!({
+                "name": "小熊玩偶",
+                "shape": "圆头小熊",
+                "visual_must_keep": ["圆耳朵", "棕色毛绒", "米色肚子"]
+            }),
+        )
+        .await;
+        let prop_id = prop["id"].as_str().unwrap();
+        let (_, reference) = request_json(
+            app.clone(),
+            "POST",
+            "/api/reference-images/generate",
+            json!({
+                "subject_type": "prop",
+                "prop_profile_id": prop_id,
+                "style_id": "storybook_flat_v1"
+            }),
+        )
+        .await;
+        let reference_id = reference["id"].as_str().unwrap();
+        let (status, _) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/reference-images/{reference_id}/activate"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_json(
+            app,
+            "PATCH",
+            &format!("/api/prop-profiles/{prop_id}"),
+            json!({ "shape": "方头小熊" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+    }
+
+    #[tokio::test]
     async fn replaces_storybook_role_and_syncs_manifest() {
         let app = test_app();
         let storybook = create_storybook(app.clone()).await;
         let storybook_id = storybook["id"].as_str().unwrap();
+        let (_, detail) = get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let (_, roles) = get_json(
+            app.clone(),
+            &format!("/api/storybooks/{storybook_id}/roles"),
+        )
+        .await;
+        let role_id = roles["items"][0]["id"].as_str().unwrap();
+        let (status, _) = request_json(
+            app.clone(),
+            "PUT",
+            &format!("/api/storybook-pages/{page_id}/visual-subjects"),
+            json!({
+                "subjects": [{
+                    "subject_type": "storybook_role",
+                    "storybook_role_id": role_id,
+                    "importance": "primary"
+                }]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, image_task) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{image_task}");
+
         let child_id = first_child_id(app.clone()).await;
         let (_, profile) = request_json(
             app.clone(),
@@ -1594,6 +1800,8 @@ mod tests {
             detail["role_manifest_json"]["protagonist"]["character_profile_id"],
             profile_id
         );
+        assert_eq!(detail["pages"][0]["current_image_task_id"], Value::Null);
+        assert_eq!(detail["pages"][0]["illustration_status"], "not_started");
     }
 
     #[tokio::test]
