@@ -2,6 +2,7 @@ use super::{ApiError, SharedState, now};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, patch, post},
 };
 use chrono::{DateTime, Utc};
@@ -327,12 +328,31 @@ pub struct CaseSummary {
 
 async fn generate_storybook(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(payload): Json<GenerateStorybookRequest>,
 ) -> Result<Json<GenerateStorybookResponse>, ApiError> {
     validate_content_type(&payload.content_type)?;
     let mut state = state.write().expect("state lock poisoned");
     let school_id = state.organization.current_school_id;
     let teacher_id = state.organization.current_teacher_id;
+    let idempotency_key = idempotency_key_from_headers(&headers)?;
+    let fingerprint = generate_storybook_fingerprint(&payload);
+    if let Some(existing) = find_idempotent_storybook(
+        &state,
+        school_id,
+        teacher_id,
+        idempotency_key.as_deref(),
+        &fingerprint,
+    )? {
+        return Ok(Json(GenerateStorybookResponse {
+            story_task: StoryTaskSummary {
+                provider: state.storybooks.story_provider.provider_name().to_string(),
+                status: "succeeded".to_string(),
+                poll_url: format!("/api/storybooks/{}", existing.id),
+            },
+            storybook: existing,
+        }));
+    }
     let source_case = payload
         .case_storybook_id
         .and_then(|case_id| state.content.case_storybooks.get(&case_id).cloned());
@@ -454,7 +474,9 @@ async fn generate_storybook(
         reading_age_group: payload.reading_age_group.and_then(normalize_optional_owned),
         generation_config_json: json!({
             "story_provider": state.storybooks.story_provider.provider_name(),
-            "options": payload.generation_options
+            "options": payload.generation_options,
+            "idempotency_key": idempotency_key,
+            "idempotency_fingerprint": fingerprint
         }),
         role_manifest_json: generated.role_manifest_json,
         story_status: "story_ready".to_string(),
@@ -1139,6 +1161,75 @@ fn validate_manual_share_scope_update(share_scope: &str) -> Result<(), ApiError>
     Ok(())
 }
 
+fn find_idempotent_storybook(
+    state: &crate::api::AppState,
+    school_id: Uuid,
+    teacher_id: Uuid,
+    idempotency_key: Option<&str>,
+    fingerprint: &Value,
+) -> Result<Option<StorybookRecord>, ApiError> {
+    let Some(idempotency_key) = idempotency_key else {
+        return Ok(None);
+    };
+    let existing = state.storybooks.storybooks.values().find(|storybook| {
+        storybook.school_id == Some(school_id)
+            && storybook.teacher_id == teacher_id
+            && storybook
+                .generation_config_json
+                .get("idempotency_key")
+                .and_then(Value::as_str)
+                == Some(idempotency_key)
+    });
+    if let Some(storybook) = existing {
+        if storybook
+            .generation_config_json
+            .get("idempotency_fingerprint")
+            == Some(fingerprint)
+        {
+            return Ok(Some(storybook.clone()));
+        }
+        return Err(idempotency_conflict());
+    }
+    Ok(None)
+}
+
+fn generate_storybook_fingerprint(payload: &GenerateStorybookRequest) -> Value {
+    json!({
+        "content_type": payload.content_type,
+        "child_id": payload.child_id,
+        "case_storybook_id": payload.case_storybook_id,
+        "source_storybook_id": payload.source_storybook_id,
+        "title_override": payload.title_override,
+        "style_id": payload.style_id,
+        "reading_age_group": payload.reading_age_group,
+        "teaching_goal": payload.teaching_goal,
+        "generation_options": payload.generation_options
+    })
+}
+
+fn idempotency_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let Some(value) = headers.get("idempotency-key") else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| ApiError::validation("Idempotency-Key", "幂等键必须是有效字符串"))?
+        .trim();
+    if value.is_empty() {
+        return Err(ApiError::validation("Idempotency-Key", "幂等键不能为空"));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn idempotency_conflict() -> ApiError {
+    ApiError {
+        status: axum::http::StatusCode::CONFLICT,
+        code: "IDEMPOTENCY_CONFLICT",
+        message: "同一个 Idempotency-Key 的请求参数不一致".to_string(),
+        details: vec![],
+    }
+}
+
 fn required_trimmed(value: String, field: &'static str) -> Result<String, ApiError> {
     let value = value.trim();
     if value.is_empty() {
@@ -1243,6 +1334,29 @@ mod tests {
         (status, body)
     }
 
+    async fn request_json_with_idempotency_key(
+        app: axum::Router,
+        method: &str,
+        uri: &str,
+        body: Value,
+        idempotency_key: &str,
+    ) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("Idempotency-Key", idempotency_key)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, body)
+    }
+
     async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Value) {
         let request = Request::builder()
             .method("GET")
@@ -1290,6 +1404,63 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(detail["pages"].as_array().unwrap().len(), 6);
         assert_eq!(detail["pages"][0]["scene_spec_status"], "ready");
+    }
+
+    #[tokio::test]
+    async fn generate_storybook_is_idempotent_per_key_and_payload() {
+        let app = test_app();
+        let (_, cases) = get_json(app.clone(), "/api/cases").await;
+        let case_id = cases["items"][0]["id"].as_str().unwrap();
+        let payload = json!({
+            "content_type": "plain_storybook",
+            "case_storybook_id": case_id,
+            "title_override": "幂等生成故事",
+            "style_id": "storybook_flat_v1",
+            "reading_age_group": "5-6"
+        });
+        let (status, first) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            "/api/storybooks/generate",
+            payload.clone(),
+            "story-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let (status, second) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            "/api/storybooks/generate",
+            payload,
+            "story-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert_eq!(second["storybook"]["id"], first["storybook"]["id"]);
+        assert_eq!(
+            second["story_task"]["poll_url"],
+            format!(
+                "/api/storybooks/{}",
+                first["storybook"]["id"].as_str().unwrap()
+            )
+        );
+
+        let (status, conflict) = request_json_with_idempotency_key(
+            app,
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "plain_storybook",
+                "case_storybook_id": case_id,
+                "title_override": "另一个标题",
+                "style_id": "storybook_flat_v1",
+                "reading_age_group": "5-6"
+            }),
+            "story-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+        assert_eq!(conflict["error"]["code"], "IDEMPOTENCY_CONFLICT");
     }
 
     #[tokio::test]
