@@ -489,6 +489,8 @@ async fn create_page_image_task(
     )? {
         return Ok(Json(task_detail(&state, existing)));
     }
+    let style_id = payload.style_id.clone();
+    let prompt_template_version = payload.prompt_template_version.clone();
     let task = build_task(
         &state,
         "page_image_generation",
@@ -498,13 +500,19 @@ async fn create_page_image_task(
         None,
         payload.style_id,
         payload.prompt_template_version,
-        scene_spec_json,
-        json!({
-            "page": page,
-            "reference_image_ids": payload.reference_image_ids,
-            "regeneration_reason": payload.regeneration_reason,
-            "idempotency_fingerprint": fingerprint
-        }),
+        scene_spec_json.clone(),
+        page_image_input_snapshot(
+            &state,
+            storybook_id,
+            &page,
+            &style_id,
+            &prompt_template_version,
+            scene_spec_json.as_ref(),
+            &payload.reference_image_ids,
+            payload.regeneration_reason.as_deref(),
+            Some(fingerprint),
+            None,
+        ),
     )?;
     let task = with_idempotency_key(task, idempotency_key);
     let detail = run_seedream_task(&mut state, task)?;
@@ -600,6 +608,7 @@ async fn create_storybook_image_task(
     state.images.tasks.insert(parent_task_id, parent_task);
     for page_id in &page_ids {
         let (_, page) = page_snapshot(&state, *page_id)?;
+        let scene_spec_json = page.scene_spec_json.clone();
         let child_task = build_task(
             &state,
             "page_image_generation",
@@ -609,8 +618,19 @@ async fn create_storybook_image_task(
             None,
             payload.style_id.clone(),
             payload.prompt_template_version.clone(),
-            page.scene_spec_json.clone(),
-            json!({ "page": page, "parent_task_id": parent_task_id }),
+            scene_spec_json.clone(),
+            page_image_input_snapshot(
+                &state,
+                storybook_id,
+                &page,
+                &payload.style_id,
+                &payload.prompt_template_version,
+                scene_spec_json.as_ref(),
+                &[],
+                None,
+                None,
+                Some(parent_task_id),
+            ),
         )?;
         let detail = run_seedream_task(&mut state, child_task)?;
         mark_page_running_or_ready(&mut state, storybook_id, *page_id, &detail);
@@ -1104,6 +1124,61 @@ fn eligible_page_ids(
         .filter(|page| page.scene_spec_status == "ready")
         .map(|page| page.id)
         .collect()
+}
+
+fn page_image_input_snapshot(
+    state: &crate::api::AppState,
+    storybook_id: Uuid,
+    page: &crate::api::storybooks::StorybookPageRecord,
+    style_id: &str,
+    prompt_template_version: &str,
+    scene_spec_json: Option<&Value>,
+    reference_image_ids: &[Uuid],
+    regeneration_reason: Option<&str>,
+    idempotency_fingerprint: Option<Value>,
+    parent_task_id: Option<Uuid>,
+) -> Value {
+    let role_manifest_json = state
+        .storybooks
+        .storybooks
+        .get(&storybook_id)
+        .map(|storybook| storybook.role_manifest_json.clone())
+        .unwrap_or_else(|| json!({}));
+    let page_visual_subjects = state
+        .visuals
+        .page_visual_subjects
+        .get(&page.id)
+        .cloned()
+        .unwrap_or_default();
+    let prop_profile_ids = page_visual_subjects
+        .iter()
+        .filter_map(|subject| subject.prop_profile_id)
+        .collect::<Vec<_>>();
+    let prop_profiles = prop_profile_ids
+        .iter()
+        .filter_map(|prop_id| state.visuals.prop_profiles.get(prop_id).cloned())
+        .collect::<Vec<_>>();
+    let reference_images = reference_image_ids
+        .iter()
+        .filter_map(|reference_image_id| state.visuals.reference_images.get(reference_image_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    json!({
+        "page": page,
+        "scene_spec_json": scene_spec_json,
+        "style": {
+            "style_id": style_id,
+            "prompt_template_version": prompt_template_version
+        },
+        "role_manifest_json": role_manifest_json,
+        "page_visual_subjects": page_visual_subjects,
+        "prop_profiles": prop_profiles,
+        "reference_images": reference_images,
+        "reference_image_ids": reference_image_ids,
+        "regeneration_reason": regeneration_reason,
+        "parent_task_id": parent_task_id,
+        "idempotency_fingerprint": idempotency_fingerprint
+    })
 }
 
 fn validate_reference_images_for_page(
@@ -1736,6 +1811,11 @@ mod tests {
         assert_eq!(task["provider_name"], "fake_seedream");
         assert_eq!(task["outputs"].as_array().unwrap().len(), 1);
         assert_eq!(task["outputs"][0]["image_asset"]["width"], 1024);
+        assert_eq!(
+            task["input_snapshot_json"]["style"]["style_id"],
+            "storybook_flat_v1"
+        );
+        assert!(task["input_snapshot_json"]["role_manifest_json"].is_object());
 
         let task_id = task["id"].as_str().unwrap();
         let (_, fetched) = get_json(app, &format!("/api/image-tasks/{task_id}")).await;
@@ -2154,6 +2234,46 @@ mod tests {
         let app = test_app();
         let detail = create_storybook(app.clone()).await;
         let storybook_id = detail["id"].as_str().unwrap();
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let (_, roles) = get_json(
+            app.clone(),
+            &format!("/api/storybooks/{storybook_id}/roles"),
+        )
+        .await;
+        let role_id = roles["items"][0]["id"].as_str().unwrap();
+        let (status, prop) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/props"),
+            json!({
+                "name": "小熊玩偶",
+                "visual_must_keep": ["圆耳朵", "棕色毛绒", "米色肚子"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{prop}");
+        let prop_id = prop["id"].as_str().unwrap();
+        let (status, subjects) = request_json(
+            app.clone(),
+            "PUT",
+            &format!("/api/storybook-pages/{page_id}/visual-subjects"),
+            json!({
+                "subjects": [
+                    {
+                        "subject_type": "storybook_role",
+                        "storybook_role_id": role_id,
+                        "importance": "primary"
+                    },
+                    {
+                        "subject_type": "prop",
+                        "prop_profile_id": prop_id,
+                        "importance": "medium"
+                    }
+                ]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{subjects}");
         let uri = format!("/api/storybooks/{storybook_id}/image-tasks");
         let payload = json!({
             "style_id": "storybook_flat_v1",
@@ -2181,6 +2301,31 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{second}");
         assert_eq!(second["task_id"], first["task_id"]);
         assert_eq!(second["page_task_count"], first["page_task_count"]);
+        let (_, page_detail) =
+            get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        let child_task_id = page_detail["pages"][0]["current_image_task_id"]
+            .as_str()
+            .unwrap();
+        let (_, child_task) =
+            get_json(app.clone(), &format!("/api/image-tasks/{child_task_id}")).await;
+        assert_eq!(
+            child_task["input_snapshot_json"]["style"]["prompt_template_version"],
+            "page_image_v1"
+        );
+        assert_eq!(
+            child_task["input_snapshot_json"]["page_visual_subjects"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            child_task["input_snapshot_json"]["prop_profiles"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
 
         let (status, conflict) = request_json_with_idempotency_key(
             app,
