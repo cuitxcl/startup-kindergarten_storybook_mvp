@@ -628,8 +628,12 @@ async fn retry_image_task(
     Path(task_id): Path<Uuid>,
     Json(payload): Json<RetryImageTaskRequest>,
 ) -> Result<Json<ImageTaskDetailResponse>, ApiError> {
+    if let Some(retry_reason) = payload.retry_reason.as_deref() {
+        validate_failure_reason(retry_reason, "retry_reason")?;
+    }
     let mut state = state.write().expect("state lock poisoned");
     let original = visible_task(&state, task_id)?.clone();
+    validate_task_retryable(&original, &payload)?;
     if original.retry_count >= original.max_retries {
         return Err(ApiError {
             status: axum::http::StatusCode::CONFLICT,
@@ -1365,6 +1369,49 @@ fn validate_review_action(review_action: &str) -> Result<(), ApiError> {
     }
 }
 
+fn validate_failure_reason(reason: &str, field: &'static str) -> Result<(), ApiError> {
+    if [
+        "character_inconsistent",
+        "scene_mismatch",
+        "composition_mismatch",
+        "quality_artifact",
+        "unsafe_content",
+        "provider_error",
+        "timeout",
+        "unknown",
+    ]
+    .contains(&reason)
+    {
+        Ok(())
+    } else {
+        Err(ApiError::validation(field, "失败原因不合法"))
+    }
+}
+
+fn validate_task_retryable(
+    original: &ImageGenerationTaskRecord,
+    payload: &RetryImageTaskRequest,
+) -> Result<(), ApiError> {
+    if !["failed", "needs_review"].contains(&original.status.as_str()) {
+        return Err(ApiError::state_conflict(
+            "只有 failed 或 needs_review 任务可以重试",
+        ));
+    }
+    let retry_reason = payload
+        .retry_reason
+        .as_deref()
+        .or(original.failure_reason.as_deref());
+    if payload.override_scene_spec_json.is_none()
+        && !matches!(retry_reason, Some("provider_error" | "timeout"))
+    {
+        return Err(ApiError::validation(
+            "override_scene_spec_json",
+            "非 provider_error/timeout 的原样重试必须提供修改参数",
+        ));
+    }
+    Ok(())
+}
+
 fn required_trimmed(value: String, field: &'static str) -> Result<String, ApiError> {
     let value = value.trim();
     if value.is_empty() {
@@ -1403,11 +1450,16 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::{Arc, RwLock};
     use tower::ServiceExt;
+    use uuid::Uuid;
 
-    fn test_app() -> axum::Router {
+    fn test_state() -> Arc<RwLock<AppState>> {
         let mut state = AppState::demo();
         state.images.image_provider = ImageProviderKind::Fake(FakeSeedreamImageProvider);
-        router(Arc::new(RwLock::new(state)))
+        Arc::new(RwLock::new(state))
+    }
+
+    fn test_app() -> axum::Router {
+        router(test_state())
     }
 
     async fn request_json(
@@ -1837,7 +1889,8 @@ mod tests {
 
     #[tokio::test]
     async fn retries_task_and_lists_costs() {
-        let app = test_app();
+        let state = test_state();
+        let app = router(state.clone());
         let detail = create_storybook(app.clone()).await;
         let page_id = detail["pages"][0]["id"].as_str().unwrap();
         let (_, task) = request_json(
@@ -1851,6 +1904,13 @@ mod tests {
         )
         .await;
         let task_id = task["id"].as_str().unwrap();
+        let task_uuid = Uuid::parse_str(task_id).unwrap();
+        {
+            let mut state = state.write().unwrap();
+            let task = state.images.tasks.get_mut(&task_uuid).unwrap();
+            task.status = "needs_review".to_string();
+            task.failure_reason = Some("composition_mismatch".to_string());
+        }
         let (status, retry) = request_json(
             app.clone(),
             "POST",
@@ -1876,6 +1936,60 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(costs["total"], 2);
+    }
+
+    #[tokio::test]
+    async fn retry_requires_overrides_for_non_provider_failures() {
+        let state = test_state();
+        let app = router(state.clone());
+        let detail = create_storybook(app.clone()).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let (_, task) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1"
+            }),
+        )
+        .await;
+        let task_id = task["id"].as_str().unwrap();
+        let task_uuid = Uuid::parse_str(task_id).unwrap();
+        {
+            let mut state = state.write().unwrap();
+            let task = state.images.tasks.get_mut(&task_uuid).unwrap();
+            task.status = "failed".to_string();
+            task.failure_reason = Some("composition_mismatch".to_string());
+        }
+
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/image-tasks/{task_id}/retry"),
+            json!({ "retry_reason": "composition_mismatch" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["error"]["details"][0]["field"],
+            "override_scene_spec_json"
+        );
+
+        {
+            let mut state = state.write().unwrap();
+            let task = state.images.tasks.get_mut(&task_uuid).unwrap();
+            task.failure_reason = Some("provider_error".to_string());
+        }
+        let (status, retry) = request_json(
+            app,
+            "POST",
+            &format!("/api/image-tasks/{task_id}/retry"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{retry}");
+        assert_eq!(retry["retry_count"], 1);
     }
 
     #[tokio::test]
