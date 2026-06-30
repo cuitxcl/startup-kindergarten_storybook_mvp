@@ -577,7 +577,42 @@ fn validate_template_outline(outline: &Value, page_count: i32) -> Result<(), Api
             "pages 数量必须等于 page_count",
         ));
     }
+    for (index, page) in pages.iter().enumerate() {
+        let page = page
+            .as_object()
+            .ok_or_else(|| ApiError::validation("template_outline_json", "页面结构必须是对象"))?;
+        let page_role = page
+            .get("page_role")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                ApiError::validation("template_outline_json", "每页必须包含 page_role")
+            })?;
+        validate_page_role(page_role)?;
+        if index == 0 && page_role != "cover" {
+            return Err(ApiError::validation(
+                "template_outline_json",
+                "第一页必须是 cover",
+            ));
+        }
+        if index + 1 == pages.len() && page_role != "closing" {
+            return Err(ApiError::validation(
+                "template_outline_json",
+                "最后一页必须是 closing",
+            ));
+        }
+    }
     Ok(())
+}
+
+fn validate_page_role(page_role: &str) -> Result<(), ApiError> {
+    if ["cover", "story", "interaction", "closing"].contains(&page_role) {
+        Ok(())
+    } else {
+        Err(ApiError::validation(
+            "template_outline_json",
+            "page_role 不合法",
+        ))
+    }
 }
 
 fn validate_optional_status(
@@ -792,6 +827,53 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "VALIDATION_ERROR");
+        assert_eq!(
+            body["error"]["details"][0]["field"],
+            "template_outline_json"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_template_outline_page_roles() {
+        let (status, body) = request_json(
+            operator_app(),
+            "POST",
+            "/api/story-templates",
+            json!({
+                "title": "错误模板",
+                "content_type": "plain_storybook",
+                "theme": "分享合作",
+                "teaching_goal": "测试",
+                "page_count": 2,
+                "template_outline_json": {
+                    "pages": [{"page_role": "story"}, {"page_role": "closing"}]
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["error"]["details"][0]["field"],
+            "template_outline_json"
+        );
+
+        let (status, body) = request_json(
+            operator_app(),
+            "POST",
+            "/api/story-templates",
+            json!({
+                "title": "错误模板",
+                "content_type": "plain_storybook",
+                "theme": "分享合作",
+                "teaching_goal": "测试",
+                "page_count": 2,
+                "template_outline_json": {
+                    "pages": [{"page_role": "cover"}, {"page_role": "unknown"}]
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert_eq!(
             body["error"]["details"][0]["field"],
             "template_outline_json"
