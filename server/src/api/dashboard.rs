@@ -722,7 +722,8 @@ mod tests {
                 "export_type": "pdf",
                 "include_teacher_tips": false,
                 "page_size": "A4",
-                "quality": "print"
+                "quality": "print",
+                "allow_text_only": true
             }),
         )
         .await;

@@ -60,6 +60,7 @@ pub struct StorybookExportRecord {
     pub include_teacher_tips: bool,
     pub page_size: String,
     pub quality: String,
+    pub allow_text_only: bool,
     pub status: String,
     pub asset_id: Option<Uuid>,
     pub download_url: Option<String>,
@@ -94,6 +95,7 @@ pub struct CreateExportRequest {
     pub include_teacher_tips: Option<bool>,
     pub page_size: Option<String>,
     pub quality: Option<String>,
+    pub allow_text_only: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,6 +201,14 @@ async fn create_export(
     if storybook.story_status != "story_ready" {
         return Err(ApiError::state_conflict("故事内容就绪后才能导出"));
     }
+    if storybook.illustration_status != "ready" && payload.allow_text_only != Some(true) {
+        return Err(ApiError {
+            status: axum::http::StatusCode::CONFLICT,
+            code: "ILLUSTRATION_NOT_READY",
+            message: "图片未完成，导出文字版必须显式 allow_text_only=true".to_string(),
+            details: vec![],
+        });
+    }
 
     let created_at = now();
     let export = StorybookExportRecord {
@@ -210,6 +220,7 @@ async fn create_export(
         include_teacher_tips: payload.include_teacher_tips.unwrap_or(false),
         page_size: payload.page_size.unwrap_or_else(|| "A4".to_string()),
         quality: payload.quality.unwrap_or_else(|| "print".to_string()),
+        allow_text_only: payload.allow_text_only.unwrap_or(false),
         status: "queued".to_string(),
         asset_id: None,
         download_url: None,
@@ -709,7 +720,8 @@ fn export_fingerprint(payload: &CreateExportRequest) -> serde_json::Value {
         "export_type": payload.export_type,
         "include_teacher_tips": payload.include_teacher_tips.unwrap_or(false),
         "page_size": payload.page_size.as_deref().unwrap_or("A4"),
-        "quality": payload.quality.as_deref().unwrap_or("print")
+        "quality": payload.quality.as_deref().unwrap_or("print"),
+        "allow_text_only": payload.allow_text_only.unwrap_or(false)
     })
 }
 
@@ -971,7 +983,8 @@ mod tests {
                 "export_type": "pdf",
                 "include_teacher_tips": false,
                 "page_size": "A4",
-                "quality": "print"
+                "quality": "print",
+                "allow_text_only": true
             }),
         )
         .await;
@@ -986,6 +999,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn export_requires_explicit_text_only_when_images_are_not_ready() {
+        let app = test_app();
+        let storybook_id = create_storybook(app.clone()).await;
+        let (status, body) = request_json(
+            app,
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/exports"),
+            json!({
+                "export_type": "pdf",
+                "include_teacher_tips": false,
+                "page_size": "A4",
+                "quality": "print"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "ILLUSTRATION_NOT_READY");
+    }
+
+    #[tokio::test]
     async fn export_creation_is_idempotent_per_key_and_payload() {
         let app = test_app();
         let storybook_id = create_storybook(app.clone()).await;
@@ -994,7 +1027,8 @@ mod tests {
             "export_type": "pdf",
             "include_teacher_tips": false,
             "page_size": "A4",
-            "quality": "print"
+            "quality": "print",
+            "allow_text_only": true
         });
         let (status, first) = request_json_with_idempotency_key(
             app.clone(),
@@ -1019,7 +1053,8 @@ mod tests {
                 "export_type": "pdf",
                 "include_teacher_tips": true,
                 "page_size": "A4",
-                "quality": "print"
+                "quality": "print",
+                "allow_text_only": true
             }),
             "export-key-1",
         )
