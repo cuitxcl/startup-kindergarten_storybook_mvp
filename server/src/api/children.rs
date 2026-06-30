@@ -518,6 +518,7 @@ async fn add_child_photo(
             "撤销授权照片不能设为主照片",
         ));
     }
+    validate_child_photo_asset(&state, payload.image_asset_id)?;
     if is_primary {
         clear_primary_photo(&mut state, child_id);
     }
@@ -865,6 +866,24 @@ fn clear_primary_photo(state: &mut crate::api::AppState, child_id: Uuid) {
     }
 }
 
+fn validate_child_photo_asset(
+    state: &crate::api::AppState,
+    image_asset_id: Uuid,
+) -> Result<(), ApiError> {
+    let asset = state
+        .images
+        .assets
+        .get(&image_asset_id)
+        .ok_or_else(|| ApiError::not_found("asset"))?;
+    if asset.asset_type != "child_photo" {
+        return Err(ApiError::validation(
+            "image_asset_id",
+            "儿童照片必须绑定 child_photo 类型资产",
+        ));
+    }
+    Ok(())
+}
+
 fn refresh_profile_completion(child: &mut ChildRecord, has_primary_photo: bool) {
     let has_visual_signal = child.hair.is_some()
         || child.usual_outfit.is_some()
@@ -1075,12 +1094,27 @@ mod tests {
         )
         .await;
         let child_id = created["id"].as_str().unwrap();
+        let (status, asset) = request_json(
+            app.clone(),
+            "POST",
+            "/api/assets",
+            json!({
+                "asset_type": "child_photo",
+                "storage_url": "https://example.com/child-photo.png",
+                "mime_type": "image/png",
+                "width": 1024,
+                "height": 1024
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{asset}");
+        let image_asset_id = asset["id"].as_str().unwrap();
         let (status, photo) = request_json(
             app.clone(),
             "POST",
             &format!("/api/children/{child_id}/photos"),
             json!({
-                "image_asset_id": "00000000-0000-0000-0000-000000000088",
+                "image_asset_id": image_asset_id,
                 "photo_type": "portrait",
                 "is_primary": true,
                 "consent_status": "granted"
@@ -1103,6 +1137,60 @@ mod tests {
         let (status, detail) = get_json(app, &format!("/api/children/{child_id}")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(detail["photos"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn rejects_child_photo_without_child_photo_asset() {
+        let app = test_app();
+        let (_, created) = request_json(
+            app.clone(),
+            "POST",
+            "/api/children",
+            json!({ "name": "小米" }),
+        )
+        .await;
+        let child_id = created["id"].as_str().unwrap();
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/children/{child_id}/photos"),
+            json!({
+                "image_asset_id": "00000000-0000-0000-0000-000000000088",
+                "photo_type": "portrait",
+                "is_primary": true,
+                "consent_status": "granted"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+        let (status, asset) = request_json(
+            app.clone(),
+            "POST",
+            "/api/assets",
+            json!({
+                "asset_type": "storybook_page_image",
+                "storage_url": "https://example.com/page-image.png",
+                "mime_type": "image/png"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{asset}");
+        let image_asset_id = asset["id"].as_str().unwrap();
+        let (status, body) = request_json(
+            app,
+            "POST",
+            &format!("/api/children/{child_id}/photos"),
+            json!({
+                "image_asset_id": image_asset_id,
+                "photo_type": "portrait",
+                "is_primary": true,
+                "consent_status": "granted"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "image_asset_id");
     }
 
     #[tokio::test]
