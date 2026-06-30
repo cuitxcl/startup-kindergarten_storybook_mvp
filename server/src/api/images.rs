@@ -393,9 +393,33 @@ async fn create_asset(
     if let Some(mime_type) = payload.mime_type.as_deref() {
         validate_mime_type(mime_type)?;
     }
+    if let Some(file_size) = payload.file_size
+        && file_size <= 0
+    {
+        return Err(ApiError::validation("file_size", "文件大小必须大于 0"));
+    }
+    let upload_intent_id = payload
+        .metadata_json
+        .get("upload_intent_id")
+        .and_then(Value::as_str)
+        .map(|value| {
+            Uuid::parse_str(value).map_err(|_| {
+                ApiError::validation("metadata_json.upload_intent_id", "上传意图 ID 不合法")
+            })
+        })
+        .transpose()?;
+    let mut state = state.write().expect("state lock poisoned");
+    if let Some(upload_intent_id) = upload_intent_id {
+        let intent = state
+            .images
+            .upload_intents
+            .get(&upload_intent_id)
+            .ok_or_else(|| ApiError::not_found("upload_intent"))?;
+        validate_asset_matches_upload_intent(&payload, intent)?;
+    }
     let asset = ImageAssetRecord {
         id: Uuid::new_v4(),
-        asset_type: payload.asset_type,
+        asset_type: payload.asset_type.clone(),
         storage_url: required_trimmed(payload.storage_url, "storage_url")?,
         storage_key: payload.storage_key.and_then(normalize_optional_owned),
         mime_type: payload.mime_type.and_then(normalize_optional_owned),
@@ -407,8 +431,12 @@ async fn create_asset(
         metadata_json: payload.metadata_json,
         created_at: now(),
     };
-    let mut state = state.write().expect("state lock poisoned");
     state.images.assets.insert(asset.id, asset.clone());
+    if let Some(upload_intent_id) = upload_intent_id
+        && let Some(intent) = state.images.upload_intents.get_mut(&upload_intent_id)
+    {
+        intent.status = "completed".to_string();
+    }
     Ok(Json(asset))
 }
 
@@ -1346,6 +1374,46 @@ fn validate_mime_type(mime_type: &str) -> Result<(), ApiError> {
     }
 }
 
+fn validate_asset_matches_upload_intent(
+    payload: &CreateAssetRequest,
+    intent: &UploadIntentRecord,
+) -> Result<(), ApiError> {
+    if intent.status != "created" {
+        return Err(ApiError::state_conflict("上传意图已完成或不可用"));
+    }
+    if payload.asset_type != intent.asset_type {
+        return Err(ApiError::validation(
+            "asset_type",
+            "资产类型必须和上传意图一致",
+        ));
+    }
+    if payload.storage_key.as_deref() != Some(intent.storage_key.as_str()) {
+        return Err(ApiError::validation(
+            "storage_key",
+            "storage_key 必须和上传意图一致",
+        ));
+    }
+    if payload.mime_type.as_deref() != Some(intent.mime_type.as_str()) {
+        return Err(ApiError::validation(
+            "mime_type",
+            "mime_type 必须和上传意图一致",
+        ));
+    }
+    if payload.file_size != Some(intent.file_size) {
+        return Err(ApiError::validation(
+            "file_size",
+            "文件大小必须和上传意图一致",
+        ));
+    }
+    if payload.checksum.as_deref() != intent.checksum.as_deref() {
+        return Err(ApiError::validation(
+            "checksum",
+            "checksum 必须和上传意图一致",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_task_type(task_type: &str) -> Result<(), ApiError> {
     if [
         "reference_image_generation",
@@ -1563,22 +1631,90 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(intent["status"], "created");
+        let intent_id = intent["id"].as_str().unwrap();
+        let storage_key = intent["storage_key"].as_str().unwrap();
 
         let (status, asset) = request_json(
+            app.clone(),
+            "POST",
+            "/api/assets",
+            json!({
+                "asset_type": "child_photo",
+                "storage_url": "https://example.com/lele.png",
+                "storage_key": storage_key,
+                "mime_type": "image/png",
+                "width": 512,
+                "height": 512,
+                "file_size": 1024,
+                "checksum": "sha256:demo",
+                "metadata_json": {
+                    "upload_intent_id": intent_id
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{asset}");
+        assert_eq!(asset["asset_type"], "child_photo");
+        assert_eq!(asset["metadata_json"]["upload_intent_id"], intent_id);
+
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            "/api/assets",
+            json!({
+                "asset_type": "child_photo",
+                "storage_url": "https://example.com/reuse.png",
+                "storage_key": storage_key,
+                "mime_type": "image/png",
+                "file_size": 1024,
+                "checksum": "sha256:demo",
+                "metadata_json": {
+                    "upload_intent_id": intent_id
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn rejects_asset_when_upload_intent_payload_mismatches() {
+        let app = test_app();
+        let (_, intent) = request_json(
+            app.clone(),
+            "POST",
+            "/api/assets/upload-intents",
+            json!({
+                "asset_type": "child_photo",
+                "filename": "lele.png",
+                "mime_type": "image/png",
+                "file_size": 1024,
+                "checksum": "sha256:demo"
+            }),
+        )
+        .await;
+        let intent_id = intent["id"].as_str().unwrap();
+
+        let (status, body) = request_json(
             app,
             "POST",
             "/api/assets",
             json!({
                 "asset_type": "child_photo",
                 "storage_url": "https://example.com/lele.png",
+                "storage_key": "uploads/child_photo/wrong",
                 "mime_type": "image/png",
-                "width": 512,
-                "height": 512
+                "file_size": 1024,
+                "checksum": "sha256:demo",
+                "metadata_json": {
+                    "upload_intent_id": intent_id
+                }
             }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(asset["asset_type"], "child_photo");
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "storage_key");
     }
 
     #[tokio::test]
