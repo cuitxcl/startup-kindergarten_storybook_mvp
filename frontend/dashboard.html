@@ -136,11 +136,9 @@
           </div>
 
           <div class="editor-block">
-            <div class="ops-section-head compact"><div><p class="eyebrow">Roles</p><h2>角色信息</h2></div><button class="secondary compact-button" type="button" data-toast="已打开角色替换面板。">替换</button></div>
-            <div class="role-list">
-              <article><span class="avatar">果</span><div><strong>主角 · 果果</strong><p>4 岁，代表色红色，分离焦虑支持</p></div></article>
-              <article><span class="avatar">妈</span><div><strong>配角 · 妈妈</strong><p>家庭场景角色，使用家长卡通形象</p></div></article>
-              <article><span class="avatar">师</span><div><strong>配角 · 李老师</strong><p>班级固定角色，可跨绘本复用</p></div></article>
+            <div class="ops-section-head compact"><div><p class="eyebrow">Roles</p><h2>角色信息</h2></div><button class="secondary compact-button" type="button" data-action="rename-role">重命名</button></div>
+            <div class="role-list" id="role-list">
+              <article class="empty-state">正在加载角色...</article>
             </div>
           </div>
 
@@ -151,7 +149,7 @@
               <button type="button">扁平贴纸</button>
               <button type="button">水彩绘本</button>
             </div>
-            <button class="primary full-button" type="button" data-toast="已提交当前页重绘任务，将复用本书角色设定。">单页重绘</button>
+            <button class="primary full-button" type="button" data-action="redraw-page">单页重绘</button>
           </div>
 
           <div class="editor-block">

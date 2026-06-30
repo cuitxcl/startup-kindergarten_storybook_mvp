@@ -12,6 +12,7 @@ const workList = document.querySelector("#work-list");
 const assetTable = document.querySelector("#asset-table");
 const childrenTable = document.querySelector("#children-table");
 const pageStripList = document.querySelector("#page-strip-list");
+const roleList = document.querySelector("#role-list");
 
 let dashboardState = {
   contentItems: [],
@@ -20,6 +21,7 @@ let dashboardState = {
   selectedStorybook: null,
   pages: [],
   selectedPage: null,
+  roles: [],
   workItems: [],
 };
 
@@ -286,6 +288,27 @@ function renderChildren() {
   setText("#metric-child-count", dashboardState.children.length);
 }
 
+function renderRoles(rolesResponse) {
+  const roles = rolesResponse.items || [];
+  dashboardState.roles = roles;
+  if (!roleList) {
+    return;
+  }
+  roleList.replaceChildren();
+  if (roles.length === 0) {
+    roleList.append(Object.assign(document.createElement("article"), { className: "empty-state", textContent: "当前绘本还没有角色。" }));
+    return;
+  }
+  roles.forEach((role) => {
+    const item = document.createElement("article");
+    item.innerHTML = `
+      <span class="avatar">${escapeHtml(firstChar(role.display_name || role.role_key))}</span>
+      <div><strong>${escapeHtml(role.role_key)} · ${escapeHtml(role.display_name)}</strong><p>${escapeHtml(role.role_type)} · ${role.character_profile_id ? "已绑定角色画像" : "未绑定画像"}</p></div>
+    `;
+    roleList.append(item);
+  });
+}
+
 function selectStoryPage(thumb) {
   Array.from(document.querySelectorAll(".page-thumb")).forEach((item) => item.classList.toggle("active", item === thumb));
 
@@ -347,8 +370,12 @@ async function loadStudioPages() {
   }
 
   setText("#storybook-roles-label", selected.child ? `${selected.child.name} · ${selected.theme}` : selected.theme);
-  const pagesResponse = await window.KindleleafApi.listPages(selected.storybook_id);
+  const [pagesResponse, rolesResponse] = await Promise.all([
+    window.KindleleafApi.listPages(selected.storybook_id),
+    window.KindleleafApi.listStorybookRoles(selected.storybook_id),
+  ]);
   renderPages(pagesResponse);
+  renderRoles(rolesResponse);
 }
 
 async function refreshDashboard() {
@@ -434,6 +461,18 @@ async function rewriteCurrentPage() {
   await loadStudioPages();
 }
 
+async function redrawCurrentPage() {
+  const page = requireSelectedPage();
+  const detail = await window.KindleleafApi.createPageImageTask(page.id, {
+    style_id: activeStyleId(),
+    prompt_template_version: "v1",
+    reference_image_ids: [],
+    regeneration_reason: "teacher_requested_redraw",
+  });
+  showDashboardToast(`单页重绘任务已提交：${detail.status}`);
+  await refreshDashboard();
+}
+
 async function deleteCurrentPage() {
   const storybook = requireSelectedStorybook();
   const page = requireSelectedPage();
@@ -489,6 +528,32 @@ async function shareStorybook() {
   });
   showDashboardToast(`分享链接已创建：${share.url}`);
   await refreshDashboard();
+}
+
+function activeStyleId() {
+  const active = document.querySelector(".choice-grid button.active");
+  return {
+    "柔和彩铅": "soft-colored-pencil",
+    "扁平贴纸": "flat-sticker",
+    "水彩绘本": "watercolor-storybook",
+  }[active?.textContent?.trim()] || "soft-colored-pencil";
+}
+
+async function renameFirstRole() {
+  const storybook = requireSelectedStorybook();
+  const role = dashboardState.roles[0];
+  if (!role) {
+    throw new Error("当前绘本还没有可编辑角色。");
+  }
+  const nextName = window.prompt("角色显示名称", role.display_name);
+  if (!nextName) {
+    return;
+  }
+  await window.KindleleafApi.updateStorybookRole(storybook.storybook_id, role.role_key, {
+    display_name: nextName,
+  });
+  showDashboardToast("角色名称已更新。");
+  await loadStudioPages();
 }
 
 async function generateStorybookFromCase(caseId) {
@@ -594,6 +659,7 @@ async function handleAction(action, target) {
     if (action === "save-page") await saveCurrentPage();
     else if (action === "toggle-lock-page") await toggleCurrentPageLock();
     else if (action === "rewrite-page") await rewriteCurrentPage();
+    else if (action === "redraw-page") await redrawCurrentPage();
     else if (action === "delete-page") await deleteCurrentPage();
     else if (action === "add-page") await addPageToCurrentStorybook();
     else if (action === "export-storybook") await exportStorybook(target.dataset.storybookId);
@@ -602,6 +668,7 @@ async function handleAction(action, target) {
     else if (action === "edit-child") await editChildFromPrompt(target.dataset.childId);
     else if (action === "open-storybook") await openStorybook(target.dataset.storybookId);
     else if (action === "generate-storybook") await generateStorybookFromCase(target.dataset.caseId);
+    else if (action === "rename-role") await renameFirstRole();
     else if (action === "filter-export") {
       const exportFilter = document.querySelector('[data-filter="export"]');
       if (exportFilter) exportFilter.click();

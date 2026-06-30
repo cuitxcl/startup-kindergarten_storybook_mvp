@@ -58,10 +58,24 @@ function syncActiveNav() {
 window.addEventListener("scroll", syncActiveNav, { passive: true });
 syncActiveNav();
 
-demoForm.addEventListener("submit", (event) => {
+function themeToCaseTheme(theme) {
+  if (theme.includes("分享")) {
+    return "分享合作";
+  }
+  if (theme.includes("午睡")) {
+    return "生活常规";
+  }
+  if (theme.includes("排队")) {
+    return "生活常规";
+  }
+  return "入园适应";
+}
+
+demoForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = new FormData(demoForm);
   const school = String(data.get("school") || "").trim();
+  const theme = String(data.get("theme") || "勇敢去幼儿园");
   const acceptedPrivacy = data.get("privacy") === "on";
   let valid = true;
 
@@ -82,7 +96,42 @@ demoForm.addEventListener("submit", (event) => {
     return;
   }
 
-  formNote.textContent = `${school} 的演示请求已创建，建议先从“${data.get("theme")}”开始。`;
-  demoForm.reset();
-  showToast("演示请求已保存到当前页面状态。");
+  try {
+    const child = await window.KindleleafApi.createChild({
+      name: "演示孩子",
+      nickname: "乐乐",
+      age: 5,
+      age_group: "5-6",
+      interest_tags: ["积木"],
+      teacher_observation_tags: ["愿意尝试"],
+      teaching_focus: theme,
+    });
+    let cases = await window.KindleleafApi.listCasesByTheme(themeToCaseTheme(theme));
+    if (!cases.items?.length) {
+      cases = await window.KindleleafApi.listCases();
+    }
+    const selectedCase = cases.items?.[0];
+    if (!selectedCase) {
+      throw new Error("当前主题没有可用母本");
+    }
+    const generated = await window.KindleleafApi.generateStorybook({
+      content_type: "custom_storybook",
+      child_id: child.id,
+      case_storybook_id: selectedCase.id,
+      title_override: `乐乐的${selectedCase.title}`,
+      style_id: "soft-colored-pencil",
+      reading_age_group: "5-6",
+      teaching_goal: theme,
+      generation_options: {
+        source: "homepage_demo",
+        school,
+      },
+    });
+    formNote.textContent = `${school} 的演示绘本已创建：《${generated.storybook.title}》。`;
+    demoForm.reset();
+    showToast("演示请求已提交到后端。");
+  } catch (error) {
+    formNote.textContent = `提交失败：${error.message}`;
+    showToast(error.message);
+  }
 });
