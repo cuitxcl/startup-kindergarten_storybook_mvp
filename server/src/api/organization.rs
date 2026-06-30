@@ -256,6 +256,7 @@ async fn create_classroom(
     let mut state = state.write().expect("state lock poisoned");
     let school_id = state.organization.current_school_id;
     validate_teacher_in_school(&state.organization, payload.teacher_id, school_id)?;
+    validate_classroom_name_unique(&state.organization, school_id, None, &name)?;
 
     let id = Uuid::new_v4();
     let created_at = now();
@@ -284,17 +285,29 @@ async fn update_classroom(
     let mut state = state.write().expect("state lock poisoned");
     let school_id = state.organization.current_school_id;
     validate_teacher_in_school(&state.organization, payload.teacher_id, school_id)?;
+    let existing = state
+        .organization
+        .classrooms
+        .get(&classroom_id)
+        .ok_or_else(|| ApiError::not_found("classroom"))?;
+    if existing.school_id != school_id {
+        return Err(ApiError::forbidden("不能修改其他园所的班级"));
+    }
+    let next_name = payload
+        .name
+        .map(|name| required_trimmed(name, "name"))
+        .transpose()?;
+    if let Some(name) = next_name.as_deref() {
+        validate_classroom_name_unique(&state.organization, school_id, Some(classroom_id), name)?;
+    }
 
     let classroom = state
         .organization
         .classrooms
         .get_mut(&classroom_id)
         .ok_or_else(|| ApiError::not_found("classroom"))?;
-    if classroom.school_id != school_id {
-        return Err(ApiError::forbidden("不能修改其他园所的班级"));
-    }
-    if let Some(name) = payload.name {
-        classroom.name = required_trimmed(name, "name")?;
+    if let Some(name) = next_name {
+        classroom.name = name;
     }
     if payload.teacher_id.is_some() {
         classroom.teacher_id = payload.teacher_id;
@@ -404,6 +417,23 @@ fn validate_teacher_in_school(
     Ok(())
 }
 
+fn validate_classroom_name_unique(
+    store: &OrganizationStore,
+    school_id: Uuid,
+    exclude_classroom_id: Option<Uuid>,
+    name: &str,
+) -> Result<(), ApiError> {
+    let duplicated = store.classrooms.values().any(|classroom| {
+        classroom.school_id == school_id
+            && Some(classroom.id) != exclude_classroom_id
+            && classroom.name == name
+    });
+    if duplicated {
+        return Err(ApiError::state_conflict("同一园所内班级名称已存在"));
+    }
+    Ok(())
+}
+
 fn validate_optional_status(
     value: Option<&str>,
     allowed: &[&str],
@@ -465,6 +495,27 @@ mod tests {
         (status, body)
     }
 
+    async fn json_request_on(
+        app: axum::Router,
+        method: &str,
+        uri: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, body)
+    }
+
     async fn get_json(uri: &str) -> (StatusCode, Value) {
         let request = Request::builder()
             .method("GET")
@@ -508,6 +559,45 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "VALIDATION_ERROR");
         assert_eq!(body["error"]["details"][0]["field"], "name");
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_classroom_names_in_school() {
+        let app = test_app();
+        let (status, body) = json_request_on(
+            app.clone(),
+            "POST",
+            "/api/classrooms",
+            json!({
+                "name": "小一班",
+                "grade_level": "小班"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+
+        let (status, created) = json_request_on(
+            app.clone(),
+            "POST",
+            "/api/classrooms",
+            json!({
+                "name": "中一班",
+                "grade_level": "中班"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let classroom_id = created["id"].as_str().unwrap();
+        let (status, body) = json_request_on(
+            app,
+            "PATCH",
+            &format!("/api/classrooms/{classroom_id}"),
+            json!({ "name": "小一班" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
     }
 
     #[tokio::test]
