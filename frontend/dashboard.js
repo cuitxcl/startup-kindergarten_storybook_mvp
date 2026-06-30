@@ -22,6 +22,7 @@ let dashboardState = {
   pages: [],
   selectedPage: null,
   roles: [],
+  latestImageTask: null,
   workItems: [],
 };
 
@@ -105,6 +106,14 @@ function setText(selector, value) {
   if (node) {
     node.textContent = value;
   }
+}
+
+function setLatestImageTask(detail) {
+  dashboardState.latestImageTask = detail;
+  setText(
+    "#latest-image-task-status",
+    detail ? `${detail.task_type} · ${detail.status} · ${detail.outputs?.length || 0} 张候选图` : "暂无图片任务"
+  );
 }
 
 function rowButton(label, toast) {
@@ -469,8 +478,71 @@ async function redrawCurrentPage() {
     reference_image_ids: [],
     regeneration_reason: "teacher_requested_redraw",
   });
+  setLatestImageTask(detail);
   showDashboardToast(`单页重绘任务已提交：${detail.status}`);
   await refreshDashboard();
+}
+
+function requireLatestImageTask() {
+  if (!dashboardState.latestImageTask) {
+    throw new Error("请先提交一次图片任务。");
+  }
+  return dashboardState.latestImageTask;
+}
+
+async function selectLatestImageOutput() {
+  const task = requireLatestImageTask();
+  const output = (task.outputs || []).find((item) => item.review_status !== "rejected") || task.outputs?.[0];
+  if (!output) {
+    throw new Error("当前图片任务没有候选图。");
+  }
+  await window.KindleleafApi.selectImageOutput(output.id);
+  await window.KindleleafApi.reviewImageOutput(output.id, {
+    review_action: "approve",
+    notes: "teacher_selected_from_dashboard",
+  });
+  const refreshed = await window.KindleleafApi.getImageTask(task.id);
+  setLatestImageTask(refreshed);
+  showDashboardToast("候选图已选中并审核通过。");
+  await refreshDashboard();
+}
+
+async function viewLatestReviewEvents() {
+  const task = requireLatestImageTask();
+  const events = await window.KindleleafApi.listReviewEvents(task.id);
+  showDashboardToast(`当前图片任务有 ${events.total || 0} 条审核记录。`);
+}
+
+async function viewGenerationCosts() {
+  const storybook = dashboardState.selectedStorybook;
+  const costs = await window.KindleleafApi.listGenerationCosts(storybook?.storybook_id);
+  const total = (costs.items || []).reduce((sum, item) => sum + Number(item.total_cost || 0), 0);
+  showDashboardToast(`生成成本记录 ${costs.total || 0} 条，合计 ${total.toFixed(2)}。`);
+}
+
+async function registerUploadedAsset() {
+  const filename = window.prompt("文件名", "child-reference.jpg");
+  if (!filename) {
+    return;
+  }
+  const intent = await window.KindleleafApi.createUploadIntent({
+    asset_type: "child_photo",
+    filename,
+    mime_type: "image/jpeg",
+    file_size: 1024,
+  });
+  const asset = await window.KindleleafApi.createAsset({
+    asset_type: intent.asset_type,
+    storage_url: intent.upload_url,
+    storage_key: intent.storage_key,
+    mime_type: intent.mime_type,
+    file_size: intent.file_size,
+    metadata_json: {
+      upload_intent_id: intent.id,
+      source: "dashboard_upload_registration",
+    },
+  });
+  showDashboardToast(`资产已登记：${asset.id}`);
 }
 
 async function deleteCurrentPage() {
@@ -660,6 +732,9 @@ async function handleAction(action, target) {
     else if (action === "toggle-lock-page") await toggleCurrentPageLock();
     else if (action === "rewrite-page") await rewriteCurrentPage();
     else if (action === "redraw-page") await redrawCurrentPage();
+    else if (action === "select-image-output") await selectLatestImageOutput();
+    else if (action === "view-review-events") await viewLatestReviewEvents();
+    else if (action === "view-costs") await viewGenerationCosts();
     else if (action === "delete-page") await deleteCurrentPage();
     else if (action === "add-page") await addPageToCurrentStorybook();
     else if (action === "export-storybook") await exportStorybook(target.dataset.storybookId);
@@ -674,6 +749,7 @@ async function handleAction(action, target) {
       if (exportFilter) exportFilter.click();
       showPage("queue");
     }
+    else if (action === "register-uploaded-asset") await registerUploadedAsset();
   } catch (error) {
     showDashboardToast(error.message);
   } finally {

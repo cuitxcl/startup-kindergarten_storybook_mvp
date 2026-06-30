@@ -169,6 +169,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(196, 91, 52, 0.2
 .choice-grid button { min-height: 38px; border: 1px solid rgba(147, 117, 72, 0.14); border-radius: 999px; color: #4f6154; background: rgba(255, 255, 255, 0.78); font-weight: 900; }
 .choice-grid button.active { color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-deep)); }
 .task-list article { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; padding: 10px; border-radius: 16px; background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(147, 117, 72, 0.1); }
+.task-list .task-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .story-preview { max-width: 760px; }
 .mini-book { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
 .mini-book div { min-height: 154px; display: grid; align-content: end; gap: 8px; padding: 14px; border-radius: 20px; background: radial-gradient(circle at 76% 20%, rgba(239, 191, 102, 0.35), transparent 26%), linear-gradient(145deg, rgba(220, 236, 220, 0.86), rgba(255, 246, 232, 0.98)); }
