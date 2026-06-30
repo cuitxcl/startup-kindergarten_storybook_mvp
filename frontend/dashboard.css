@@ -134,6 +134,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(196, 91, 52, 0.2
 .segmented-control button { min-height: 36px; padding: 8px 12px; border: 0; border-radius: 999px; background: transparent; color: #4f6154; font-weight: 900; }
 .segmented-control button.active { color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-deep)); }
 .work-list, .studio-steps, .profile-list, .privacy-list, .role-list, .task-list { display: grid; gap: 10px; }
+.page-strip-list { display: grid; gap: 10px; }
+.empty-state { padding: 16px; border: 1px dashed rgba(147, 117, 72, 0.2); border-radius: 18px; color: var(--muted); background: rgba(255, 255, 255, 0.58); font-weight: 800; }
 .work-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) 132px auto; gap: 14px; align-items: center; min-height: 94px; padding: 14px; border: 1px solid rgba(147, 117, 72, 0.1); border-radius: 22px; background: rgba(255, 255, 255, 0.76); }
 .work-status, .profile-list span { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 16px; color: var(--brand-deep); background: var(--brand-soft); font-weight: 900; }
 .work-status.high { color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-deep)); }

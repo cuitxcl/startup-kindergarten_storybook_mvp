@@ -10,6 +10,7 @@ use loco_rs::{
     task::Tasks,
 };
 use std::sync::{Arc, RwLock};
+use tower_http::cors::CorsLayer;
 
 use crate::api::{self, AppState};
 
@@ -35,7 +36,9 @@ impl Hooks for App {
 
     async fn after_routes(router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
         let state = Arc::new(RwLock::new(AppState::demo()));
-        Ok(router.merge(api::router(state)))
+        Ok(router
+            .merge(api::router(state))
+            .layer(CorsLayer::permissive()))
     }
 
     async fn connect_workers(_ctx: &AppContext, _queue: &Queue) -> Result<()> {
