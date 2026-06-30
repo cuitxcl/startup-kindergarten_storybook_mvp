@@ -2,6 +2,7 @@ use super::{ApiError, SharedState, now};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, patch, post},
 };
 use chrono::{DateTime, Utc};
@@ -51,6 +52,9 @@ impl DeliveryStore {
 #[derive(Clone, Debug, Serialize)]
 pub struct StorybookExportRecord {
     pub id: Uuid,
+    pub idempotency_key: Option<String>,
+    #[serde(skip_serializing)]
+    pub idempotency_fingerprint_json: Option<serde_json::Value>,
     pub storybook_id: Uuid,
     pub export_type: String,
     pub include_teacher_tips: bool,
@@ -68,6 +72,9 @@ pub struct StorybookExportRecord {
 #[derive(Clone, Debug, Serialize)]
 pub struct StorybookShareLinkRecord {
     pub id: Uuid,
+    pub idempotency_key: Option<String>,
+    #[serde(skip_serializing)]
+    pub idempotency_fingerprint_json: Option<serde_json::Value>,
     pub storybook_id: Uuid,
     pub share_scope: String,
     pub share_token: String,
@@ -156,6 +163,7 @@ pub struct SubmitPlatformReviewResponse {
 async fn create_export(
     State(state): State<SharedState>,
     Path(storybook_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(payload): Json<CreateExportRequest>,
 ) -> Result<Json<StorybookExportRecord>, ApiError> {
     validate_export_type(&payload.export_type)?;
@@ -167,6 +175,16 @@ async fn create_export(
     validate_optional(payload.quality.as_deref(), &["preview", "print"], "quality")?;
     let mut state = state.write().expect("state lock poisoned");
     let school_id = state.organization.current_school_id;
+    let idempotency_key = idempotency_key_from_headers(&headers)?;
+    let fingerprint = export_fingerprint(&payload);
+    if let Some(existing) = find_idempotent_export(
+        &state,
+        storybook_id,
+        idempotency_key.as_deref(),
+        &fingerprint,
+    )? {
+        return Ok(Json(existing));
+    }
     let storybook = state
         .storybooks
         .storybooks
@@ -185,6 +203,8 @@ async fn create_export(
     let created_at = now();
     let export = StorybookExportRecord {
         id: Uuid::new_v4(),
+        idempotency_key,
+        idempotency_fingerprint_json: Some(fingerprint),
         storybook_id,
         export_type: payload.export_type,
         include_teacher_tips: payload.include_teacher_tips.unwrap_or(false),
@@ -240,6 +260,7 @@ async fn get_export(
 async fn create_share_link(
     State(state): State<SharedState>,
     Path(storybook_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(payload): Json<CreateShareLinkRequest>,
 ) -> Result<Json<StorybookShareLinkRecord>, ApiError> {
     validate_share_scope(&payload.share_scope)?;
@@ -251,6 +272,16 @@ async fn create_share_link(
     )?;
     let mut state = state.write().expect("state lock poisoned");
     let school_id = state.organization.current_school_id;
+    let idempotency_key = idempotency_key_from_headers(&headers)?;
+    let fingerprint = share_link_fingerprint(&payload);
+    if let Some(existing) = find_idempotent_share_link(
+        &state,
+        storybook_id,
+        idempotency_key.as_deref(),
+        &fingerprint,
+    )? {
+        return Ok(Json(existing));
+    }
     let storybook = state
         .storybooks
         .storybooks
@@ -269,6 +300,8 @@ async fn create_share_link(
     let qrcode_asset_id = payload.create_qrcode.unwrap_or(false).then(Uuid::new_v4);
     let share = StorybookShareLinkRecord {
         id: share_link_id,
+        idempotency_key,
+        idempotency_fingerprint_json: Some(fingerprint),
         storybook_id,
         share_scope: payload.share_scope,
         share_token: token.clone(),
@@ -627,6 +660,92 @@ fn share_link_currently_active(share: &StorybookShareLinkRecord) -> bool {
     share.expires_at.is_none_or(|expires_at| expires_at > now())
 }
 
+fn find_idempotent_export(
+    state: &crate::api::AppState,
+    storybook_id: Uuid,
+    idempotency_key: Option<&str>,
+    fingerprint: &serde_json::Value,
+) -> Result<Option<StorybookExportRecord>, ApiError> {
+    let Some(idempotency_key) = idempotency_key else {
+        return Ok(None);
+    };
+    let existing = state.delivery.exports.values().find(|export| {
+        export.storybook_id == storybook_id
+            && export.idempotency_key.as_deref() == Some(idempotency_key)
+    });
+    if let Some(export) = existing {
+        if export.idempotency_fingerprint_json.as_ref() == Some(fingerprint) {
+            return Ok(Some(export.clone()));
+        }
+        return Err(idempotency_conflict());
+    }
+    Ok(None)
+}
+
+fn find_idempotent_share_link(
+    state: &crate::api::AppState,
+    storybook_id: Uuid,
+    idempotency_key: Option<&str>,
+    fingerprint: &serde_json::Value,
+) -> Result<Option<StorybookShareLinkRecord>, ApiError> {
+    let Some(idempotency_key) = idempotency_key else {
+        return Ok(None);
+    };
+    let existing = state.delivery.share_links.values().find(|share| {
+        share.storybook_id == storybook_id
+            && share.idempotency_key.as_deref() == Some(idempotency_key)
+    });
+    if let Some(share) = existing {
+        if share.idempotency_fingerprint_json.as_ref() == Some(fingerprint) {
+            return Ok(Some(share.clone()));
+        }
+        return Err(idempotency_conflict());
+    }
+    Ok(None)
+}
+
+fn export_fingerprint(payload: &CreateExportRequest) -> serde_json::Value {
+    json!({
+        "export_type": payload.export_type,
+        "include_teacher_tips": payload.include_teacher_tips.unwrap_or(false),
+        "page_size": payload.page_size.as_deref().unwrap_or("A4"),
+        "quality": payload.quality.as_deref().unwrap_or("print")
+    })
+}
+
+fn share_link_fingerprint(payload: &CreateShareLinkRequest) -> serde_json::Value {
+    json!({
+        "share_scope": payload.share_scope,
+        "anonymize_child_name": payload.anonymize_child_name.unwrap_or(false),
+        "anonymize_parent_info": payload.anonymize_parent_info.unwrap_or(true),
+        "expires_at": payload.expires_at,
+        "create_qrcode": payload.create_qrcode.unwrap_or(false)
+    })
+}
+
+fn idempotency_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let Some(value) = headers.get("idempotency-key") else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| ApiError::validation("Idempotency-Key", "幂等键必须是有效字符串"))?
+        .trim();
+    if value.is_empty() {
+        return Err(ApiError::validation("Idempotency-Key", "幂等键不能为空"));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn idempotency_conflict() -> ApiError {
+    ApiError {
+        status: axum::http::StatusCode::CONFLICT,
+        code: "IDEMPOTENCY_CONFLICT",
+        message: "同一个 Idempotency-Key 的请求参数不一致".to_string(),
+        details: vec![],
+    }
+}
+
 fn sync_storybook_share_state(state: &mut crate::api::AppState, storybook_id: Uuid) {
     let active_share = active_share_for_storybook(state, storybook_id).cloned();
     if let Some(storybook) = state.storybooks.storybooks.get_mut(&storybook_id) {
@@ -766,6 +885,29 @@ mod tests {
         (status, body)
     }
 
+    async fn request_json_with_idempotency_key(
+        app: axum::Router,
+        method: &str,
+        uri: &str,
+        body: Value,
+        idempotency_key: &str,
+    ) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("Idempotency-Key", idempotency_key)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, body)
+    }
+
     async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Value) {
         let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -844,6 +986,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn export_creation_is_idempotent_per_key_and_payload() {
+        let app = test_app();
+        let storybook_id = create_storybook(app.clone()).await;
+        let uri = format!("/api/storybooks/{storybook_id}/exports");
+        let payload = json!({
+            "export_type": "pdf",
+            "include_teacher_tips": false,
+            "page_size": "A4",
+            "quality": "print"
+        });
+        let (status, first) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            &uri,
+            payload.clone(),
+            "export-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let (status, second) =
+            request_json_with_idempotency_key(app.clone(), "POST", &uri, payload, "export-key-1")
+                .await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert_eq!(second["id"], first["id"]);
+
+        let (status, conflict) = request_json_with_idempotency_key(
+            app,
+            "POST",
+            &uri,
+            json!({
+                "export_type": "pdf",
+                "include_teacher_tips": true,
+                "page_size": "A4",
+                "quality": "print"
+            }),
+            "export-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+        assert_eq!(conflict["error"]["code"], "IDEMPOTENCY_CONFLICT");
+    }
+
+    #[tokio::test]
     async fn enforces_privacy_for_school_share_and_lists_library() {
         let app = test_app();
         let storybook_id = create_storybook(app.clone()).await;
@@ -880,6 +1065,48 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{library}");
         assert_eq!(library["total"], 1);
         assert_eq!(library["items"][0]["anonymized"], true);
+    }
+
+    #[tokio::test]
+    async fn share_link_creation_is_idempotent_per_key_and_payload() {
+        let app = test_app();
+        let storybook_id = create_storybook(app.clone()).await;
+        let uri = format!("/api/storybooks/{storybook_id}/share-links");
+        let payload = json!({
+            "share_scope": "family",
+            "anonymize_child_name": false,
+            "anonymize_parent_info": true
+        });
+        let (status, first) = request_json_with_idempotency_key(
+            app.clone(),
+            "POST",
+            &uri,
+            payload.clone(),
+            "share-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let (status, second) =
+            request_json_with_idempotency_key(app.clone(), "POST", &uri, payload, "share-key-1")
+                .await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert_eq!(second["id"], first["id"]);
+        assert_eq!(second["share_token"], first["share_token"]);
+
+        let (status, conflict) = request_json_with_idempotency_key(
+            app,
+            "POST",
+            &uri,
+            json!({
+                "share_scope": "family",
+                "anonymize_child_name": true,
+                "anonymize_parent_info": true
+            }),
+            "share-key-1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+        assert_eq!(conflict["error"]["code"], "IDEMPOTENCY_CONFLICT");
     }
 
     #[tokio::test]
