@@ -162,6 +162,21 @@ pub struct SubmitPlatformReviewResponse {
     pub submitted_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ShareLinkListItem {
+    pub id: Uuid,
+    pub storybook_id: Uuid,
+    pub share_scope: String,
+    pub url: String,
+    pub qrcode_asset_id: Option<Uuid>,
+    pub anonymize_child_name: bool,
+    pub anonymize_parent_info: bool,
+    pub status: String,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 async fn create_export(
     State(state): State<SharedState>,
     Path(storybook_id): Path<Uuid>,
@@ -336,7 +351,7 @@ async fn create_share_link(
 async fn list_share_links(
     State(state): State<SharedState>,
     Path(storybook_id): Path<Uuid>,
-) -> Result<Json<ListResponse<StorybookShareLinkRecord>>, ApiError> {
+) -> Result<Json<ListResponse<ShareLinkListItem>>, ApiError> {
     let state = state.read().expect("state lock poisoned");
     visible_storybook(&state, storybook_id)?;
     let mut items = state
@@ -344,7 +359,7 @@ async fn list_share_links(
         .share_links
         .values()
         .filter(|share| share.storybook_id == storybook_id)
-        .cloned()
+        .map(share_link_list_item)
         .collect::<Vec<_>>();
     items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(Json(list_response(items)))
@@ -573,6 +588,7 @@ async fn clone_shared_storybook(
                 page.current_image_task_id = None;
                 page.illustration_status = "not_started".to_string();
             }
+            page.page_visual_subjects_json = None;
             page.created_at = created_at;
             page.updated_at = created_at;
             page
@@ -676,6 +692,22 @@ fn active_share_for_storybook(
         .values()
         .filter(|share| share.storybook_id == storybook_id && share.status == "active")
         .max_by_key(|share| share.created_at)
+}
+
+fn share_link_list_item(share: &StorybookShareLinkRecord) -> ShareLinkListItem {
+    ShareLinkListItem {
+        id: share.id,
+        storybook_id: share.storybook_id,
+        share_scope: share.share_scope.clone(),
+        url: share.url.clone(),
+        qrcode_asset_id: share.qrcode_asset_id,
+        anonymize_child_name: share.anonymize_child_name,
+        anonymize_parent_info: share.anonymize_parent_info,
+        status: share.status.clone(),
+        expires_at: share.expires_at,
+        created_at: share.created_at,
+        updated_at: share.updated_at,
+    }
 }
 
 fn share_link_currently_active(share: &StorybookShareLinkRecord) -> bool {
@@ -1126,6 +1158,14 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{share}");
         assert_eq!(share["status"], "active");
         assert!(share["qrcode_asset_id"].is_string());
+        let (status, links) = get_json(
+            app.clone(),
+            &format!("/api/storybooks/{storybook_id}/share-links"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{links}");
+        assert!(links["items"][0]["url"].is_string());
+        assert!(links["items"][0]["share_token"].is_null());
 
         let (status, library) = get_json(app, "/api/shared-library?share_scope=school").await;
         assert_eq!(status, StatusCode::OK, "{library}");
@@ -1394,6 +1434,10 @@ mod tests {
         assert_eq!(
             cloned_detail["pages"][0]["illustration_status"],
             "not_started"
+        );
+        assert_eq!(
+            cloned_detail["pages"][0]["page_visual_subjects_json"],
+            Value::Null
         );
     }
 
