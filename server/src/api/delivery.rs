@@ -276,6 +276,7 @@ async fn create_share_link(
 ) -> Result<Json<StorybookShareLinkRecord>, ApiError> {
     validate_share_scope(&payload.share_scope)?;
     reject_direct_platform_public_share(&payload.share_scope)?;
+    validate_share_expiry(payload.expires_at)?;
     validate_share_privacy(
         &payload.share_scope,
         payload.anonymize_child_name.unwrap_or(false),
@@ -359,6 +360,9 @@ async fn update_share_link(
         validate_share_scope(scope)?;
         reject_direct_platform_public_share(scope)?;
     }
+    if let Some(expires_at) = payload.expires_at {
+        validate_share_expiry(Some(expires_at))?;
+    }
     let mut state = state.write().expect("state lock poisoned");
     let storybook_id = state
         .delivery
@@ -373,6 +377,13 @@ async fn update_share_link(
         .share_links
         .get_mut(&share_link_id)
         .expect("share link exists");
+    if share.status == "disabled"
+        && (payload.status.as_deref() == Some("active") || payload.share_scope.is_some())
+    {
+        return Err(ApiError::state_conflict(
+            "已禁用分享链接不能重新激活或扩大范围",
+        ));
+    }
     let next_scope = payload
         .share_scope
         .clone()
@@ -797,6 +808,26 @@ fn reject_direct_platform_public_share(share_scope: &str) -> Result<(), ApiError
     Ok(())
 }
 
+fn validate_share_expiry(expires_at: Option<DateTime<Utc>>) -> Result<(), ApiError> {
+    let Some(expires_at) = expires_at else {
+        return Ok(());
+    };
+    let current = now();
+    if expires_at <= current {
+        return Err(ApiError::validation(
+            "expires_at",
+            "过期时间必须晚于当前时间",
+        ));
+    }
+    if expires_at > current + chrono::Duration::days(365) {
+        return Err(ApiError::validation(
+            "expires_at",
+            "分享链接有效期不能超过 365 天",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_share_privacy(
     share_scope: &str,
     anonymize_child_name: bool,
@@ -1206,6 +1237,58 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    #[tokio::test]
+    async fn enforces_share_link_expiry_and_disabled_state_transitions() {
+        let app = test_app();
+        let storybook_id = create_storybook(app.clone()).await;
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/share-links"),
+            json!({
+                "share_scope": "family",
+                "anonymize_child_name": false,
+                "anonymize_parent_info": true,
+                "expires_at": "2099-01-01T00:00:00Z"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "expires_at");
+
+        let (status, share) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/share-links"),
+            json!({
+                "share_scope": "family",
+                "anonymize_child_name": false,
+                "anonymize_parent_info": true
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{share}");
+        let share_link_id = share["id"].as_str().unwrap();
+        let (status, _) = request_json(
+            app.clone(),
+            "PATCH",
+            &format!("/api/share-links/{share_link_id}"),
+            json!({ "status": "disabled" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_json(
+            app,
+            "PATCH",
+            &format!("/api/share-links/{share_link_id}"),
+            json!({ "status": "active" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
     }
 
     #[tokio::test]
