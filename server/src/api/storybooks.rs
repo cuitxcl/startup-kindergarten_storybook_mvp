@@ -595,7 +595,11 @@ async fn update_storybook(
         storybook.teaching_goal = normalize_optional_owned(teaching_goal);
     }
     if let Some(share_scope) = payload.share_scope {
+        validate_manual_share_scope_update(&share_scope)?;
         storybook.share_scope = share_scope;
+        if storybook.share_scope == "private" {
+            storybook.share_status = "private".to_string();
+        }
     }
     if let Some(status) = payload.status {
         storybook.status = status;
@@ -811,6 +815,11 @@ async fn update_page(
         .iter_mut()
         .find(|page| page.id == page_id)
         .ok_or_else(|| ApiError::not_found("storybook_page"))?;
+    let content_affects_image = payload.page_title.is_some()
+        || payload.body_text.is_some()
+        || payload.prompt_text.is_some()
+        || payload.scene_spec_json.is_some()
+        || payload.scene_spec_status.is_some();
     if let Some(page_title) = payload.page_title {
         page.page_title = normalize_optional_owned(page_title);
     }
@@ -831,6 +840,9 @@ async fn update_page(
     }
     if let Some(is_locked) = payload.is_locked {
         page.is_locked = is_locked;
+    }
+    if content_affects_image {
+        mark_page_image_stale(page);
     }
     page.content_source = "manual_edit".to_string();
     page.updated_at = now();
@@ -898,6 +910,7 @@ async fn rewrite_page(
     page.teacher_tip = rewritten.teacher_tip;
     page.scene_spec_json = Some(rewritten.scene_spec_json);
     page.scene_spec_status = "ready".to_string();
+    mark_page_image_stale(page);
     page.content_source = "generated".to_string();
     page.updated_at = now();
     let page = page.clone();
@@ -1114,6 +1127,18 @@ fn validate_optional_status(
     Ok(())
 }
 
+fn validate_manual_share_scope_update(share_scope: &str) -> Result<(), ApiError> {
+    if share_scope == "platform_review" || share_scope == "platform_public" {
+        return Err(ApiError::state_conflict(
+            "平台审核和公开共享必须通过审核流程变更",
+        ));
+    }
+    if share_scope == "school" || share_scope == "family" {
+        return Err(ApiError::state_conflict("分享范围必须通过分享链接接口变更"));
+    }
+    Ok(())
+}
+
 fn required_trimmed(value: String, field: &'static str) -> Result<String, ApiError> {
     let value = value.trim();
     if value.is_empty() {
@@ -1149,7 +1174,24 @@ fn renumber_pages(pages: &mut [StorybookPageRecord]) {
 fn touch_storybook(state: &mut crate::api::AppState, storybook_id: Uuid) {
     if let Some(storybook) = state.storybooks.storybooks.get_mut(&storybook_id) {
         storybook.updated_at = now();
+        let pages = state
+            .storybooks
+            .pages
+            .get(&storybook_id)
+            .cloned()
+            .unwrap_or_default();
+        if pages.iter().any(|page| {
+            page.illustration_status == "not_started" && page.current_image_asset_id.is_none()
+        }) {
+            storybook.illustration_status = "not_started".to_string();
+        }
     }
+}
+
+fn mark_page_image_stale(page: &mut StorybookPageRecord) {
+    page.current_image_asset_id = None;
+    page.current_image_task_id = None;
+    page.illustration_status = "not_started".to_string();
 }
 
 fn list_response<T>(items: Vec<T>) -> ListResponse<T> {
@@ -1304,6 +1346,61 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(page["content_source"], "manual_edit");
+    }
+
+    #[tokio::test]
+    async fn blocks_manual_share_scope_escalation() {
+        let app = test_app();
+        let body = create_plain_storybook(app.clone()).await;
+        let storybook_id = body["storybook"]["id"].as_str().unwrap();
+        let (status, body) = request_json(
+            app,
+            "PATCH",
+            &format!("/api/storybooks/{storybook_id}"),
+            json!({ "share_scope": "platform_public" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn page_content_edits_mark_existing_image_stale() {
+        let app = test_app();
+        let body = create_plain_storybook(app.clone()).await;
+        let storybook_id = body["storybook"]["id"].as_str().unwrap();
+        let (_, detail) = get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let (status, task) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybook-pages/{page_id}/image-tasks"),
+            json!({
+                "style_id": "storybook_flat_v1",
+                "prompt_template_version": "page_image_v1"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{task}");
+
+        let (_, detail) = get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        assert!(detail["pages"][0]["current_image_task_id"].is_string());
+        assert_eq!(detail["pages"][0]["illustration_status"], "needs_review");
+
+        let (status, page) = request_json(
+            app.clone(),
+            "PATCH",
+            &format!("/api/storybooks/{storybook_id}/pages/{page_id}"),
+            json!({ "body_text": "老师手动改过的新正文" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(page["current_image_asset_id"], Value::Null);
+        assert_eq!(page["current_image_task_id"], Value::Null);
+        assert_eq!(page["illustration_status"], "not_started");
+
+        let (_, detail) = get_json(app, &format!("/api/storybooks/{storybook_id}")).await;
+        assert_eq!(detail["illustration_status"], "not_started");
     }
 
     #[tokio::test]
