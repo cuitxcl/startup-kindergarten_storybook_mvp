@@ -928,6 +928,7 @@ async fn delete_page(
     }
     renumber_pages(pages);
     let items = pages.clone();
+    state.visuals.page_visual_subjects.remove(&page_id);
     touch_storybook(&mut state, storybook_id);
     Ok(Json(list_response(items)))
 }
@@ -1375,11 +1376,16 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::{Arc, RwLock};
     use tower::ServiceExt;
+    use uuid::Uuid;
 
-    fn test_app() -> axum::Router {
+    fn test_state() -> Arc<RwLock<AppState>> {
         let mut state = AppState::demo();
         state.storybooks.story_provider = StoryProviderKind::Fake(FakeStoryProvider);
-        router(Arc::new(RwLock::new(state)))
+        Arc::new(RwLock::new(state))
+    }
+
+    fn test_app() -> axum::Router {
+        router(test_state())
     }
 
     fn test_app_with_state(state: AppState) -> axum::Router {
@@ -1741,6 +1747,63 @@ mod tests {
 
         let (_, detail) = get_json(app, &format!("/api/storybooks/{storybook_id}")).await;
         assert_eq!(detail["illustration_status"], "not_started");
+    }
+
+    #[tokio::test]
+    async fn deleting_page_removes_visual_subject_bindings() {
+        let state = test_state();
+        let app = router(state.clone());
+        let body = create_plain_storybook(app.clone()).await;
+        let storybook_id = body["storybook"]["id"].as_str().unwrap();
+        let (_, roles) = get_json(
+            app.clone(),
+            &format!("/api/storybooks/{storybook_id}/roles"),
+        )
+        .await;
+        let role_id = roles["items"][0]["id"].as_str().unwrap();
+        let (_, detail) = get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+
+        let (status, subjects) = request_json(
+            app.clone(),
+            "PUT",
+            &format!("/api/storybook-pages/{page_id}/visual-subjects"),
+            json!({
+                "subjects": [{
+                    "subject_type": "storybook_role",
+                    "storybook_role_id": role_id,
+                    "importance": "primary"
+                }]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{subjects}");
+        let page_id = Uuid::parse_str(page_id).unwrap();
+        assert!(
+            state
+                .read()
+                .unwrap()
+                .visuals
+                .page_visual_subjects
+                .contains_key(&page_id)
+        );
+
+        let (status, pages) = request_json(
+            app,
+            "DELETE",
+            &format!("/api/storybooks/{storybook_id}/pages/{page_id}"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{pages}");
+        assert!(
+            !state
+                .read()
+                .unwrap()
+                .visuals
+                .page_visual_subjects
+                .contains_key(&page_id)
+        );
     }
 
     #[tokio::test]
