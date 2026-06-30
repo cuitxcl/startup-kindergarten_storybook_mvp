@@ -626,6 +626,10 @@ async fn create_parent_intake(
             .and_then(normalize_optional_owned),
         interest_tags: normalize_tags(payload.child.interest_tags, "child.interest_tags")?,
     };
+    {
+        let state = state.read().expect("state lock poisoned");
+        validate_child_photo_assets(&state, &payload.photo_asset_ids)?;
+    }
 
     let intake = ParentIntakeRecord {
         id: Uuid::new_v4(),
@@ -692,6 +696,7 @@ async fn accept_parent_intake(
     if intake.status != "submitted" {
         return Err(ApiError::state_conflict("家长提交已处理"));
     }
+    validate_child_photo_assets(&state, &intake.photo_asset_ids)?;
 
     let created_at = now();
     let parent_id = Uuid::new_v4();
@@ -880,6 +885,16 @@ fn validate_child_photo_asset(
             "image_asset_id",
             "儿童照片必须绑定 child_photo 类型资产",
         ));
+    }
+    Ok(())
+}
+
+fn validate_child_photo_assets(
+    state: &crate::api::AppState,
+    image_asset_ids: &[Uuid],
+) -> Result<(), ApiError> {
+    for image_asset_id in image_asset_ids {
+        validate_child_photo_asset(state, *image_asset_id)?;
     }
     Ok(())
 }
@@ -1196,6 +1211,19 @@ mod tests {
     #[tokio::test]
     async fn accepts_parent_intake_once() {
         let app = test_app();
+        let (status, asset) = request_json(
+            app.clone(),
+            "POST",
+            "/api/assets",
+            json!({
+                "asset_type": "child_photo",
+                "storage_url": "https://example.com/intake-photo.png",
+                "mime_type": "image/png"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{asset}");
+        let asset_id = asset["id"].as_str().unwrap();
         let (status, intake) = request_json(
             app.clone(),
             "POST",
@@ -1213,7 +1241,7 @@ mod tests {
                     "hair": "黑色长发",
                     "interest_tags": ["小兔子"]
                 },
-                "photo_asset_ids": ["00000000-0000-0000-0000-000000000099"]
+                "photo_asset_ids": [asset_id]
             }),
         )
         .await;
@@ -1240,5 +1268,43 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn rejects_parent_intake_with_invalid_photo_asset() {
+        let app = test_app();
+        let (status, asset) = request_json(
+            app.clone(),
+            "POST",
+            "/api/assets",
+            json!({
+                "asset_type": "storybook_page_image",
+                "storage_url": "https://example.com/page-image.png",
+                "mime_type": "image/png"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{asset}");
+        let asset_id = asset["id"].as_str().unwrap();
+
+        let (status, body) = request_json(
+            app,
+            "POST",
+            "/api/parent-intakes",
+            json!({
+                "invite_token": "invite-demo",
+                "parent": {
+                    "name": "李女士"
+                },
+                "child": {
+                    "name": "小雨",
+                    "age": 5
+                },
+                "photo_asset_ids": [asset_id]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "image_asset_id");
     }
 }
