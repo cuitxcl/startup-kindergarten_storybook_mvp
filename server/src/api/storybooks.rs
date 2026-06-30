@@ -786,7 +786,10 @@ async fn add_page(
     Path(storybook_id): Path<Uuid>,
     Json(payload): Json<AddPageRequest>,
 ) -> Result<Json<StorybookPageRecord>, ApiError> {
-    let body_text = required_trimmed(payload.body_text, "body_text")?;
+    let body_text = required_trimmed_max(payload.body_text, "body_text", 800)?;
+    let page_title = normalize_optional_max(payload.page_title, "page_title", 60)?;
+    let prompt_text = normalize_optional_max(payload.prompt_text, "prompt_text", 200)?;
+    let teacher_tip = normalize_optional_max(payload.teacher_tip, "teacher_tip", 300)?;
     validate_page_role(payload.page_role.as_deref().unwrap_or("story"))?;
     validate_optional_status(
         payload.scene_spec_status.as_deref(),
@@ -810,10 +813,10 @@ async fn add_page(
         storybook_id,
         page_number,
         page_role: payload.page_role.unwrap_or_else(|| "story".to_string()),
-        page_title: payload.page_title.and_then(normalize_optional_owned),
+        page_title,
         body_text,
-        prompt_text: payload.prompt_text.and_then(normalize_optional_owned),
-        teacher_tip: payload.teacher_tip.and_then(normalize_optional_owned),
+        prompt_text,
+        teacher_tip,
         scene_spec_json: payload.scene_spec_json,
         scene_spec_status: payload
             .scene_spec_status
@@ -838,6 +841,16 @@ async fn update_page(
     Path((storybook_id, page_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdatePageRequest>,
 ) -> Result<Json<StorybookPageRecord>, ApiError> {
+    let page_title_provided = payload.page_title.is_some();
+    let prompt_text_provided = payload.prompt_text.is_some();
+    let teacher_tip_provided = payload.teacher_tip.is_some();
+    let page_title = normalize_optional_max(payload.page_title, "page_title", 60)?;
+    let body_text = payload
+        .body_text
+        .map(|body_text| required_trimmed_max(body_text, "body_text", 800))
+        .transpose()?;
+    let prompt_text = normalize_optional_max(payload.prompt_text, "prompt_text", 200)?;
+    let teacher_tip = normalize_optional_max(payload.teacher_tip, "teacher_tip", 300)?;
     validate_optional_status(
         payload.scene_spec_status.as_deref(),
         &["missing", "draft", "ready"],
@@ -857,22 +870,23 @@ async fn update_page(
         .iter_mut()
         .find(|page| page.id == page_id)
         .ok_or_else(|| ApiError::not_found("storybook_page"))?;
-    let content_affects_image = payload.page_title.is_some()
-        || payload.body_text.is_some()
-        || payload.prompt_text.is_some()
+    let content_affects_image = page_title_provided
+        || body_text.is_some()
+        || prompt_text_provided
+        || teacher_tip_provided
         || payload.scene_spec_json.is_some()
         || payload.scene_spec_status.is_some();
-    if let Some(page_title) = payload.page_title {
-        page.page_title = normalize_optional_owned(page_title);
+    if page_title_provided {
+        page.page_title = page_title;
     }
-    if let Some(body_text) = payload.body_text {
-        page.body_text = required_trimmed(body_text, "body_text")?;
+    if let Some(body_text) = body_text {
+        page.body_text = body_text;
     }
-    if let Some(prompt_text) = payload.prompt_text {
-        page.prompt_text = normalize_optional_owned(prompt_text);
+    if prompt_text_provided {
+        page.prompt_text = prompt_text;
     }
-    if let Some(teacher_tip) = payload.teacher_tip {
-        page.teacher_tip = normalize_optional_owned(teacher_tip);
+    if teacher_tip_provided {
+        page.teacher_tip = teacher_tip;
     }
     if let Some(scene_spec_json) = payload.scene_spec_json {
         page.scene_spec_json = Some(scene_spec_json);
@@ -1258,6 +1272,21 @@ fn required_trimmed(value: String, field: &'static str) -> Result<String, ApiErr
     Ok(value.to_string())
 }
 
+fn required_trimmed_max(
+    value: String,
+    field: &'static str,
+    max_chars: usize,
+) -> Result<String, ApiError> {
+    let value = required_trimmed(value, field)?;
+    if value.chars().count() > max_chars {
+        return Err(ApiError::validation(
+            field,
+            format!("长度不能超过 {max_chars} 个字符"),
+        ));
+    }
+    Ok(value)
+}
+
 fn normalize_optional_owned(value: String) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -1265,6 +1294,26 @@ fn normalize_optional_owned(value: String) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn normalize_optional_max(
+    value: Option<String>,
+    field: &'static str,
+    max_chars: usize,
+) -> Result<Option<String>, ApiError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(value) = normalize_optional_owned(value) else {
+        return Ok(None);
+    };
+    if value.chars().count() > max_chars {
+        return Err(ApiError::validation(
+            field,
+            format!("长度不能超过 {max_chars} 个字符"),
+        ));
+    }
+    Ok(Some(value))
 }
 
 fn shift_pages_for_insert(pages: &mut [StorybookPageRecord], page_number: i32) {
@@ -1602,6 +1651,41 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(page["content_source"], "manual_edit");
+    }
+
+    #[tokio::test]
+    async fn validates_page_text_field_lengths() {
+        let app = test_app();
+        let body = create_plain_storybook(app.clone()).await;
+        let storybook_id = body["storybook"]["id"].as_str().unwrap();
+        let (_, detail) = get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            &format!("/api/storybooks/{storybook_id}/pages"),
+            json!({ "body_text": "字".repeat(801) }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "body_text");
+
+        for (field, value) in [
+            ("page_title", "题".repeat(61)),
+            ("prompt_text", "图".repeat(201)),
+            ("teacher_tip", "提".repeat(301)),
+        ] {
+            let (status, body) = request_json(
+                app.clone(),
+                "PATCH",
+                &format!("/api/storybooks/{storybook_id}/pages/{page_id}"),
+                json!({ field: value }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(body["error"]["details"][0]["field"], field);
+        }
     }
 
     #[tokio::test]
