@@ -704,6 +704,7 @@ async fn put_page_visual_subjects(
     let storybook_id = storybook_id_for_page(&state, page_id)?;
     validate_storybook_visible(&state, storybook_id)?;
     let mut subjects = Vec::new();
+    let mut subject_keys = std::collections::BTreeSet::new();
     for input in payload.subjects {
         validate_importance(&input.importance)?;
         match input.subject_type.as_str() {
@@ -711,6 +712,12 @@ async fn put_page_visual_subjects(
                 let role_id = input.storybook_role_id.ok_or_else(|| {
                     ApiError::validation("storybook_role_id", "storybook_role 主体必须提供 role")
                 })?;
+                if !subject_keys.insert(("storybook_role", role_id)) {
+                    return Err(ApiError::validation(
+                        "storybook_role_id",
+                        "同一页面不能重复添加同一个角色主体",
+                    ));
+                }
                 let role = state
                     .visuals
                     .storybook_roles
@@ -737,6 +744,12 @@ async fn put_page_visual_subjects(
                 let prop_id = input.prop_profile_id.ok_or_else(|| {
                     ApiError::validation("prop_profile_id", "prop 主体必须提供 prop_profile_id")
                 })?;
+                if !subject_keys.insert(("prop", prop_id)) {
+                    return Err(ApiError::validation(
+                        "prop_profile_id",
+                        "同一页面不能重复添加同一个道具主体",
+                    ));
+                }
                 let prop = state
                     .visuals
                     .prop_profiles
@@ -1547,5 +1560,42 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(subjects["total"], 2);
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_page_visual_subjects() {
+        let app = test_app();
+        let storybook = create_storybook(app.clone()).await;
+        let storybook_id = storybook["id"].as_str().unwrap();
+        let (_, roles) = get_json(
+            app.clone(),
+            &format!("/api/storybooks/{storybook_id}/roles"),
+        )
+        .await;
+        let role_id = roles["items"][0]["id"].as_str().unwrap();
+        let (_, detail) = get_json(app.clone(), &format!("/api/storybooks/{storybook_id}")).await;
+        let page_id = detail["pages"][0]["id"].as_str().unwrap();
+        let (status, body) = request_json(
+            app,
+            "PUT",
+            &format!("/api/storybook-pages/{page_id}/visual-subjects"),
+            json!({
+                "subjects": [
+                    {
+                        "subject_type": "storybook_role",
+                        "storybook_role_id": role_id,
+                        "importance": "primary"
+                    },
+                    {
+                        "subject_type": "storybook_role",
+                        "storybook_role_id": role_id,
+                        "importance": "medium"
+                    }
+                ]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"][0]["field"], "storybook_role_id");
     }
 }
