@@ -363,12 +363,32 @@ async fn generate_storybook(
         if case_storybook.status != "published" {
             return Err(ApiError::not_found("case_storybook"));
         }
+        if let Some(template_id) = case_storybook.template_id {
+            let template = state
+                .content
+                .story_templates
+                .get(&template_id)
+                .ok_or_else(|| ApiError::not_found("story_template"))?;
+            if template.status != "active" {
+                return Err(ApiError::state_conflict("案例关联模板不是 active"));
+            }
+        }
     }
     let source_storybook = payload
         .source_storybook_id
         .and_then(|source_id| state.storybooks.storybooks.get(&source_id).cloned());
     if payload.source_storybook_id.is_some() && source_storybook.is_none() {
         return Err(ApiError::not_found("source_storybook"));
+    }
+    if let Some(source_storybook) = source_storybook.as_ref() {
+        if source_storybook.school_id != Some(school_id) {
+            return Err(ApiError::forbidden("不能使用其他园所的读本作为来源"));
+        }
+        if source_storybook.content_type != "plain_storybook" {
+            return Err(ApiError::state_conflict(
+                "source_storybook_id 必须是普通绘本母本",
+            ));
+        }
     }
     if payload.case_storybook_id.is_none() && payload.source_storybook_id.is_none() {
         return Err(ApiError::validation(
@@ -1313,6 +1333,10 @@ mod tests {
         router(Arc::new(RwLock::new(state)))
     }
 
+    fn test_app_with_state(state: AppState) -> axum::Router {
+        router(Arc::new(RwLock::new(state)))
+    }
+
     async fn request_json(
         app: axum::Router,
         method: &str,
@@ -1480,6 +1504,67 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["details"][0]["field"], "child_id");
+    }
+
+    #[tokio::test]
+    async fn rejects_generation_from_inactive_case_template() {
+        let mut state = AppState::demo();
+        state.storybooks.story_provider = StoryProviderKind::Fake(FakeStoryProvider);
+        let template_id = crate::api::demo_uuid(30);
+        state
+            .content
+            .story_templates
+            .get_mut(&template_id)
+            .unwrap()
+            .status = "archived".to_string();
+        let app = test_app_with_state(state);
+        let case_id = crate::api::demo_uuid(31);
+        let (status, body) = request_json(
+            app,
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "plain_storybook",
+                "case_storybook_id": case_id
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn rejects_custom_storybook_as_generation_source() {
+        let app = test_app();
+        let (_, cases) = get_json(app.clone(), "/api/cases").await;
+        let case_id = cases["items"][0]["id"].as_str().unwrap();
+        let (_, children) = get_json(app.clone(), "/api/children").await;
+        let child_id = children["items"][0]["id"].as_str().unwrap();
+        let (status, created) = request_json(
+            app.clone(),
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "custom_storybook",
+                "child_id": child_id,
+                "case_storybook_id": case_id
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let source_storybook_id = created["storybook"]["id"].as_str().unwrap();
+        let (status, body) = request_json(
+            app,
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "plain_storybook",
+                "source_storybook_id": source_storybook_id
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "STATE_CONFLICT");
     }
 
     #[tokio::test]
