@@ -1,0 +1,30 @@
+logger:
+  enable: false
+  pretty_backtrace: true
+  level: off
+  format: compact
+
+server:
+  binding: 127.0.0.1
+  host: http://127.0.0.1
+  port: 5151
+
+database:
+  uri: "sqlite::memory:"
+  enable_logging: false
+  min_connections: 1
+  max_connections: 1
+  connect_timeout: 500
+  idle_timeout: 500
+  auto_migrate: false
+  dangerously_truncate: false
+  dangerously_recreate: false
+
+workers:
+  mode: ForegroundBlocking
+
+queue: null
+auth: null
+mailer: null
+initializers: null
+scheduler: null

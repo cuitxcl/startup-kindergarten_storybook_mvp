@@ -8,7 +8,7 @@ members = [".", "migration"]
 
 [dependencies]
 axum = "0.8"
-loco-rs = { version = "0.16", default-features = false }
+loco-rs = { version = "0.16", default-features = false, features = ["cli", "with-db"] }
 sea-orm = { version = "1", default-features = false, features = [
   "macros",
   "with-uuid",

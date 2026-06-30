@@ -1,0 +1,30 @@
+logger:
+  enable: true
+  pretty_backtrace: true
+  level: debug
+  format: compact
+
+server:
+  binding: 127.0.0.1
+  host: http://127.0.0.1
+  port: 5150
+
+database:
+  uri: "{{ get_env(name=\"DATABASE_URL\", default=\"postgres://postgres:postgres@localhost:5432/kindergarten_storybook_development\") }}"
+  enable_logging: true
+  min_connections: 1
+  max_connections: 5
+  connect_timeout: 500
+  idle_timeout: 500
+  auto_migrate: true
+  dangerously_truncate: false
+  dangerously_recreate: false
+
+workers:
+  mode: ForegroundBlocking
+
+queue: null
+auth: null
+mailer: null
+initializers: null
+scheduler: null
