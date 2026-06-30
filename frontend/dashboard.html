@@ -35,7 +35,7 @@
         </div>
         <div class="ops-topbar-actions">
           <a class="secondary" href="index.html">返回首页</a>
-          <button class="primary" type="button" data-toast="已打开新内容流程：先选择普通绘本母本。">新建绘本</button>
+          <button class="primary" type="button" data-action="generate-storybook">新建绘本</button>
         </div>
       </header>
 
@@ -45,7 +45,7 @@
           <strong id="today-alert-title">正在读取待办状态</strong>
           <p id="today-alert-copy">后端连接后会显示待导出、待补档和生成任务。</p>
         </div>
-        <button class="secondary" type="button" data-toast="已筛选出所有待导出绘本。">查看待导出</button>
+        <button class="secondary" type="button" data-action="filter-export">查看待导出</button>
       </section>
 
       <section class="ops-metrics" aria-label="关键指标">
@@ -85,9 +85,9 @@
           <p>逐页编辑读本文案，维护角色信息，并在不重生成整本的前提下完成替换、重绘、导出和分享。</p>
         </div>
         <div class="ops-topbar-actions">
-          <button class="secondary" type="button" data-toast="已保存当前绘本文案和页面锁定状态。">保存</button>
-          <button class="secondary" type="button" data-toast="正在生成电子翻页版分享链接。">分享</button>
-          <button class="primary" type="button" data-toast="正在准备 PDF 与打印版导出。">导出</button>
+          <button class="secondary" type="button" data-action="save-page">保存</button>
+          <button class="secondary" type="button" data-action="share-storybook">分享</button>
+          <button class="primary" type="button" data-action="export-storybook">导出</button>
         </div>
       </header>
 
@@ -97,7 +97,7 @@
           <div id="page-strip-list" class="page-strip-list">
             <article class="empty-state">正在加载页面...</article>
           </div>
-          <button class="secondary full-button" type="button" data-toast="已在当前页后新增一页草稿。">增加页面</button>
+          <button class="secondary full-button" type="button" data-action="add-page">增加页面</button>
         </aside>
 
         <section class="ops-panel page-canvas" aria-label="当前页预览">
@@ -116,9 +116,9 @@
             </article>
           </div>
           <div class="studio-inline-actions">
-            <button class="secondary" type="button" data-toast="当前页已锁定，后续重绘和文案重生成会跳过。">锁定页面</button>
-            <button class="secondary" type="button" data-toast="已删除当前页草稿。">删除页面</button>
-            <button class="primary" type="button" data-toast="正在为当前页重新生成文案。">单页重写</button>
+            <button class="secondary" type="button" data-action="toggle-lock-page">锁定页面</button>
+            <button class="secondary" type="button" data-action="delete-page">删除页面</button>
+            <button class="primary" type="button" data-action="rewrite-page">单页重写</button>
           </div>
         </section>
 
@@ -191,7 +191,7 @@
           <h1>孩子档案</h1>
           <p>维护生成绘本所需的年龄、兴趣、挑战和家庭沟通信息。</p>
         </div>
-        <button class="primary" type="button" data-toast="新增档案时只保存生成所需信息。">新增档案</button>
+        <button class="primary" type="button" data-action="create-child">新增档案</button>
       </header>
 
       <section class="ops-panel">

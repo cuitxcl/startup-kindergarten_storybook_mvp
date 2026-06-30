@@ -24,6 +24,22 @@
     return data;
   }
 
+  function json(method, body, headers = {}) {
+    return {
+      method,
+      body: JSON.stringify(body),
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    };
+  }
+
+  function idempotencyHeaders(prefix) {
+    const random = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    return { "Idempotency-Key": `${prefix}-${random}` };
+  }
+
   window.KindleleafApi = {
     baseUrl: apiBase,
     getDashboard: () => request("/api/dashboard/teacher"),
@@ -32,5 +48,17 @@
     listCases: () => request("/api/cases?page_size=50"),
     listStorybooks: () => request("/api/storybooks?page_size=20"),
     listPages: (storybookId) => request(`/api/storybooks/${storybookId}/pages`),
+    generateStorybook: (payload) => request("/api/storybooks/generate", json("POST", payload)),
+    updateStorybook: (storybookId, payload) => request(`/api/storybooks/${storybookId}`, json("PATCH", payload)),
+    addPage: (storybookId, payload) => request(`/api/storybooks/${storybookId}/pages`, json("POST", payload)),
+    updatePage: (storybookId, pageId, payload) => request(`/api/storybooks/${storybookId}/pages/${pageId}`, json("PATCH", payload)),
+    deletePage: (storybookId, pageId) => request(`/api/storybooks/${storybookId}/pages/${pageId}`, { method: "DELETE" }),
+    rewritePage: (storybookId, pageId, payload = {}) => request(`/api/storybooks/${storybookId}/pages/${pageId}/rewrite`, json("POST", payload)),
+    createExport: (storybookId, payload) =>
+      request(`/api/storybooks/${storybookId}/exports`, json("POST", payload, idempotencyHeaders("export"))),
+    createShareLink: (storybookId, payload) =>
+      request(`/api/storybooks/${storybookId}/share-links`, json("POST", payload, idempotencyHeaders("share"))),
+    createChild: (payload) => request("/api/children", json("POST", payload)),
+    updateChild: (childId, payload) => request(`/api/children/${childId}`, json("PATCH", payload)),
   };
 })();
