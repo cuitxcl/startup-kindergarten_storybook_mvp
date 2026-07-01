@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod children;
 pub mod content;
 pub mod dashboard;
@@ -20,6 +21,7 @@ pub type SharedState = Arc<RwLock<AppState>>;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
+    pub auth: auth::AuthStore,
     pub children: children::ChildrenStore,
     pub content: content::ContentStore,
     pub delivery: delivery::DeliveryStore,
@@ -33,6 +35,7 @@ impl AppState {
     pub fn demo() -> Self {
         let organization = organization::OrganizationStore::demo();
         Self {
+            auth: auth::AuthStore::demo(&organization),
             children: children::ChildrenStore::demo(&organization),
             content: content::ContentStore::demo(),
             delivery: delivery::DeliveryStore::demo(),
@@ -46,6 +49,7 @@ impl AppState {
 
 pub fn router(state: SharedState) -> axum::Router {
     axum::Router::new()
+        .nest("/api", auth::router())
         .nest("/api", organization::router())
         .nest("/api", dashboard::router())
         .nest("/api", children::router())
@@ -101,6 +105,15 @@ impl ApiError {
         Self {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN",
+            message: message.into(),
+            details: vec![],
+        }
+    }
+
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "UNAUTHORIZED",
             message: message.into(),
             details: vec![],
         }
