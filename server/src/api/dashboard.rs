@@ -1,4 +1,4 @@
-use super::{ApiError, SharedState};
+use super::{ApiError, SharedState, auth::AuthenticatedTeacher};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -130,12 +130,13 @@ pub struct ActivityItem {
 }
 
 async fn get_teacher_dashboard(
+    auth: AuthenticatedTeacher,
     State(state): State<SharedState>,
     Query(query): Query<DashboardQuery>,
 ) -> Result<Json<TeacherDashboardResponse>, ApiError> {
     let state = state.read().expect("state lock poisoned");
-    let school_id = state.organization.current_school_id;
-    let teacher_id = state.organization.current_teacher_id;
+    let school_id = auth.school_id;
+    let teacher_id = auth.teacher_id;
     let teacher = state
         .organization
         .teachers
@@ -273,6 +274,7 @@ async fn get_teacher_dashboard(
 }
 
 async fn list_content_items(
+    auth: AuthenticatedTeacher,
     State(state): State<SharedState>,
     Query(query): Query<ContentItemsQuery>,
 ) -> Result<Json<ListResponse<ContentItemSummary>>, ApiError> {
@@ -307,10 +309,11 @@ async fn list_content_items(
             "platform_review",
             "platform_public",
         ],
+
         "share_scope",
     )?;
     let state = state.read().expect("state lock poisoned");
-    let school_id = state.organization.current_school_id;
+    let school_id = auth.school_id;
     if let Some(child_id) = query.child_id {
         let child = state
             .children
@@ -375,11 +378,12 @@ async fn list_content_items(
 }
 
 async fn list_content_item_activity(
+    auth: AuthenticatedTeacher,
     State(state): State<SharedState>,
     Path(storybook_id): Path<Uuid>,
 ) -> Result<Json<ListResponse<ActivityItem>>, ApiError> {
     let state = state.read().expect("state lock poisoned");
-    let school_id = state.organization.current_school_id;
+    let school_id = auth.school_id;
     let storybook = state
         .storybooks
         .storybooks
@@ -620,8 +624,16 @@ mod tests {
     use std::sync::{Arc, RwLock};
     use tower::ServiceExt;
 
-    fn test_app() -> axum::Router {
-        api::router(Arc::new(RwLock::new(AppState::demo())))
+    fn test_state() -> Arc<RwLock<AppState>> {
+        Arc::new(RwLock::new(AppState::demo()))
+    }
+
+    fn test_app(state: Arc<RwLock<AppState>>) -> axum::Router {
+        api::router(state)
+    }
+
+    fn test_token(state: &Arc<RwLock<AppState>>) -> String {
+        api::auth::issue_demo_token_for_tests(state)
     }
 
     async fn json_request(
@@ -634,6 +646,10 @@ mod tests {
             .method(method)
             .uri(uri)
             .header("content-type", "application/json")
+            .header(
+                "authorization",
+                format!("Bearer {}", crate::api::auth::TEST_BEARER_TOKEN),
+            )
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -645,8 +661,12 @@ mod tests {
         (status, value)
     }
 
-    async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Value) {
-        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    async fn get_json(app: axum::Router, uri: &str, token: Option<&str>) -> (StatusCode, Value) {
+        let mut request = Request::builder().uri(uri);
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        let request = request.body(Body::empty()).unwrap();
         let response = app.oneshot(request).await.unwrap();
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -680,10 +700,12 @@ mod tests {
 
     #[tokio::test]
     async fn returns_teacher_dashboard_with_work_counts_and_cases() {
-        let app = test_app();
+        let state = test_state();
+        let token = test_token(&state);
+        let app = test_app(state);
         create_storybook(app.clone()).await;
 
-        let (status, body) = get_json(app, "/api/dashboard/teacher").await;
+        let (status, body) = get_json(app, "/api/dashboard/teacher", Some(&token)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["teacher"]["name"], "王老师");
         assert_eq!(body["current_school"]["name"], "Kindleaf 幼儿园");
@@ -695,12 +717,15 @@ mod tests {
 
     #[tokio::test]
     async fn lists_content_items_with_filters_and_pagination() {
-        let app = test_app();
+        let state = test_state();
+        let token = test_token(&state);
+        let app = test_app(state);
         let storybook_id = create_storybook(app.clone()).await;
 
         let (status, body) = get_json(
             app,
             "/api/content-items?content_type=custom_storybook&page_size=1",
+            Some(&token),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -712,7 +737,9 @@ mod tests {
 
     #[tokio::test]
     async fn returns_content_item_activity_stream() {
-        let app = test_app();
+        let state = test_state();
+        let token = test_token(&state);
+        let app = test_app(state);
         let storybook_id = create_storybook(app.clone()).await;
         let (status, export) = json_request(
             app.clone(),
@@ -741,8 +768,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{share}");
 
-        let (status, body) =
-            get_json(app, &format!("/api/content-items/{storybook_id}/activity")).await;
+        let (status, body) = get_json(
+            app,
+            &format!("/api/content-items/{storybook_id}/activity"),
+            Some(&token),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let items = body["items"].as_array().unwrap();
         assert!(
@@ -765,5 +796,14 @@ mod tests {
                 .iter()
                 .any(|item| item["activity_type"] == "share_link_updated")
         );
+    }
+
+    #[tokio::test]
+    async fn dashboard_requires_authenticated_session() {
+        let state = test_state();
+        let app = test_app(state);
+        let (status, body) = get_json(app, "/api/dashboard/teacher", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(body["error"]["code"], "UNAUTHORIZED");
     }
 }

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-pub fn router() -> Router<SharedState> {
+pub fn protected_router() -> Router<SharedState> {
     Router::new()
         .route("/children", get(list_children).post(create_child))
         .route("/children/{child_id}", get(get_child).patch(update_child))
@@ -18,10 +18,7 @@ pub fn router() -> Router<SharedState> {
             "/children/{child_id}/photos/{photo_id}",
             patch(update_child_photo),
         )
-        .route(
-            "/parent-intakes",
-            get(list_parent_intakes).post(create_parent_intake),
-        )
+        .route("/parent-intakes", get(list_parent_intakes))
         .route("/parent-intake-links", post(create_parent_intake_link))
         .route(
             "/parent-intakes/{intake_id}/accept",
@@ -650,7 +647,7 @@ async fn create_parent_intake_link(
     Ok(Json(link))
 }
 
-async fn create_parent_intake(
+pub async fn create_parent_intake(
     State(state): State<SharedState>,
     Json(payload): Json<CreateParentIntakeRequest>,
 ) -> Result<Json<ParentIntakeRecord>, ApiError> {
@@ -1156,6 +1153,31 @@ mod tests {
             .method(method)
             .uri(uri)
             .header("content-type", "application/json")
+            .header(
+                "authorization",
+                format!("Bearer {}", crate::api::auth::TEST_BEARER_TOKEN),
+            )
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, body)
+    }
+
+    async fn request_json_without_auth(
+        app: axum::Router,
+        method: &str,
+        uri: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -1170,6 +1192,10 @@ mod tests {
     async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Value) {
         let request = Request::builder()
             .method("GET")
+            .header(
+                "authorization",
+                format!("Bearer {}", crate::api::auth::TEST_BEARER_TOKEN),
+            )
             .uri(uri)
             .body(Body::empty())
             .unwrap();
@@ -1245,7 +1271,7 @@ mod tests {
             request_json(app.clone(), "POST", "/api/parent-intake-links", json!({})).await;
         assert_eq!(status, StatusCode::OK, "{link}");
         let invite_token = link["invite_token"].as_str().unwrap();
-        let (status, body) = request_json(
+        let (status, body) = request_json_without_auth(
             app,
             "POST",
             "/api/parent-intakes",
@@ -1395,7 +1421,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{asset}");
         let asset_id = asset["id"].as_str().unwrap();
-        let (status, intake) = request_json(
+        let (status, intake) = request_json_without_auth(
             app.clone(),
             "POST",
             "/api/parent-intakes",
@@ -1462,7 +1488,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{asset}");
         let asset_id = asset["id"].as_str().unwrap();
 
-        let (status, body) = request_json(
+        let (status, body) = request_json_without_auth(
             app,
             "POST",
             "/api/parent-intakes",
@@ -1486,7 +1512,7 @@ mod tests {
     #[tokio::test]
     async fn parent_intake_requires_active_invite_token() {
         let app = test_app();
-        let (status, body) = request_json(
+        let (status, body) = request_json_without_auth(
             app.clone(),
             "POST",
             "/api/parent-intakes",
@@ -1527,7 +1553,7 @@ mod tests {
                 "name": "小雨"
             }
         });
-        let (status, intake) = request_json(
+        let (status, intake) = request_json_without_auth(
             app.clone(),
             "POST",
             "/api/parent-intakes",
@@ -1545,7 +1571,8 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{accepted}");
 
-        let (status, body) = request_json(app, "POST", "/api/parent-intakes", intake_payload).await;
+        let (status, body) =
+            request_json_without_auth(app, "POST", "/api/parent-intakes", intake_payload).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(body["error"]["code"], "STATE_CONFLICT");
     }

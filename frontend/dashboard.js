@@ -109,6 +109,17 @@ function setAuthSession(session) {
   loginScreen?.classList.toggle("is-hidden", Boolean(teacher));
 }
 
+function handleAuthFailure(error) {
+  if (error?.status !== 401 && error?.code !== "UNAUTHORIZED") {
+    return false;
+  }
+  window.KindleleafApi.clearToken();
+  setAuthSession(null);
+  loginHint.textContent = `请重新登录：${error.message}`;
+  showDashboardToast("登录已失效，请重新登录。");
+  return true;
+}
+
 async function restoreSession() {
   if (!window.KindleleafApi.currentToken()) {
     setAuthSession(null);
@@ -1260,7 +1271,9 @@ async function handleAction(action, target) {
     }
     else if (action === "register-uploaded-asset") await registerUploadedAsset();
   } catch (error) {
-    showDashboardToast(error.message);
+    if (!handleAuthFailure(error)) {
+      showDashboardToast(error.message);
+    }
   } finally {
     target.disabled = false;
   }

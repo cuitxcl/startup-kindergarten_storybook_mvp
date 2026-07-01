@@ -21,7 +21,13 @@
 
     if (!response.ok) {
       const message = data?.error?.message || `请求失败：${response.status}`;
-      throw new Error(message);
+      const error = new Error(message);
+      error.status = response.status;
+      error.code = data?.error?.code;
+      if (response.status === 401) {
+        clearToken();
+      }
+      throw error;
     }
 
     return data;

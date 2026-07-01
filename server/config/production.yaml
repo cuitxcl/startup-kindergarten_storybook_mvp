@@ -10,7 +10,7 @@ server:
   port: 5150
 
 database:
-  uri: "{{ get_env(name=\"DATABASE_URL\", default=\"postgres://postgres:postgres@localhost:5432/kindergarten_storybook_production\") }}"
+  uri: '{{ get_env(name="DATABASE_URL", default="postgres://postgres:postgres@localhost:5432/kindergarten_storybook_production") }}'
   enable_logging: false
   min_connections: 1
   max_connections: 10

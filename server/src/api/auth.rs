@@ -1,13 +1,17 @@
 use super::{ApiError, SharedState, now};
 use axum::{
     Json, Router,
-    extract::State,
-    http::HeaderMap,
+    body::Body,
+    extract::{FromRequestParts, State},
+    http::{HeaderMap, Request, request::Parts},
+    middleware::Next,
+    response::Response,
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 pub fn router() -> Router<SharedState> {
@@ -16,6 +20,19 @@ pub fn router() -> Router<SharedState> {
         .route("/auth/me", get(me))
         .route("/auth/refresh", post(refresh_session))
         .route("/auth/logout", post(logout))
+}
+
+pub async fn require_session(
+    State(state): State<SharedState>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let token = bearer_token(request.headers())?.to_string();
+    {
+        let mut state = state.write().expect("state lock poisoned");
+        authenticated_teacher_from_token(&mut state, &token)?;
+    }
+    Ok(next.run(request).await)
 }
 
 #[derive(Clone, Debug)]
@@ -113,6 +130,54 @@ pub struct TeacherAuthSummary {
 #[derive(Debug, Serialize)]
 pub struct LogoutResponse {
     pub status: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AuthenticatedTeacher {
+    pub teacher_id: Uuid,
+    pub school_id: Uuid,
+}
+
+#[cfg(test)]
+pub const TEST_BEARER_TOKEN: &str = "dev-test-token";
+
+impl FromRequestParts<SharedState> for AuthenticatedTeacher {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &SharedState,
+    ) -> Result<Self, Self::Rejection> {
+        let token = bearer_token(&parts.headers)?.to_string();
+        let mut state = state.write().expect("state lock poisoned");
+        authenticated_teacher_from_token(&mut state, &token)
+    }
+}
+
+pub fn issue_demo_token_for_tests(state: &Arc<RwLock<crate::api::AppState>>) -> String {
+    let mut state = state.write().expect("state lock poisoned");
+    let teacher = state
+        .organization
+        .teachers
+        .get(&state.organization.current_teacher_id)
+        .cloned()
+        .expect("demo teacher exists");
+    let issued_at = now();
+    let expires_at = issued_at + chrono::Duration::hours(12);
+    let token = format!("dev-test-{}", Uuid::new_v4().simple());
+    state.auth.sessions.insert(
+        token.clone(),
+        AuthSessionRecord {
+            token: token.clone(),
+            teacher_id: teacher.id,
+            school_id: teacher.school_id,
+            status: "active".to_string(),
+            issued_at,
+            expires_at,
+            last_seen_at: issued_at,
+        },
+    );
+    token
 }
 
 async fn login(
@@ -279,6 +344,45 @@ fn active_session_mut<'a>(
     }
     session.last_seen_at = now();
     Ok(session)
+}
+
+fn authenticated_teacher_from_token(
+    state: &mut crate::api::AppState,
+    token: &str,
+) -> Result<AuthenticatedTeacher, ApiError> {
+    #[cfg(test)]
+    if token == TEST_BEARER_TOKEN {
+        let teacher = state
+            .organization
+            .teachers
+            .get(&state.organization.current_teacher_id)
+            .ok_or_else(|| ApiError::not_found("teacher"))?;
+        let school_id = teacher
+            .school_id
+            .unwrap_or(state.organization.current_school_id);
+        return Ok(AuthenticatedTeacher {
+            teacher_id: teacher.id,
+            school_id,
+        });
+    }
+
+    let session = active_session_mut(state, token)?.clone();
+    let teacher = state
+        .organization
+        .teachers
+        .get(&session.teacher_id)
+        .ok_or_else(|| ApiError::not_found("teacher"))?;
+    if teacher.status != "active" {
+        return Err(ApiError::unauthorized("教师账号已停用"));
+    }
+    let school_id = teacher
+        .school_id
+        .or(session.school_id)
+        .unwrap_or(state.organization.current_school_id);
+    Ok(AuthenticatedTeacher {
+        teacher_id: teacher.id,
+        school_id,
+    })
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<&str, ApiError> {

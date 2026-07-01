@@ -11,7 +11,9 @@ pub mod visuals;
 use axum::{
     Json,
     http::StatusCode,
+    middleware,
     response::{IntoResponse, Response},
+    routing::post,
 };
 use serde::Serialize;
 use std::sync::{Arc, RwLock};
@@ -48,17 +50,24 @@ impl AppState {
 }
 
 pub fn router(state: SharedState) -> axum::Router {
-    axum::Router::new()
+    let public_routes = axum::Router::new()
         .nest("/api", auth::router())
+        .route("/api/parent-intakes", post(children::create_parent_intake));
+    let protected_routes = axum::Router::new()
         .nest("/api", organization::router())
         .nest("/api", dashboard::router())
-        .nest("/api", children::router())
+        .nest("/api", children::protected_router())
         .nest("/api", content::router())
         .nest("/api", delivery::router())
         .nest("/api", images::router())
         .nest("/api", storybooks::router())
         .nest("/api", visuals::router())
-        .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_session,
+        ));
+
+    public_routes.merge(protected_routes).with_state(state)
 }
 
 #[derive(Clone, Debug, Serialize)]

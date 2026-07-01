@@ -484,6 +484,10 @@ mod tests {
             .method(method)
             .uri(uri)
             .header("content-type", "application/json")
+            .header(
+                "authorization",
+                format!("Bearer {}", crate::api::auth::TEST_BEARER_TOKEN),
+            )
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = test_app().oneshot(request).await.unwrap();
@@ -505,6 +509,10 @@ mod tests {
             .method(method)
             .uri(uri)
             .header("content-type", "application/json")
+            .header(
+                "authorization",
+                format!("Bearer {}", crate::api::auth::TEST_BEARER_TOKEN),
+            )
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -519,6 +527,10 @@ mod tests {
     async fn get_json(uri: &str) -> (StatusCode, Value) {
         let request = Request::builder()
             .method("GET")
+            .header(
+                "authorization",
+                format!("Bearer {}", crate::api::auth::TEST_BEARER_TOKEN),
+            )
             .uri(uri)
             .body(Body::empty())
             .unwrap();
@@ -629,6 +641,10 @@ mod tests {
         let app = router(Arc::new(RwLock::new(state)));
         let request = Request::builder()
             .method("GET")
+            .header(
+                "authorization",
+                format!("Bearer {}", crate::api::auth::TEST_BEARER_TOKEN),
+            )
             .uri("/api/teachers")
             .body(Body::empty())
             .unwrap();
