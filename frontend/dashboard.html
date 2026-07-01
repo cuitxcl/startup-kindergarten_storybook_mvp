@@ -23,7 +23,30 @@
       <strong>当前班级</strong>
       <span id="current-classroom">正在加载...</span>
     </div>
+    <div class="ops-sidebar-note auth-note">
+      <strong>登录状态</strong>
+      <span id="auth-status">未登录</span>
+      <button class="secondary compact-button" type="button" data-action="logout">退出</button>
+    </div>
   </aside>
+
+  <section class="login-screen" id="login-screen" aria-labelledby="login-title">
+    <form class="ops-panel login-panel" id="login-form">
+      <p class="eyebrow">Teacher Login</p>
+      <h1 id="login-title">老师登录</h1>
+      <p>使用教师邮箱或手机号登录控制台。</p>
+      <label>
+        账号
+        <input name="identifier" autocomplete="username" value="teacher@example.com">
+      </label>
+      <label>
+        密码
+        <input name="password" type="password" autocomplete="current-password" value="password123">
+      </label>
+      <button class="primary" type="submit">登录</button>
+      <p class="login-hint" id="login-hint">本地演示账号：teacher@example.com / password123</p>
+    </form>
+  </section>
 
   <main class="ops-shell">
     <section class="ops-page active" id="today" data-page="today">
@@ -35,6 +58,7 @@
         </div>
         <div class="ops-topbar-actions">
           <a class="secondary" href="index.html">返回首页</a>
+          <button class="secondary" type="button" data-action="refresh-session">刷新会话</button>
           <button class="primary" type="button" data-action="generate-storybook">新建绘本</button>
         </div>
       </header>

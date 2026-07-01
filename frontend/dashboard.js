@@ -13,8 +13,13 @@ const assetTable = document.querySelector("#asset-table");
 const childrenTable = document.querySelector("#children-table");
 const pageStripList = document.querySelector("#page-strip-list");
 const roleList = document.querySelector("#role-list");
+const loginScreen = document.querySelector("#login-screen");
+const loginForm = document.querySelector("#login-form");
+const loginHint = document.querySelector("#login-hint");
+const authStatus = document.querySelector("#auth-status");
 
 let dashboardState = {
+  session: null,
   contentItems: [],
   children: [],
   cases: [],
@@ -89,6 +94,73 @@ function selectedStorybookChild() {
 
 function apiMethodCount() {
   return Object.keys(window.KindleleafApi || {}).filter((key) => typeof window.KindleleafApi[key] === "function").length;
+}
+
+function setAuthSession(session) {
+  dashboardState.session = session;
+  const teacher = session?.teacher;
+  if (teacher) {
+    setText("#teacher-name", `${teacher.name} 控制台`);
+    setText("#auth-status", `${teacher.name} · ${teacher.role}`);
+  } else {
+    setText("#teacher-name", "老师控制台");
+    setText("#auth-status", "未登录");
+  }
+  loginScreen?.classList.toggle("is-hidden", Boolean(teacher));
+}
+
+async function restoreSession() {
+  if (!window.KindleleafApi.currentToken()) {
+    setAuthSession(null);
+    return false;
+  }
+  try {
+    const session = await window.KindleleafApi.me();
+    setAuthSession(session);
+    return true;
+  } catch (error) {
+    window.KindleleafApi.clearToken();
+    setAuthSession(null);
+    loginHint.textContent = `会话已失效：${error.message}`;
+    return false;
+  }
+}
+
+async function loginFromForm(event) {
+  event.preventDefault();
+  const submitButton = loginForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  try {
+    const data = new FormData(loginForm);
+    const session = await window.KindleleafApi.login({
+      identifier: String(data.get("identifier") || "").trim(),
+      password: String(data.get("password") || ""),
+    });
+    setAuthSession(session);
+    loginHint.textContent = "登录成功。";
+    showDashboardToast("登录成功，正在同步控制台。");
+    await loadDashboardData();
+  } catch (error) {
+    loginHint.textContent = error.message;
+    showDashboardToast(error.message);
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+async function refreshAuthSession() {
+  const session = await window.KindleleafApi.refreshSession();
+  setAuthSession(session);
+  showDashboardToast("登录会话已刷新。");
+}
+
+async function logoutSession() {
+  try {
+    await window.KindleleafApi.logout();
+  } finally {
+    setAuthSession(null);
+    showDashboardToast("已退出登录。");
+  }
 }
 
 function showPage(pageId, updateHash = true) {
@@ -1179,6 +1251,8 @@ async function handleAction(action, target) {
     else if (action === "manage-storybook-variants") await manageStorybookVariants();
     else if (action === "manage-image-details") await manageImageDetails();
     else if (action === "show-route-coverage") showRouteCoverage();
+    else if (action === "refresh-session") await refreshAuthSession();
+    else if (action === "logout") await logoutSession();
     else if (action === "filter-export") {
       const exportFilter = document.querySelector('[data-filter="export"]');
       if (exportFilter) exportFilter.click();
@@ -1207,6 +1281,10 @@ document.addEventListener("click", (event) => {
   event.preventDefault();
   handleAction(target.dataset.action, target);
 });
+
+if (loginForm) {
+  loginForm.addEventListener("submit", loginFromForm);
+}
 
 filterButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -1237,4 +1315,8 @@ choiceButtons.forEach((button) => {
 
 bindToastButtons();
 showPage(window.location.hash.replace("#", "") || "today", false);
-loadDashboardData();
+restoreSession().then((restored) => {
+  if (restored) {
+    loadDashboardData();
+  }
+});

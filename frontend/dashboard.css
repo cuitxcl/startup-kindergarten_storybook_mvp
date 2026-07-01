@@ -102,8 +102,15 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(196, 91, 52, 0.2
 .ops-nav a.active { color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-deep)); }
 .ops-sidebar-note { display: grid; gap: 5px; margin-right: 10px; padding: 14px; border: 1px solid rgba(147, 117, 72, 0.12); border-radius: 20px; background: rgba(255, 255, 255, 0.7); }
 .ops-sidebar-note span { color: var(--muted); font-size: 13px; }
+.auth-note .compact-button { width: 100%; margin-top: 4px; }
 
 .ops-shell { display: block; min-height: 100vh; padding: 24px 24px 72px 236px; }
+.login-screen { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(245, 236, 217, 0.9); backdrop-filter: blur(14px); }
+.login-panel { width: min(460px, 100%); display: grid; gap: 14px; }
+.login-panel h1 { margin-bottom: 0; }
+.login-panel label { display: grid; gap: 7px; color: var(--ink); font-size: 13px; font-weight: 900; }
+.login-panel input { width: 100%; border: 1px solid rgba(147, 117, 72, 0.16); border-radius: 16px; padding: 12px 14px; color: var(--ink); background: rgba(255, 255, 255, 0.9); font: inherit; }
+.login-hint { margin-bottom: 0; font-size: 13px; }
 .ops-page { display: none; }
 .ops-page.active { display: grid; gap: 16px; }
 .ops-topbar, .ops-alert, .ops-panel, .ops-metrics article { border: 1px solid rgba(255, 255, 255, 0.62); border-radius: var(--radius-xl); background: var(--panel); box-shadow: var(--shadow-md); }

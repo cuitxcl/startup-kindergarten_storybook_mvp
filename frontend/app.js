@@ -71,6 +71,21 @@ function themeToCaseTheme(theme) {
   return "入园适应";
 }
 
+async function ensureDemoSession() {
+  if (window.KindleleafApi.currentToken()) {
+    try {
+      await window.KindleleafApi.me();
+      return;
+    } catch (_error) {
+      window.KindleleafApi.clearToken();
+    }
+  }
+  await window.KindleleafApi.login({
+    identifier: "teacher@example.com",
+    password: "password123",
+  });
+}
+
 demoForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = new FormData(demoForm);
@@ -97,6 +112,7 @@ demoForm.addEventListener("submit", async (event) => {
   }
 
   try {
+    await ensureDemoSession();
     const child = await window.KindleleafApi.createChild({
       name: "演示孩子",
       nickname: "乐乐",

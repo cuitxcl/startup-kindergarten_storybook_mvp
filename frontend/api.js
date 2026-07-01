@@ -2,12 +2,15 @@
   const params = new URLSearchParams(window.location.search);
   const configuredBase = params.get("api") || window.KINDLEAF_API_BASE || "";
   const apiBase = configuredBase.replace(/\/$/, "");
+  const tokenStorageKey = "kindleaf_access_token";
 
   async function request(path, options = {}) {
+    const token = currentToken();
     const response = await fetch(`${apiBase}${path}`, {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.headers || {}),
       },
       ...options,
@@ -42,6 +45,27 @@
 
   window.KindleleafApi = {
     baseUrl: apiBase,
+    currentToken,
+    setToken,
+    clearToken,
+    login: async (payload) => {
+      const response = await request("/api/auth/login", json("POST", payload));
+      setToken(response.access_token);
+      return response;
+    },
+    me: () => request("/api/auth/me"),
+    refreshSession: async () => {
+      const response = await request("/api/auth/refresh", json("POST", {}));
+      setToken(response.access_token);
+      return response;
+    },
+    logout: async () => {
+      try {
+        return await request("/api/auth/logout", json("POST", {}));
+      } finally {
+        clearToken();
+      }
+    },
     getDashboard: () => request("/api/dashboard/teacher"),
     listContentItems: () => request("/api/content-items?page_size=20"),
     listContentItemActivity: (storybookId) => request(`/api/content-items/${storybookId}/activity`),
@@ -140,5 +164,19 @@
     });
     const serialized = query.toString();
     return serialized ? `?${serialized}` : "";
+  }
+
+  function currentToken() {
+    return window.localStorage.getItem(tokenStorageKey);
+  }
+
+  function setToken(token) {
+    if (token) {
+      window.localStorage.setItem(tokenStorageKey, token);
+    }
+  }
+
+  function clearToken() {
+    window.localStorage.removeItem(tokenStorageKey);
   }
 })();
