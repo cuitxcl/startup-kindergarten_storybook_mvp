@@ -221,9 +221,11 @@ pub struct GenerateStorybookRequest {
     pub case_storybook_id: Option<Uuid>,
     pub source_storybook_id: Option<Uuid>,
     pub title_override: Option<String>,
+    pub theme_override: Option<String>,
     pub style_id: Option<String>,
     pub reading_age_group: Option<String>,
     pub teaching_goal: Option<String>,
+    pub page_count: Option<i32>,
     #[serde(default)]
     pub generation_options: Value,
 }
@@ -334,6 +336,14 @@ async fn generate_storybook(
     validate_content_type(&payload.content_type)?;
     validate_optional_style_id(payload.style_id.as_deref())?;
     validate_optional_age_group(payload.reading_age_group.as_deref(), "reading_age_group")?;
+    if let Some(page_count) = payload.page_count {
+        if !(1..=10).contains(&page_count) {
+            return Err(ApiError::validation(
+                "page_count",
+                "页数必须在 1 到 10 之间",
+            ));
+        }
+    }
     let mut state = state.write().expect("state lock poisoned");
     let school_id = state.organization.current_school_id;
     let teacher_id = state.organization.current_teacher_id;
@@ -392,13 +402,6 @@ async fn generate_storybook(
             ));
         }
     }
-    if payload.case_storybook_id.is_none() && payload.source_storybook_id.is_none() {
-        return Err(ApiError::validation(
-            "case_storybook_id",
-            "必须提供 case_storybook_id 或 source_storybook_id",
-        ));
-    }
-
     let child = match payload.child_id {
         Some(child_id) => {
             let child = state
@@ -431,15 +434,26 @@ async fn generate_storybook(
                 .map(|storybook| storybook.title.clone())
         })
         .unwrap_or_else(|| "新的绘本".to_string());
-    let theme = source_case
-        .as_ref()
-        .map(|case| case.theme.clone())
+    let theme = payload
+        .theme_override
+        .and_then(normalize_optional_owned)
+        .or_else(|| source_case.as_ref().map(|case| case.theme.clone()))
         .or_else(|| {
             source_storybook
                 .as_ref()
                 .map(|storybook| storybook.theme.clone())
         })
-        .unwrap_or_else(|| "主题故事".to_string());
+        .unwrap_or_else(|| title.clone());
+    let has_generation_seed = source_case.is_some()
+        || source_storybook.is_some()
+        || !theme.trim().is_empty()
+        || payload
+            .teaching_goal
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+    if !has_generation_seed {
+        return Err(ApiError::validation("theme_override", "请先输入故事主题"));
+    }
     let teaching_goal = payload
         .teaching_goal
         .and_then(normalize_optional_owned)
@@ -449,10 +463,10 @@ async fn generate_storybook(
                 .as_ref()
                 .and_then(|storybook| storybook.teaching_goal.clone())
         })
-        .unwrap_or_else(|| "支持幼儿理解故事主题".to_string());
-    let page_count = source_case
-        .as_ref()
-        .map(|case| case.page_count)
+        .unwrap_or_else(|| format!("围绕{theme}生成适合幼儿阅读的故事"));
+    let page_count = payload
+        .page_count
+        .or_else(|| source_case.as_ref().map(|case| case.page_count))
         .or_else(|| {
             source_storybook.as_ref().and_then(|storybook| {
                 state
@@ -462,8 +476,8 @@ async fn generate_storybook(
                     .map(|pages| pages.len() as i32)
             })
         })
-        .unwrap_or(6)
-        .clamp(1, 10);
+        .unwrap_or(6);
+    let page_count = page_count.clamp(1, 10);
 
     let generated = state
         .storybooks
@@ -509,8 +523,10 @@ async fn generate_storybook(
         share_scope: "private".to_string(),
         derivation_type: if payload.source_storybook_id.is_some() {
             "from_plain_storybook".to_string()
-        } else {
+        } else if payload.case_storybook_id.is_some() {
             "from_case".to_string()
+        } else {
+            "from_teacher_brief".to_string()
         },
         created_at,
         updated_at: created_at,
@@ -1258,9 +1274,11 @@ fn generate_storybook_fingerprint(payload: &GenerateStorybookRequest) -> Value {
         "case_storybook_id": payload.case_storybook_id,
         "source_storybook_id": payload.source_storybook_id,
         "title_override": payload.title_override,
+        "theme_override": payload.theme_override,
         "style_id": payload.style_id,
         "reading_age_group": payload.reading_age_group,
         "teaching_goal": payload.teaching_goal,
+        "page_count": payload.page_count,
         "generation_options": payload.generation_options
     })
 }
@@ -1518,6 +1536,39 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(detail["pages"].as_array().unwrap().len(), 6);
         assert_eq!(detail["pages"][0]["scene_spec_status"], "ready");
+    }
+
+    #[tokio::test]
+    async fn generates_storybook_from_teacher_brief_without_case() {
+        let app = test_app();
+        let child_id = crate::api::demo_uuid(10);
+        let (status, body) = request_json(
+            app.clone(),
+            "POST",
+            "/api/storybooks/generate",
+            json!({
+                "content_type": "custom_storybook",
+                "child_id": child_id,
+                "title_override": "乐乐的轮流故事",
+                "theme_override": "第一次在幼儿园轮流玩滑梯",
+                "teaching_goal": "帮助孩子理解等待、表达和轮流",
+                "style_id": "storybook_flat_v1",
+                "reading_age_group": "5-6",
+                "page_count": 4,
+                "generation_options": {
+                    "source": "teacher_brief"
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["storybook"]["derivation_type"], "from_teacher_brief");
+        assert_eq!(body["storybook"]["theme"], "第一次在幼儿园轮流玩滑梯");
+
+        let storybook_id = body["storybook"]["id"].as_str().unwrap();
+        let (status, pages) = get_json(app, &format!("/api/storybooks/{storybook_id}/pages")).await;
+        assert_eq!(status, StatusCode::OK, "{pages}");
+        assert_eq!(pages["total"], 4);
     }
 
     #[tokio::test]

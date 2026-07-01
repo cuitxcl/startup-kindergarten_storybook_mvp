@@ -309,7 +309,6 @@ async fn list_content_items(
             "platform_review",
             "platform_public",
         ],
-
         "share_scope",
     )?;
     let state = state.read().expect("state lock poisoned");

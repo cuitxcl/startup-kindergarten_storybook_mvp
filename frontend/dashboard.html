@@ -106,16 +106,41 @@
         <div>
           <p class="eyebrow">Story Studio</p>
           <h1>绘本工作台</h1>
-          <p>逐页编辑读本文案，维护角色信息，并在不重生成整本的前提下完成替换、重绘、导出和分享。</p>
+          <p>先生成故事文本，老师确认故事框架后，再进入逐页绘本与插图制作。</p>
         </div>
         <div class="ops-topbar-actions">
-          <button class="secondary" type="button" data-action="save-page">保存</button>
-          <button class="secondary" type="button" data-action="share-storybook">分享</button>
-          <button class="primary" type="button" data-action="export-storybook">导出</button>
+          <button class="secondary" type="button" data-action="save-story-framework" data-story-phase-action>保存故事</button>
+          <button class="primary" type="button" data-action="confirm-story-framework" data-story-phase-action>确认故事框架</button>
+          <button class="secondary is-hidden" type="button" data-action="back-to-story-framework" data-editor-phase-action>返回故事</button>
+          <button class="secondary is-hidden" type="button" data-action="save-page" data-editor-phase-action>保存单页</button>
+          <button class="secondary is-hidden" type="button" data-action="share-storybook" data-editor-phase-action>分享</button>
+          <button class="primary is-hidden" type="button" data-action="export-storybook" data-editor-phase-action>导出</button>
         </div>
       </header>
 
-      <section class="storybook-editor" aria-label="读本编辑工作台">
+      <section class="ops-panel story-framework-panel" id="story-framework-panel" aria-label="故事框架确认">
+        <div class="story-brief-card" aria-label="AI 故事生成">
+          <div class="ops-section-head compact">
+            <div><p class="eyebrow">AI Story Brief</p><h2>先输入主题</h2></div>
+            <button class="primary compact-button" type="button" data-action="generate-story-from-brief">AI 生成故事</button>
+          </div>
+          <div class="story-brief-grid">
+            <label>故事主题<input data-story-brief-theme value="小朋友第一次在幼儿园分享玩具"></label>
+            <label>页数<input data-story-brief-page-count type="number" min="1" max="10" step="1" value="6"></label>
+            <label>补充要求<textarea data-story-brief-goal rows="3">面向 5-6 岁孩子，故事要温暖，突出轮流、表达和合作。</textarea></label>
+          </div>
+        </div>
+
+        <div class="ops-section-head compact">
+          <div><p class="eyebrow">Story Draft</p><h2 id="story-framework-title">故事框架</h2></div>
+          <span class="output-badge warning" id="story-framework-status">待确认</span>
+        </div>
+        <div class="story-framework-list" id="story-framework-list">
+          <article class="empty-state">正在加载故事文本...</article>
+        </div>
+      </section>
+
+      <section class="storybook-editor is-hidden" id="storybook-editor" aria-label="读本编辑工作台">
         <aside class="ops-panel page-strip" aria-label="页面缩略图">
           <div class="ops-section-head compact"><div><p class="eyebrow">Pages</p><h2>页面</h2></div><span class="output-badge" id="page-count-badge">- 页</span></div>
           <div id="page-strip-list" class="page-strip-list">
@@ -280,7 +305,7 @@
   </main>
 
   <div class="toast is-hidden" id="toast" role="status"></div>
-  <script src="api.js?v=1"></script>
-  <script src="dashboard.js?v=7"></script>
+  <script src="api.js?v=2"></script>
+  <script src="dashboard.js?v=12"></script>
 </body>
 </html>

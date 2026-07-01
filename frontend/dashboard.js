@@ -13,6 +13,9 @@ const assetTable = document.querySelector("#asset-table");
 const childrenTable = document.querySelector("#children-table");
 const pageStripList = document.querySelector("#page-strip-list");
 const roleList = document.querySelector("#role-list");
+const storyFrameworkPanel = document.querySelector("#story-framework-panel");
+const storyFrameworkList = document.querySelector("#story-framework-list");
+const storybookEditor = document.querySelector("#storybook-editor");
 const loginScreen = document.querySelector("#login-screen");
 const loginForm = document.querySelector("#login-form");
 const loginHint = document.querySelector("#login-hint");
@@ -28,6 +31,7 @@ let dashboardState = {
   selectedPage: null,
   roles: [],
   latestImageTask: null,
+  confirmedStorybookIds: new Set(),
   workItems: [],
   adminContext: {
     classrooms: [],
@@ -451,8 +455,10 @@ function renderPages(pagesResponse) {
   if (storyPages.length === 0) {
     const empty = document.createElement("article");
     empty.className = "empty-state";
-    empty.textContent = "当前绘本还没有页面。";
+    empty.innerHTML = `<strong>还没有可编辑绘本</strong><p>先创建一本绘本，工作台会自动载入页面、角色和编辑工具。</p>`;
+    empty.append(actionButton("新建绘本", "generate-storybook"));
     pageStripList.append(empty);
+    bindToastButtons(pageStripList);
     return;
   }
 
@@ -472,6 +478,52 @@ function renderPages(pagesResponse) {
   selectStoryPage(pageStripList.querySelector(".page-thumb"));
 }
 
+function renderStoryFramework(pagesResponse) {
+  const storyPages = pagesResponse.items || [];
+  if (!storyFrameworkList) {
+    return;
+  }
+  storyFrameworkList.replaceChildren();
+  setText("#story-framework-title", dashboardState.selectedStorybook ? `《${dashboardState.selectedStorybook.title}》故事框架` : "故事框架");
+  setText("#story-framework-status", isStoryFrameworkConfirmed() ? "已确认" : "待确认");
+  if (storyPages.length === 0) {
+    const empty = document.createElement("article");
+    empty.className = "empty-state";
+    empty.innerHTML = `
+      <strong>还没有生成故事框架</strong>
+      <p>先在上方输入主题、页数和补充要求，然后点击 AI 生成故事。</p>
+    `;
+    storyFrameworkList.append(empty);
+    return;
+  }
+  storyPages.forEach((page) => {
+    const row = document.createElement("article");
+    row.className = "story-framework-row";
+    row.dataset.pageId = page.id;
+    row.innerHTML = `
+      <span>${page.page_role === "cover" ? "Cover" : `Page ${escapeHtml(page.page_number)}`}</span>
+      <label>页面标题<input data-story-title value="${escapeHtml(page.page_title || "")}"></label>
+      <label>故事正文<textarea data-story-body rows="4">${escapeHtml(page.body_text || "")}</textarea></label>
+    `;
+    storyFrameworkList.append(row);
+  });
+}
+
+function isStoryFrameworkConfirmed() {
+  const storybookId = dashboardState.selectedStorybook?.storybook_id || dashboardState.selectedStorybook?.id;
+  return Boolean(storybookId && dashboardState.confirmedStorybookIds.has(storybookId));
+}
+
+function setStudioPhase(phase) {
+  const storyPhase = phase !== "editor";
+  const hasStoryRows = Boolean(storyFrameworkList?.querySelector(".story-framework-row"));
+  storyFrameworkPanel?.classList.toggle("is-hidden", !storyPhase);
+  storybookEditor?.classList.toggle("is-hidden", storyPhase);
+  document.querySelectorAll("[data-story-phase-action]").forEach((node) => node.classList.toggle("is-hidden", !storyPhase || !hasStoryRows));
+  document.querySelectorAll("[data-editor-phase-action]").forEach((node) => node.classList.toggle("is-hidden", storyPhase));
+  setText("#story-framework-status", isStoryFrameworkConfirmed() ? "已确认" : "待确认");
+}
+
 async function loadStudioPages() {
   const selected =
     dashboardState.contentItems.find((item) => item.storybook_id === dashboardState.selectedStorybook?.storybook_id) ||
@@ -479,6 +531,8 @@ async function loadStudioPages() {
   dashboardState.selectedStorybook = selected;
   if (!selected) {
     renderPages({ items: [] });
+    renderStoryFramework({ items: [] });
+    setStudioPhase("story");
     return;
   }
 
@@ -487,8 +541,10 @@ async function loadStudioPages() {
     window.KindleleafApi.listPages(selected.storybook_id),
     window.KindleleafApi.listStorybookRoles(selected.storybook_id),
   ]);
+  renderStoryFramework(pagesResponse);
   renderPages(pagesResponse);
   renderRoles(rolesResponse);
+  setStudioPhase(isStoryFrameworkConfirmed() ? "editor" : "story");
 }
 
 async function refreshDashboard() {
@@ -497,7 +553,7 @@ async function refreshDashboard() {
 
 async function loadDashboardData(options = {}) {
   try {
-    const [dashboard, contentItems, children, cases] = await Promise.all([
+    let [dashboard, contentItems, children, cases] = await Promise.all([
       window.KindleleafApi.getDashboard(),
       window.KindleleafApi.listContentItems(),
       window.KindleleafApi.listChildren(),
@@ -571,6 +627,7 @@ function requireSelectedPage() {
 }
 
 async function saveCurrentPage() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const page = requireSelectedPage();
   const updated = await window.KindleleafApi.updatePage(storybook.storybook_id, page.id, {
@@ -582,7 +639,50 @@ async function saveCurrentPage() {
   await loadStudioPages();
 }
 
+async function saveStoryFramework() {
+  const storybook = requireSelectedStorybook();
+  const rows = Array.from(storyFrameworkList?.querySelectorAll(".story-framework-row") || []);
+  if (rows.length === 0) {
+    throw new Error("当前没有可保存的故事页面。");
+  }
+  await Promise.all(rows.map((row) => {
+    const pageId = row.dataset.pageId;
+    const pageTitle = row.querySelector("[data-story-title]")?.value || "";
+    const bodyText = row.querySelector("[data-story-body]")?.value || "";
+    return window.KindleleafApi.updatePage(storybook.storybook_id, pageId, {
+      page_title: pageTitle,
+      body_text: bodyText,
+    });
+  }));
+  showDashboardToast("故事文本已保存。");
+  await loadStudioPages();
+}
+
+async function confirmStoryFramework() {
+  const storybook = requireSelectedStorybook();
+  await saveStoryFramework();
+  dashboardState.confirmedStorybookIds.add(storybook.storybook_id);
+  setStudioPhase("editor");
+  showDashboardToast("故事框架已确认，可以开始逐页制作绘本。");
+}
+
+async function backToStoryFramework() {
+  const storybookId = dashboardState.selectedStorybook?.storybook_id || dashboardState.selectedStorybook?.id;
+  if (storybookId) {
+    dashboardState.confirmedStorybookIds.delete(storybookId);
+  }
+  setStudioPhase("story");
+  showDashboardToast("已返回故事框架，可继续调整文本。");
+}
+
+function requireConfirmedStoryFramework() {
+  if (!isStoryFrameworkConfirmed()) {
+    throw new Error("请先确认故事框架，再进入逐页绘本制作。");
+  }
+}
+
 async function toggleCurrentPageLock() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const page = requireSelectedPage();
   const updated = await window.KindleleafApi.updatePage(storybook.storybook_id, page.id, {
@@ -594,6 +694,7 @@ async function toggleCurrentPageLock() {
 }
 
 async function rewriteCurrentPage() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const page = requireSelectedPage();
   const rewritten = await window.KindleleafApi.rewritePage(storybook.storybook_id, page.id, {
@@ -605,6 +706,7 @@ async function rewriteCurrentPage() {
 }
 
 async function redrawCurrentPage() {
+  requireConfirmedStoryFramework();
   const page = requireSelectedPage();
   const detail = await window.KindleleafApi.createPageImageTask(page.id, {
     style_id: activeStyleId(),
@@ -625,6 +727,7 @@ function requireLatestImageTask() {
 }
 
 async function selectLatestImageOutput() {
+  requireConfirmedStoryFramework();
   const task = requireLatestImageTask();
   const output = (task.outputs || []).find((item) => item.review_status !== "rejected") || task.outputs?.[0];
   if (!output) {
@@ -642,12 +745,14 @@ async function selectLatestImageOutput() {
 }
 
 async function viewLatestReviewEvents() {
+  requireConfirmedStoryFramework();
   const task = requireLatestImageTask();
   const events = await window.KindleleafApi.listReviewEvents(task.id);
   showDashboardToast(`当前图片任务有 ${events.total || 0} 条审核记录。`);
 }
 
 async function viewGenerationCosts() {
+  requireConfirmedStoryFramework();
   const storybook = dashboardState.selectedStorybook;
   const costs = await window.KindleleafApi.listGenerationCosts(storybook?.storybook_id);
   const total = (costs.items || []).reduce((sum, item) => sum + Number(item.total_cost || 0), 0);
@@ -704,10 +809,13 @@ function profilePayloadFromChild(child) {
 
 async function ensureCharacterProfileForRole(role, child) {
   if (role.character_profile_id) {
-    return role.character_profile_id;
+    const profile = await window.KindleleafApi.getCharacterProfile(role.character_profile_id);
+    if (hasEnoughReferenceRules(profile)) {
+      return profile.id;
+    }
   }
   const profiles = await window.KindleleafApi.listCharacterProfiles(child.id);
-  const existing = (profiles.items || []).find((item) => item.status !== "superseded");
+  const existing = (profiles.items || []).find((item) => item.status !== "superseded" && hasEnoughReferenceRules(item));
   if (existing) {
     return existing.id;
   }
@@ -719,7 +827,12 @@ async function ensureCharacterProfileForRole(role, child) {
   return profile.id;
 }
 
+function hasEnoughReferenceRules(profile) {
+  return Array.isArray(profile?.visual_must_keep) && profile.visual_must_keep.filter(Boolean).length >= 3;
+}
+
 async function generateReferenceImageForRole(roleKey) {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const role = dashboardState.roles.find((item) => item.role_key === roleKey) || dashboardState.roles[0];
   if (!role) {
@@ -747,6 +860,7 @@ async function generateReferenceImageForRole(roleKey) {
 }
 
 async function deleteCurrentPage() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const page = requireSelectedPage();
   if (!window.confirm("确认删除当前页？")) {
@@ -759,6 +873,7 @@ async function deleteCurrentPage() {
 }
 
 async function addPageToCurrentStorybook() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const nextNumber = dashboardState.pages.length + 1;
   await window.KindleleafApi.addPage(storybook.storybook_id, {
@@ -774,6 +889,7 @@ async function addPageToCurrentStorybook() {
 }
 
 async function exportStorybook(storybookId) {
+  requireConfirmedStoryFramework();
   const storybook = storybookId
     ? dashboardState.contentItems.find((item) => item.storybook_id === storybookId)
     : requireSelectedStorybook();
@@ -792,6 +908,7 @@ async function exportStorybook(storybookId) {
 }
 
 async function shareStorybook() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const share = await window.KindleleafApi.createShareLink(storybook.storybook_id, {
     share_scope: "family",
@@ -804,6 +921,7 @@ async function shareStorybook() {
 }
 
 async function checkShareScope() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const [shares, library] = await Promise.all([
     window.KindleleafApi.listShareLinks(storybook.storybook_id),
@@ -836,6 +954,7 @@ async function viewSharedLibrary() {
 }
 
 async function submitPlatformReview() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const result = await window.KindleleafApi.submitPlatformReview(storybook.storybook_id);
   showDashboardToast(`平台审核已提交：${result.review_status}`);
@@ -989,6 +1108,7 @@ async function manageChildPhoto() {
 }
 
 async function manageVisualSubjects() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const page = requireSelectedPage();
   const prop = await window.KindleleafApi.createPropProfile(storybook.storybook_id, {
@@ -1037,6 +1157,7 @@ async function manageVisualSubjects() {
 }
 
 async function manageDeliveryDetails() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const exports = await window.KindleleafApi.listExports(storybook.storybook_id);
   let exportItem = (exports.items || [])[0];
@@ -1065,6 +1186,7 @@ async function manageDeliveryDetails() {
 }
 
 async function manageStorybookVariants() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   await window.KindleleafApi.getStorybook(storybook.storybook_id);
   const duplicate = await window.KindleleafApi.duplicateStorybook(storybook.storybook_id, {
@@ -1083,6 +1205,7 @@ async function manageStorybookVariants() {
 }
 
 async function manageImageDetails() {
+  requireConfirmedStoryFramework();
   const task = dashboardState.latestImageTask;
   if (task?.outputs?.[0]?.image_asset?.id) {
     await window.KindleleafApi.getAsset(task.outputs[0].image_asset.id);
@@ -1108,13 +1231,14 @@ function showRouteCoverage() {
 function activeStyleId() {
   const active = document.querySelector(".choice-grid button.active");
   return {
-    "柔和彩铅": "soft-colored-pencil",
-    "扁平贴纸": "flat-sticker",
-    "水彩绘本": "watercolor-storybook",
-  }[active?.textContent?.trim()] || "soft-colored-pencil";
+    "柔和彩铅": "watercolor_soft_v1",
+    "扁平贴纸": "storybook_flat_v1",
+    "水彩绘本": "watercolor_soft_v1",
+  }[active?.textContent?.trim()] || "storybook_flat_v1";
 }
 
 async function renameFirstRole() {
+  requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
   const role = dashboardState.roles[0];
   if (!role) {
@@ -1132,6 +1256,51 @@ async function renameFirstRole() {
 }
 
 async function generateStorybookFromCase(caseId) {
+  const response = await createStorybookFromAvailableData(caseId);
+  showDashboardToast(`已创建绘本：${response.storybook.title}`);
+  await refreshDashboard();
+  await openStorybook(response.storybook.id || response.storybook.storybook_id);
+}
+
+async function generateStoryFromBrief() {
+  const theme = storyFrameworkPanel?.querySelector("[data-story-brief-theme]")?.value?.trim();
+  const goal = storyFrameworkPanel?.querySelector("[data-story-brief-goal]")?.value?.trim();
+  const pageCountValue = Number(storyFrameworkPanel?.querySelector("[data-story-brief-page-count]")?.value || 6);
+  const child = dashboardState.children.find((item) => item.profile_completion_status !== "missing_required") || dashboardState.children[0];
+  if (!theme) {
+    throw new Error("请先输入故事主题。");
+  }
+  if (!Number.isInteger(pageCountValue) || pageCountValue < 1 || pageCountValue > 10) {
+    throw new Error("页数必须在 1 到 10 之间。");
+  }
+  if (!child) {
+    throw new Error("请先创建孩子档案。");
+  }
+  const response = await window.KindleleafApi.generateStorybook({
+    content_type: "custom_storybook",
+    child_id: child.id,
+    title_override: `${child.nickname || child.name}的${theme}`,
+    theme_override: theme,
+    style_id: activeStyleId(),
+    reading_age_group: child.age_group || "5-6",
+    teaching_goal: goal || `围绕${theme}生成适合幼儿阅读的故事`,
+    page_count: pageCountValue,
+    generation_options: {
+      source: "teacher_brief",
+      teacher_brief: {
+        theme,
+        goal,
+        page_count: pageCountValue,
+      },
+    },
+  });
+  dashboardState.confirmedStorybookIds.delete(response.storybook.id);
+  showDashboardToast(`AI 已生成故事：${response.storybook.title}`);
+  await refreshDashboard();
+  await openStorybook(response.storybook.id);
+}
+
+async function createStorybookFromAvailableData(caseId) {
   const sourceCase = dashboardState.cases.find((item) => item.id === caseId) || dashboardState.cases[0];
   const child = dashboardState.children.find((item) => item.profile_completion_status !== "missing_required") || dashboardState.children[0];
   if (!sourceCase) {
@@ -1140,21 +1309,41 @@ async function generateStorybookFromCase(caseId) {
   if (!child) {
     throw new Error("请先创建孩子档案。");
   }
-  const response = await window.KindleleafApi.generateStorybook({
+  return window.KindleleafApi.generateStorybook({
     content_type: "custom_storybook",
     child_id: child.id,
     case_storybook_id: sourceCase.id,
     title_override: `${child.nickname || child.name}的${sourceCase.title}`,
-    style_id: "soft-colored-pencil",
+    theme_override: sourceCase.theme,
+    style_id: activeStyleId(),
     reading_age_group: child.age_group || "5-6",
     teaching_goal: child.teaching_focus || sourceCase.teaching_goal,
     generation_options: {
       source: "dashboard",
     },
   });
-  showDashboardToast(`已创建绘本：${response.storybook.title}`);
-  await refreshDashboard();
-  await openStorybook(response.storybook.id);
+}
+
+function storybookSelectionFromResponse(storybook) {
+  if (!storybook) {
+    return null;
+  }
+  return {
+    storybook_id: storybook.id || storybook.storybook_id,
+    title: storybook.title,
+    content_type: storybook.content_type,
+    theme: storybook.theme,
+    child: dashboardState.children.find((child) => child.id === storybook.child_id) || null,
+    story_status: storybook.story_status,
+    illustration_status: storybook.illustration_status,
+    status: storybook.status,
+    export_status: storybook.export_status,
+    share_status: storybook.share_status,
+    share_scope: storybook.share_scope,
+    page_count: dashboardState.pages.length || 0,
+    pending_image_task_count: 0,
+    updated_at: storybook.updated_at,
+  };
 }
 
 async function createChildFromPrompt() {
@@ -1215,7 +1404,10 @@ async function editChildFromPrompt(childId) {
 }
 
 async function openStorybook(storybookId) {
-  const selected = dashboardState.contentItems.find((item) => item.storybook_id === storybookId || item.id === storybookId);
+  const selected = dashboardState.contentItems.find((item) => item.storybook_id === storybookId || item.id === storybookId)
+    || (dashboardState.selectedStorybook?.storybook_id === storybookId || dashboardState.selectedStorybook?.id === storybookId
+      ? dashboardState.selectedStorybook
+      : null);
   if (!selected) {
     throw new Error("没有找到绘本。");
   }
@@ -1231,7 +1423,10 @@ async function handleAction(action, target) {
   }
   target.disabled = true;
   try {
-    if (action === "save-page") await saveCurrentPage();
+    if (action === "save-story-framework") await saveStoryFramework();
+    else if (action === "confirm-story-framework") await confirmStoryFramework();
+    else if (action === "back-to-story-framework") await backToStoryFramework();
+    else if (action === "save-page") await saveCurrentPage();
     else if (action === "toggle-lock-page") await toggleCurrentPageLock();
     else if (action === "rewrite-page") await rewriteCurrentPage();
     else if (action === "redraw-page") await redrawCurrentPage();
@@ -1245,6 +1440,7 @@ async function handleAction(action, target) {
     else if (action === "create-child") await createChildFromPrompt();
     else if (action === "edit-child") await editChildFromPrompt(target.dataset.childId);
     else if (action === "open-storybook") await openStorybook(target.dataset.storybookId);
+    else if (action === "generate-story-from-brief") await generateStoryFromBrief();
     else if (action === "generate-storybook") await generateStorybookFromCase(target.dataset.caseId);
     else if (action === "rename-role") await renameFirstRole();
     else if (action === "generate-reference-image") await generateReferenceImageForRole(target.dataset.roleKey);

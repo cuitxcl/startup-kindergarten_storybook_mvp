@@ -6,14 +6,15 @@
 
   async function request(path, options = {}) {
     const token = currentToken();
+    const { headers: optionHeaders = {}, ...fetchOptions } = options;
     const response = await fetch(`${apiBase}${path}`, {
+      ...fetchOptions,
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.headers || {}),
+        ...optionHeaders,
       },
-      ...options,
     });
 
     const text = await response.text();
