@@ -16,6 +16,7 @@ const roleList = document.querySelector("#role-list");
 const storyFrameworkPanel = document.querySelector("#story-framework-panel");
 const storyFrameworkList = document.querySelector("#story-framework-list");
 const storybookEditor = document.querySelector("#storybook-editor");
+const studioApiStatus = document.querySelector("#studio-api-status");
 const loginScreen = document.querySelector("#login-screen");
 const loginForm = document.querySelector("#login-form");
 const loginHint = document.querySelector("#login-hint");
@@ -31,6 +32,15 @@ let dashboardState = {
   selectedPage: null,
   roles: [],
   latestImageTask: null,
+  studioBackend: {
+    storybookDetail: null,
+    props: [],
+    exports: [],
+    shares: [],
+    activityTotal: 0,
+    sharedLibraryTotal: 0,
+    costTotal: 0,
+  },
   confirmedStorybookIds: new Set(),
   workItems: [],
   adminContext: {
@@ -219,6 +229,43 @@ function setLatestImageTask(detail) {
     "#latest-image-task-status",
     detail ? `${detail.task_type} · ${detail.status} · ${detail.outputs?.length || 0} 张候选图` : "暂无图片任务"
   );
+  renderStudioApiStatus();
+}
+
+function renderStudioApiStatus() {
+  if (!studioApiStatus) {
+    return;
+  }
+  const detail = dashboardState.studioBackend.storybookDetail;
+  const rows = [
+    {
+      badge: "读本",
+      title: detail ? `${detail.title} · ${detail.status}` : "未同步",
+      copy: detail ? `${detail.pages?.length || dashboardState.pages.length} 页 · ${detail.story_status} · ${detail.illustration_status}` : "读取读本详情、页面和活动流",
+    },
+    {
+      badge: "视觉",
+      title: `${dashboardState.roles.length} 个角色 · ${dashboardState.studioBackend.props.length} 个道具`,
+      copy: dashboardState.latestImageTask
+        ? `最新任务 ${dashboardState.latestImageTask.status}，候选图 ${dashboardState.latestImageTask.outputs?.length || 0} 张`
+        : "角色、参考图、道具和页面视觉主体",
+    },
+    {
+      badge: "交付",
+      title: `${dashboardState.studioBackend.exports.length} 个导出 · ${dashboardState.studioBackend.shares.length} 个分享`,
+      copy: `活动 ${dashboardState.studioBackend.activityTotal} 条 · 共享库 ${dashboardState.studioBackend.sharedLibraryTotal} 本 · 成本 ${dashboardState.studioBackend.costTotal} 条`,
+    },
+  ];
+  studioApiStatus.replaceChildren();
+  rows.forEach((row) => {
+    const item = document.createElement("article");
+    item.innerHTML = `
+      <span class="output-badge">${escapeHtml(row.badge)}</span>
+      <strong>${escapeHtml(row.title)}</strong>
+      <p>${escapeHtml(row.copy)}</p>
+    `;
+    studioApiStatus.append(item);
+  });
 }
 
 function rowButton(label, toast) {
@@ -424,6 +471,7 @@ function renderRoles(rolesResponse) {
     }
     roleList.append(item);
   });
+  renderStudioApiStatus();
 }
 
 function selectStoryPage(thumb) {
@@ -537,6 +585,7 @@ async function loadStudioPages() {
   }
 
   setText("#storybook-roles-label", selected.child ? `${selected.child.name} · ${selected.theme}` : selected.theme);
+  setText("#storybook-style-label", `DeepSeek 故事 · Seedream 插图 · ${styleLabelFromId(selected.style_id || activeStyleId())}`);
   const [pagesResponse, rolesResponse] = await Promise.all([
     window.KindleleafApi.listPages(selected.storybook_id),
     window.KindleleafApi.listStorybookRoles(selected.storybook_id),
@@ -545,6 +594,7 @@ async function loadStudioPages() {
   renderPages(pagesResponse);
   renderRoles(rolesResponse);
   setStudioPhase(isStoryFrameworkConfirmed() ? "editor" : "story");
+  renderStudioApiStatus();
 }
 
 async function refreshDashboard() {
@@ -617,6 +667,11 @@ function requireSelectedStorybook() {
     throw new Error("请先选择一本绘本。");
   }
   return dashboardState.selectedStorybook;
+}
+
+function selectedStorybookId() {
+  const storybook = requireSelectedStorybook();
+  return storybook.storybook_id || storybook.id;
 }
 
 function requireSelectedPage() {
@@ -710,7 +765,7 @@ async function redrawCurrentPage() {
   const page = requireSelectedPage();
   const detail = await window.KindleleafApi.createPageImageTask(page.id, {
     style_id: activeStyleId(),
-    prompt_template_version: "v1",
+    prompt_template_version: "seedream_page_image_v1",
     reference_image_ids: [],
     regeneration_reason: "teacher_requested_redraw",
   });
@@ -755,8 +810,109 @@ async function viewGenerationCosts() {
   requireConfirmedStoryFramework();
   const storybook = dashboardState.selectedStorybook;
   const costs = await window.KindleleafApi.listGenerationCosts(storybook?.storybook_id);
+  dashboardState.studioBackend.costTotal = costs.total || 0;
+  renderStudioApiStatus();
   const total = (costs.items || []).reduce((sum, item) => sum + Number(item.total_cost || 0), 0);
   showDashboardToast(`生成成本记录 ${costs.total || 0} 条，合计 ${total.toFixed(2)}。`);
+}
+
+async function syncStorybookDetail() {
+  requireConfirmedStoryFramework();
+  const storybookId = selectedStorybookId();
+  const [
+    detailResult,
+    storybooksResult,
+    pagesResult,
+    rolesResult,
+    propsResult,
+    exportsResult,
+    sharesResult,
+    libraryResult,
+    activityResult,
+    costsResult,
+    taskResult,
+  ] = await Promise.allSettled([
+    window.KindleleafApi.getStorybook(storybookId),
+    window.KindleleafApi.listStorybooks({ content_type: dashboardState.selectedStorybook.content_type || "" }),
+    window.KindleleafApi.listPages(storybookId),
+    window.KindleleafApi.listStorybookRoles(storybookId),
+    window.KindleleafApi.listPropProfiles(storybookId),
+    window.KindleleafApi.listExports(storybookId),
+    window.KindleleafApi.listShareLinks(storybookId),
+    window.KindleleafApi.listSharedLibrary({ content_type: dashboardState.selectedStorybook.content_type || "" }),
+    window.KindleleafApi.listContentItemActivity(storybookId),
+    window.KindleleafApi.listGenerationCosts(storybookId),
+    dashboardState.latestImageTask?.id ? window.KindleleafApi.getImageTask(dashboardState.latestImageTask.id) : Promise.resolve(null),
+  ]);
+
+  if (detailResult.status === "fulfilled") {
+    dashboardState.studioBackend.storybookDetail = detailResult.value;
+    dashboardState.selectedStorybook = storybookSelectionFromResponse(detailResult.value) || dashboardState.selectedStorybook;
+  }
+  if (pagesResult.status === "fulfilled") {
+    renderStoryFramework(pagesResult.value);
+    renderPages(pagesResult.value);
+  }
+  if (rolesResult.status === "fulfilled") {
+    renderRoles(rolesResult.value);
+  }
+  dashboardState.studioBackend.props = propsResult.status === "fulfilled" ? propsResult.value.items || [] : [];
+  dashboardState.studioBackend.exports = exportsResult.status === "fulfilled" ? exportsResult.value.items || [] : [];
+  dashboardState.studioBackend.shares = sharesResult.status === "fulfilled" ? sharesResult.value.items || [] : [];
+  dashboardState.studioBackend.sharedLibraryTotal = libraryResult.status === "fulfilled" ? libraryResult.value.total || 0 : 0;
+  dashboardState.studioBackend.activityTotal = activityResult.status === "fulfilled" ? activityResult.value.total || 0 : 0;
+  dashboardState.studioBackend.costTotal = costsResult.status === "fulfilled" ? costsResult.value.total || 0 : 0;
+  if (taskResult.status === "fulfilled" && taskResult.value) {
+    setLatestImageTask(taskResult.value);
+  }
+  renderStudioApiStatus();
+  const failedCount = [detailResult, storybooksResult, pagesResult, rolesResult, propsResult, exportsResult, sharesResult, libraryResult, activityResult, costsResult, taskResult]
+    .filter((result) => result.status === "rejected").length;
+  showDashboardToast(failedCount ? `工作台接口已同步，${failedCount} 个接口返回失败。` : "工作台后端接口已全部同步。");
+}
+
+async function updateStorybookMetadata() {
+  requireConfirmedStoryFramework();
+  const storybookId = selectedStorybookId();
+  const current = dashboardState.studioBackend.storybookDetail || dashboardState.selectedStorybook;
+  const title = window.prompt("读本标题", current.title || "");
+  if (title === null) {
+    return;
+  }
+  const teachingGoal = window.prompt("教学目标", current.teaching_goal || dashboardState.selectedStorybook.teaching_goal || "");
+  if (teachingGoal === null) {
+    return;
+  }
+  const updated = await window.KindleleafApi.updateStorybook(storybookId, {
+    title,
+    teaching_goal: teachingGoal,
+  });
+  dashboardState.studioBackend.storybookDetail = updated;
+  dashboardState.selectedStorybook = storybookSelectionFromResponse(updated) || dashboardState.selectedStorybook;
+  renderStudioApiStatus();
+  await refreshDashboard();
+  await openStorybook(updated.id);
+  showDashboardToast("读本信息已更新到后端。");
+}
+
+async function generateStorybookImages() {
+  requireConfirmedStoryFramework();
+  const storybookId = selectedStorybookId();
+  const response = await window.KindleleafApi.createStorybookImageTask(storybookId, {
+    style_id: activeStyleId(),
+    prompt_template_version: "seedream_page_image_v1",
+    skip_locked_pages: true,
+    only_pages_without_current_image: false,
+  });
+  const detail = await window.KindleleafApi.getImageTask(response.task_id);
+  setLatestImageTask(detail);
+  await syncStorybookDetail();
+  showDashboardToast(`整本生图任务已提交：${response.page_task_count} 页，跳过 ${response.skipped_page_ids?.length || 0} 页。`);
+}
+
+async function syncStudioBackendInterfaces() {
+  requireConfirmedStoryFramework();
+  await syncStorybookDetail();
 }
 
 async function registerUploadedAsset() {
@@ -850,6 +1006,7 @@ async function generateReferenceImageForRole(roleKey) {
     character_profile_id: characterProfileId,
     style_id: activeStyleId(),
   });
+  await window.KindleleafApi.getReferenceImage(reference.id);
   const activeReference = await window.KindleleafApi.activateReferenceImage(reference.id);
   await window.KindleleafApi.updateStorybookRole(storybook.storybook_id, role.role_key, {
     character_profile_id: characterProfileId,
@@ -1237,6 +1394,13 @@ function activeStyleId() {
   }[active?.textContent?.trim()] || "storybook_flat_v1";
 }
 
+function styleLabelFromId(styleId) {
+  return {
+    watercolor_soft_v1: "柔和彩铅",
+    storybook_flat_v1: "扁平贴纸",
+  }[styleId] || text(styleId, "统一画风");
+}
+
 async function renameFirstRole() {
   requireConfirmedStoryFramework();
   const storybook = requireSelectedStorybook();
@@ -1291,6 +1455,7 @@ async function generateStoryFromBrief() {
         theme,
         goal,
         page_count: pageCountValue,
+        story_provider: "deepseek",
       },
     },
   });
@@ -1320,6 +1485,7 @@ async function createStorybookFromAvailableData(caseId) {
     teaching_goal: child.teaching_focus || sourceCase.teaching_goal,
     generation_options: {
       source: "dashboard",
+      story_provider: "deepseek",
     },
   });
 }
@@ -1442,6 +1608,10 @@ async function handleAction(action, target) {
     else if (action === "open-storybook") await openStorybook(target.dataset.storybookId);
     else if (action === "generate-story-from-brief") await generateStoryFromBrief();
     else if (action === "generate-storybook") await generateStorybookFromCase(target.dataset.caseId);
+    else if (action === "sync-storybook-detail") await syncStorybookDetail();
+    else if (action === "update-storybook-metadata") await updateStorybookMetadata();
+    else if (action === "generate-storybook-images") await generateStorybookImages();
+    else if (action === "sync-studio-backend-interfaces") await syncStudioBackendInterfaces();
     else if (action === "rename-role") await renameFirstRole();
     else if (action === "generate-reference-image") await generateReferenceImageForRole(target.dataset.roleKey);
     else if (action === "check-share-scope") await checkShareScope();

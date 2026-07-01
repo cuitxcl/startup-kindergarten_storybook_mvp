@@ -165,6 +165,13 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(196, 91, 52, 0.2
 .story-framework-row input, .story-framework-row textarea { width: 100%; border: 1px solid rgba(147, 117, 72, 0.16); border-radius: 14px; padding: 11px 12px; color: var(--ink); background: rgba(255, 255, 255, 0.88); font: inherit; }
 .story-framework-row textarea { resize: vertical; min-height: 96px; line-height: 1.55; }
 .storybook-editor { display: grid; grid-template-columns: 220px minmax(360px, 1fr) 340px; gap: 16px; align-items: start; }
+.studio-api-panel { margin-top: 16px; display: grid; gap: 12px; }
+.studio-api-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.studio-api-status article { display: grid; gap: 6px; min-height: 96px; padding: 12px; border: 1px solid rgba(147, 117, 72, 0.1); border-radius: 16px; background: rgba(255, 255, 255, 0.7); }
+.studio-api-status strong { color: var(--ink); font-size: 14px; }
+.studio-api-status p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.studio-api-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.studio-api-grid button { width: 100%; min-width: 0; }
 .page-strip, .edit-drawer { display: grid; gap: 10px; }
 .page-thumb { display: grid; gap: 6px; width: 100%; min-height: 76px; padding: 12px; border: 1px solid rgba(147, 117, 72, 0.12); border-radius: 18px; color: var(--ink); background: rgba(255, 255, 255, 0.76); text-align: left; box-shadow: none; }
 .page-thumb span { color: var(--brand); font-size: 11px; font-weight: 900; text-transform: uppercase; }
@@ -239,6 +246,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(196, 91, 52, 0.2
   .ops-metrics, .work-row, .mini-book, .privacy-checks, .choice-grid, .studio-inline-actions { grid-template-columns: 1fr; }
   .story-brief-grid { grid-template-columns: 1fr; }
   .story-framework-row { grid-template-columns: 1fr; }
+  .studio-api-status, .studio-api-grid { grid-template-columns: 1fr; }
   .page-canvas { min-height: auto; }
   .storybook-page-preview { min-height: auto; }
   .storybook-illustration { min-height: 240px; }

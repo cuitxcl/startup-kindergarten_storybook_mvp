@@ -23,6 +23,12 @@ database:
 workers:
   mode: ForegroundBlocking
 
+ai:
+  deepseek:
+    api_key: '{{ get_env(name="DEEPSEEK_API_KEY", default="") }}'
+    base_url: '{{ get_env(name="DEEPSEEK_BASE_URL", default="https://api.deepseek.com") }}'
+    model: '{{ get_env(name="DEEPSEEK_MODEL", default="deepseek-chat") }}'
+
 queue: null
 auth: null
 mailer: null

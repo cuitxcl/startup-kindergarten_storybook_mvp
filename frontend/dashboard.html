@@ -211,6 +211,28 @@
           </div>
         </aside>
       </section>
+
+      <section class="ops-panel studio-api-panel is-hidden" id="studio-api-panel" data-editor-phase-action aria-label="绘本后端接口联动">
+        <div class="ops-section-head compact">
+          <div><p class="eyebrow">Backend APIs</p><h2>后端接口联动</h2></div>
+          <button class="primary compact-button" type="button" data-action="sync-studio-backend-interfaces">同步全部</button>
+        </div>
+        <div class="studio-api-status" id="studio-api-status">
+          <article><span class="output-badge">读本</span><strong>等待同步</strong><p>详情、页面、角色、道具、导出、分享、成本</p></article>
+        </div>
+        <div class="studio-api-grid">
+          <button class="secondary compact-button" type="button" data-action="sync-storybook-detail">读本详情</button>
+          <button class="secondary compact-button" type="button" data-action="update-storybook-metadata">更新读本</button>
+          <button class="secondary compact-button" type="button" data-action="generate-reference-image">角色参考图</button>
+          <button class="secondary compact-button" type="button" data-action="manage-visual-subjects">道具与主体</button>
+          <button class="secondary compact-button" type="button" data-action="generate-storybook-images">整本生图</button>
+          <button class="secondary compact-button" type="button" data-action="manage-image-details">图片任务</button>
+          <button class="secondary compact-button" type="button" data-action="manage-delivery-details">导出分享</button>
+          <button class="secondary compact-button" type="button" data-action="manage-storybook-variants">复制派生</button>
+          <button class="secondary compact-button" type="button" data-action="view-shared-library">共享库</button>
+          <button class="secondary compact-button" type="button" data-action="submit-platform-review">平台审核</button>
+        </div>
+      </section>
     </section>
 
     <section class="ops-page" id="assets" data-page="assets">

@@ -9,6 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::env;
+use std::time::Duration;
 use uuid::Uuid;
 
 pub fn router() -> Router<SharedState> {
@@ -93,8 +95,149 @@ pub trait StoryGenerationProvider {
     fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage;
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct DeepSeekStoryProvider;
+#[derive(Clone)]
+pub struct DeepSeekStoryProvider {
+    api_key: Option<String>,
+    base_url: String,
+    model: String,
+    timeout_seconds: u64,
+}
+
+impl std::fmt::Debug for DeepSeekStoryProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeepSeekStoryProvider")
+            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
+
+impl Default for DeepSeekStoryProvider {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+impl DeepSeekStoryProvider {
+    pub fn from_env() -> Self {
+        Self {
+            api_key: env::var("DEEPSEEK_API_KEY")
+                .ok()
+                .and_then(normalize_optional_owned),
+            base_url: env::var("DEEPSEEK_BASE_URL")
+                .ok()
+                .and_then(normalize_optional_owned)
+                .unwrap_or_else(|| "https://api.deepseek.com".to_string()),
+            model: env::var("DEEPSEEK_MODEL")
+                .ok()
+                .and_then(normalize_optional_owned)
+                .unwrap_or_else(|| "deepseek-chat".to_string()),
+            timeout_seconds: env::var("DEEPSEEK_TIMEOUT_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(45),
+        }
+    }
+
+    fn chat_completion(&self, system_prompt: &str, user_prompt: String) -> Option<String> {
+        let api_key = self.api_key.as_deref()?;
+        let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(self.timeout_seconds))
+            .build()
+            .ok()?;
+        let response = client
+            .post(endpoint)
+            .bearer_auth(api_key)
+            .json(&json!({
+                "model": self.model,
+                "temperature": 0.7,
+                "response_format": { "type": "json_object" },
+                "messages": [
+                    { "role": "system", "content": system_prompt },
+                    { "role": "user", "content": user_prompt }
+                ]
+            }))
+            .send()
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let body = response.json::<Value>().ok()?;
+        body.get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    }
+
+    fn generate_with_deepseek(&self, input: StoryGenerationInput) -> Option<StoryGenerationOutput> {
+        let system_prompt = "你是幼儿园老师的绘本故事生成助手。只返回严格 JSON，不要使用 Markdown。";
+        let user_prompt = format!(
+            r#"请生成一本适合幼儿园孩子阅读的绘本故事。
+输出 JSON 格式：
+{{
+  "title": "故事标题",
+  "role_manifest_json": {{"protagonist": {{"role_key": "protagonist", "role_type": "child 或 default_character", "display_name": "角色名"}}}},
+  "pages": [
+    {{
+      "page_role": "cover/story/closing",
+      "page_title": "页面标题",
+      "body_text": "页面正文，适合孩子朗读，简短温暖",
+      "prompt_text": "老师可追问孩子的问题",
+      "teacher_tip": "老师引导建议",
+      "scene_spec_json": {{"location": "地点", "action": "动作", "composition": "构图", "emotion": "情绪"}}
+    }}
+  ]
+}}
+要求：
+- 总页数必须是 {page_count} 页。
+- 第 1 页 page_role 为 cover，最后 1 页 page_role 为 closing，其余为 story。
+- content_type: {content_type}
+- 主角: {child_name}
+- 主题: {theme}
+- 教学目标: {teaching_goal}
+- 年龄段: {age_group}
+- 每页正文不要超过 80 个中文字符。"#,
+            page_count = input.page_count,
+            content_type = input.content_type,
+            child_name = input.child_name.as_deref().unwrap_or("小朋友"),
+            theme = input.theme,
+            teaching_goal = input.teaching_goal,
+            age_group = input.reading_age_group.as_deref().unwrap_or("5-6")
+        );
+        let content = self.chat_completion(system_prompt, user_prompt)?;
+        parse_deepseek_story_output(&content, input.page_count, input.title)
+    }
+
+    fn rewrite_with_deepseek(&self, input: PageRewriteInput) -> Option<StoryGeneratedPage> {
+        let system_prompt = "你是幼儿园老师的绘本单页改写助手。只返回严格 JSON，不要使用 Markdown。";
+        let user_prompt = format!(
+            r#"请改写绘本第 {page_number} 页，输出 JSON：
+{{
+  "page_title": "页面标题",
+  "body_text": "改写后的页面正文",
+  "prompt_text": "老师可追问孩子的问题",
+  "teacher_tip": "老师引导建议",
+  "scene_spec_json": {{"location": "地点", "action": "动作", "composition": "构图", "emotion": "情绪"}}
+}}
+故事标题：{title}
+教学目标：{teaching_goal}
+原文：{original_body_text}
+要求：正文适合幼儿园孩子阅读，不超过 80 个中文字符。"#,
+            page_number = input.page_number,
+            title = input.title,
+            teaching_goal = input.teaching_goal,
+            original_body_text = input.original_body_text
+        );
+        let content = self.chat_completion(system_prompt, user_prompt)?;
+        parse_deepseek_rewrite_output(&content)
+    }
+}
 
 impl StoryGenerationProvider for DeepSeekStoryProvider {
     fn provider_name(&self) -> &'static str {
@@ -102,10 +245,16 @@ impl StoryGenerationProvider for DeepSeekStoryProvider {
     }
 
     fn generate(&self, input: StoryGenerationInput) -> StoryGenerationOutput {
+        if let Some(output) = self.generate_with_deepseek(input.clone()) {
+            return output;
+        }
         deterministic_story("deepseek", input)
     }
 
     fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage {
+        if let Some(output) = self.rewrite_with_deepseek(input.clone()) {
+            return output;
+        }
         deterministic_rewrite("deepseek", input)
     }
 }
@@ -1058,6 +1207,123 @@ fn deterministic_rewrite(provider_name: &str, input: PageRewriteInput) -> StoryG
             "composition": "简洁稳定构图"
         }),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepSeekStoryResponse {
+    title: Option<String>,
+    pages: Vec<DeepSeekStoryPage>,
+    #[serde(default)]
+    role_manifest_json: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepSeekStoryPage {
+    page_role: Option<String>,
+    page_title: Option<String>,
+    body_text: String,
+    prompt_text: Option<String>,
+    teacher_tip: Option<String>,
+    #[serde(default)]
+    scene_spec_json: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepSeekRewriteResponse {
+    page_title: Option<String>,
+    body_text: String,
+    prompt_text: Option<String>,
+    teacher_tip: Option<String>,
+    #[serde(default)]
+    scene_spec_json: Value,
+}
+
+fn parse_deepseek_story_output(
+    content: &str,
+    expected_page_count: i32,
+    fallback_title: String,
+) -> Option<StoryGenerationOutput> {
+    let json_content = strip_json_markdown(content);
+    let response = serde_json::from_str::<DeepSeekStoryResponse>(&json_content).ok()?;
+    if response.pages.len() != expected_page_count.max(1) as usize {
+        return None;
+    }
+    let last_index = response.pages.len().saturating_sub(1);
+    let pages = response
+        .pages
+        .into_iter()
+        .enumerate()
+        .map(|(index, page)| {
+            let fallback_role = if index == 0 {
+                "cover"
+            } else if index == last_index {
+                "closing"
+            } else {
+                "story"
+            };
+            StoryGeneratedPage {
+                page_role: page
+                    .page_role
+                    .and_then(normalize_optional_owned)
+                    .unwrap_or_else(|| fallback_role.to_string()),
+                page_title: page.page_title.and_then(normalize_optional_owned),
+                body_text: page.body_text,
+                prompt_text: page.prompt_text.and_then(normalize_optional_owned),
+                teacher_tip: page.teacher_tip.and_then(normalize_optional_owned),
+                scene_spec_json: if page.scene_spec_json.is_null() {
+                    json!({})
+                } else {
+                    page.scene_spec_json
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    Some(StoryGenerationOutput {
+        title: response
+            .title
+            .and_then(normalize_optional_owned)
+            .unwrap_or(fallback_title),
+        pages,
+        role_manifest_json: if response.role_manifest_json.is_null() {
+            json!({})
+        } else {
+            response.role_manifest_json
+        },
+    })
+}
+
+fn parse_deepseek_rewrite_output(content: &str) -> Option<StoryGeneratedPage> {
+    let json_content = strip_json_markdown(content);
+    let response = serde_json::from_str::<DeepSeekRewriteResponse>(&json_content).ok()?;
+    Some(StoryGeneratedPage {
+        page_role: "story".to_string(),
+        page_title: response.page_title.and_then(normalize_optional_owned),
+        body_text: response.body_text,
+        prompt_text: response.prompt_text.and_then(normalize_optional_owned),
+        teacher_tip: response.teacher_tip.and_then(normalize_optional_owned),
+        scene_spec_json: if response.scene_spec_json.is_null() {
+            json!({})
+        } else {
+            response.scene_spec_json
+        },
+    })
+}
+
+fn strip_json_markdown(content: &str) -> String {
+    let trimmed = content.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+    let without_start = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed)
+        .trim();
+    without_start
+        .strip_suffix("```")
+        .unwrap_or(without_start)
+        .trim()
+        .to_string()
 }
 
 fn storybook_detail(
