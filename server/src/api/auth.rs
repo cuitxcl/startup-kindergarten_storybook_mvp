@@ -224,6 +224,9 @@ async fn register(
             last_login_at: Some(created_at),
         },
     );
+    state
+        .persist_identity_state()
+        .map_err(ApiError::state_conflict)?;
     let teacher = state
         .organization
         .teachers
@@ -304,7 +307,11 @@ async fn refresh_session(
         .ok_or_else(|| ApiError::not_found("teacher"))?;
     let issued_at = now();
     let expires_at = issued_at + chrono::Duration::hours(12);
-    let new_token = format!("session-{}-{}", teacher.id.simple(), Uuid::new_v4().simple());
+    let new_token = format!(
+        "session-{}-{}",
+        teacher.id.simple(),
+        Uuid::new_v4().simple()
+    );
     if let Some(session) = state.auth.sessions.get_mut(token) {
         session.status = "revoked".to_string();
         session.last_seen_at = issued_at;
@@ -487,7 +494,11 @@ fn issue_auth_response(
 ) -> Result<Json<AuthResponse>, ApiError> {
     let issued_at = now();
     let expires_at = issued_at + chrono::Duration::hours(12);
-    let token = format!("session-{}-{}", teacher.id.simple(), Uuid::new_v4().simple());
+    let token = format!(
+        "session-{}-{}",
+        teacher.id.simple(),
+        Uuid::new_v4().simple()
+    );
     state.auth.sessions.insert(
         token.clone(),
         AuthSessionRecord {
@@ -726,7 +737,12 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["teacher"]["email"], "new-teacher@example.test");
         assert_eq!(body["current_school"]["name"], "新园所");
-        assert!(body["access_token"].as_str().unwrap().starts_with("session-"));
+        assert!(
+            body["access_token"]
+                .as_str()
+                .unwrap()
+                .starts_with("session-")
+        );
 
         let token = body["access_token"].as_str().unwrap();
         let (status, me) = get_json_on(app, "/api/auth/me", Some(token)).await;

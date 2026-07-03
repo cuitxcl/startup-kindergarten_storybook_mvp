@@ -1,6 +1,11 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    env, fs,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 use crate::models::{auth, children, content, delivery, images, organization, storybooks, visuals};
+use serde::{Deserialize, Serialize};
 
 pub type SharedState = Arc<RwLock<AppState>>;
 
@@ -27,6 +32,50 @@ impl AppState {
             organization: organization::OrganizationStore::empty(),
             storybooks: storybooks::StorybookStore::empty(),
             visuals: visuals::VisualConsistencyStore::empty(),
+        }
+    }
+
+    pub fn load_identity_state(mut self) -> Self {
+        let path = identity_state_path();
+        let Ok(contents) = fs::read_to_string(&path) else {
+            return self;
+        };
+        match serde_json::from_str::<PersistedIdentityState>(&contents) {
+            Ok(persisted) => {
+                self.auth.credentials = persisted.auth.credentials;
+                self.organization = persisted.organization;
+                self
+            }
+            Err(error) => {
+                eprintln!("无法读取身份状态文件 {}: {error}", path.display());
+                self
+            }
+        }
+    }
+
+    pub fn persist_identity_state(&self) -> Result<(), String> {
+        #[cfg(test)]
+        {
+            Ok(())
+        }
+        #[cfg(not(test))]
+        {
+            let path = identity_state_path();
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!("无法创建身份状态目录 {}: {error}", parent.display())
+                })?;
+            }
+            let persisted = PersistedIdentityState {
+                auth: PersistedAuthStore {
+                    credentials: self.auth.credentials.clone(),
+                },
+                organization: self.organization.clone(),
+            };
+            let contents = serde_json::to_string_pretty(&persisted)
+                .map_err(|error| format!("无法序列化身份状态: {error}"))?;
+            fs::write(&path, contents)
+                .map_err(|error| format!("无法写入身份状态文件 {}: {error}", path.display()))
         }
     }
 
@@ -242,5 +291,28 @@ impl AppState {
 }
 
 pub fn shared_state() -> SharedState {
-    Arc::new(RwLock::new(AppState::empty()))
+    Arc::new(RwLock::new(AppState::empty().load_identity_state()))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedIdentityState {
+    auth: PersistedAuthStore,
+    organization: organization::OrganizationStore,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedAuthStore {
+    credentials: std::collections::BTreeMap<uuid::Uuid, auth::TeacherCredentialRecord>,
+}
+
+fn identity_state_path() -> PathBuf {
+    if let Ok(path) = env::var("KINDLEAF_IDENTITY_STATE_FILE") {
+        return PathBuf::from(path);
+    }
+    let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if current_dir.join("server").is_dir() {
+        current_dir.join("server/.data/identity_state.json")
+    } else {
+        current_dir.join(".data/identity_state.json")
+    }
 }

@@ -18,6 +18,8 @@ target
 .env.local
 server/.env
 server/.env.local
+server/.data/
+.data/
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

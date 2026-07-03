@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthStore {
     pub credentials: BTreeMap<Uuid, TeacherCredentialRecord>,
     pub sessions: BTreeMap<String, AuthSessionRecord>,
@@ -20,7 +20,7 @@ impl AuthStore {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeacherCredentialRecord {
     pub teacher_id: Uuid,
     #[serde(skip_serializing)]
@@ -29,7 +29,7 @@ pub struct TeacherCredentialRecord {
     pub last_login_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthSessionRecord {
     pub token: String,
     pub teacher_id: Uuid,
@@ -40,7 +40,7 @@ pub struct AuthSessionRecord {
     pub last_seen_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmailVerificationCodeRecord {
     pub email: String,
     pub code: String,

@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OrganizationStore {
     pub current_school_id: Uuid,
     pub current_teacher_id: Uuid,
@@ -24,7 +24,7 @@ impl OrganizationStore {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SchoolRecord {
     pub id: Uuid,
     pub name: String,
@@ -34,7 +34,7 @@ pub struct SchoolRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClassroomRecord {
     pub id: Uuid,
     pub school_id: Uuid,
@@ -46,7 +46,7 @@ pub struct ClassroomRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeacherRecord {
     pub id: Uuid,
     pub school_id: Option<Uuid>,
