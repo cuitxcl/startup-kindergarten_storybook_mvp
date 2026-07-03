@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>控制台 | Kindleaf Storybook</title>
-  <link rel="stylesheet" href="dashboard.css?v=5">
+  <link rel="stylesheet" href="dashboard.css?v=6">
 </head>
 <body class="ops-body">
   <aside class="ops-sidebar" aria-label="控制台导航">
@@ -31,26 +31,26 @@
   </aside>
 
   <section class="login-screen" id="login-screen" aria-labelledby="auth-title">
-    <div class="ops-panel login-panel">
+    <div class="login-panel">
       <p class="eyebrow">Teacher Account</p>
       <h1 id="auth-title">老师账号</h1>
-      <p>使用教师邮箱登录，首次使用请先注册。邮箱验证码会打印在后端终端。</p>
+      <p>使用教师邮箱登录。首次使用先注册，验证码会打印在后端终端。</p>
       <div class="auth-mode-switch" aria-label="账号操作">
         <button class="active" type="button" data-auth-mode="login">登录</button>
         <button type="button" data-auth-mode="register">注册</button>
       </div>
-    <form class="auth-form" id="login-form">
-      <label>
-        账号
-        <input name="identifier" autocomplete="username" placeholder="教师邮箱或手机号">
-      </label>
-      <label>
-        密码
-        <input name="password" type="password" autocomplete="current-password" placeholder="请输入密码">
-      </label>
-      <button class="primary" type="submit">登录</button>
-      <p class="login-hint" id="login-hint">连接后端 http://127.0.0.1:5150，请使用已创建的教师账号登录。</p>
-    </form>
+      <form class="auth-form" id="login-form">
+        <label>
+          账号
+          <input name="identifier" autocomplete="username" placeholder="教师邮箱或手机号">
+        </label>
+        <label>
+          密码
+          <input name="password" type="password" autocomplete="current-password" placeholder="请输入密码">
+        </label>
+        <button class="primary" type="submit">登录</button>
+        <p class="login-hint" id="login-hint">连接后端 http://127.0.0.1:5150，请使用已创建的教师账号登录。</p>
+      </form>
       <form class="auth-form is-hidden" id="register-form">
         <label>
           邮箱
