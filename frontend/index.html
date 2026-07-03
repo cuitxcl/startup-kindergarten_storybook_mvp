@@ -21,13 +21,13 @@
       <a href="#workflow">使用流程</a>
       <a href="#families">家园共育</a>
       <a href="#gallery">案例展示</a>
-      <a href="#demo">预约演示</a>
+      <a href="#backend">后端接入</a>
     </nav>
     <button class="secondary nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav">菜单</button>
     <div class="header-actions">
       <a class="secondary" href="#gallery">看案例</a>
       <a class="secondary" href="dashboard.html">进入控制台</a>
-      <a class="primary" href="#demo">进入演示</a>
+      <a class="primary" href="dashboard.html">进入控制台</a>
     </div>
   </header>
 
@@ -37,7 +37,7 @@
     <a href="#workflow">使用流程</a>
     <a href="#families">家园共育</a>
     <a href="#gallery">案例展示</a>
-    <a href="#demo">预约演示</a>
+    <a href="#backend">后端接入</a>
   </nav>
 
   <main id="home">
@@ -49,7 +49,7 @@
         <p class="hero-copy">老师先沉淀普通绘本母本，再按孩子档案派生定制绘本；课堂带读、家庭复述、园所内容资产在同一条路径里完成。</p>
         <div class="hero-actions">
           <a class="primary" href="dashboard.html">进入 Dashboard 控制台</a>
-          <a class="secondary hero-secondary" href="#demo">开始一个故事</a>
+          <a class="secondary hero-secondary" href="dashboard.html#studio">开始一个故事</a>
           <a class="secondary hero-secondary" href="#workflow">了解流程</a>
         </div>
         <div class="hero-proof" aria-label="产品特点">
@@ -208,35 +208,22 @@
       </div>
     </section>
 
-    <section class="section demo-section" id="demo">
-      <div class="demo-copy">
-        <p class="eyebrow">Start From One Story</p>
-        <h2>从一个课堂主题开始，先生成母本，再派生孩子版本。</h2>
-        <p>当前首页表单是演示入口：提交后会展示明确的成功状态和下一步建议。</p>
+    <section class="section backend-section" id="backend">
+      <div class="backend-copy">
+        <p class="eyebrow">Backend Connection</p>
+        <h2>前端直接连接本地后端接口。</h2>
+        <p>控制台通过 OpenAPI 文档中的接口访问后端，默认服务地址为 http://127.0.0.1:5150。</p>
       </div>
-      <form class="demo-form" id="demo-form" novalidate>
-        <label>
-          园所或班级
-          <input name="school" placeholder="例如：彩虹幼儿园小一班">
-          <span class="field-error" data-error-for="school"></span>
-        </label>
-        <label>
-          试用主题
-          <select name="theme">
-            <option>勇敢去幼儿园</option>
-            <option>森林分享日记</option>
-            <option>午睡小勇士</option>
-            <option>排队也有魔法</option>
-          </select>
-        </label>
-        <label class="check-row">
-          <input type="checkbox" name="privacy">
-          <span>我理解演示内容不应包含儿童完整姓名、照片或家庭隐私。</span>
-        </label>
-        <span class="field-error" data-error-for="privacy"></span>
-        <button class="primary" type="submit">预约首页演示</button>
-        <p class="form-note" id="form-note">提交后会生成一条演示请求状态。</p>
-      </form>
+      <article class="backend-panel">
+        <span class="status-pill" id="backend-status-pill">检查中</span>
+        <h3 id="backend-status-title">正在检查后端连接</h3>
+        <p id="backend-status-copy">读取 /_health 和 /api-docs/openapi.json 后，会显示接口文档状态。</p>
+        <div class="backend-actions">
+          <button class="primary" type="button" id="check-backend">重新检查</button>
+          <a class="secondary" href="dashboard.html">进入控制台</a>
+          <a class="secondary" href="http://127.0.0.1:5150/api-docs/openapi.json" target="_blank" rel="noreferrer">查看 OpenAPI</a>
+        </div>
+      </article>
     </section>
   </main>
 

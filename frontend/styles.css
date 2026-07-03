@@ -411,7 +411,7 @@ p {
 .workflow-step,
 .audience-card,
 .gallery-card,
-.demo-form,
+.backend-panel,
 .safety-section {
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: var(--radius-xl);
@@ -523,7 +523,7 @@ p {
   min-height: 360px;
 }
 
-.demo-section {
+.backend-section {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(360px, 0.7fr);
   gap: 28px;
@@ -531,14 +531,25 @@ p {
   padding-bottom: 72px;
 }
 
-.demo-copy {
+.backend-copy {
   padding-top: 10px;
 }
 
-.demo-form {
+.backend-panel {
   display: grid;
   gap: 14px;
   padding: 24px;
+}
+
+.backend-panel h3 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.backend-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .check-row {
@@ -672,7 +683,7 @@ p {
   .trust-strip,
   .split-section,
   .safety-section,
-  .demo-section,
+  .backend-section,
   .console-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -718,7 +729,7 @@ p {
   .trust-strip,
   .split-section,
   .safety-section,
-  .demo-section,
+  .backend-section,
   .console-grid {
     grid-template-columns: 1fr;
   }
