@@ -1,7 +1,5 @@
 (function () {
-  const params = new URLSearchParams(window.location.search);
-  const configuredBase = params.get("api") || window.KINDLEAF_API_BASE || "";
-  const apiBase = configuredBase.replace(/\/$/, "");
+  const apiBase = "http://127.0.0.1:5150";
   const tokenStorageKey = "kindleaf_access_token";
 
   async function request(path, options = {}) {
@@ -18,7 +16,14 @@
     });
 
     const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
+    let data = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_error) {
+        data = text;
+      }
+    }
 
     if (!response.ok) {
       const message = data?.error?.message || `请求失败：${response.status}`;
@@ -55,6 +60,9 @@
     currentToken,
     setToken,
     clearToken,
+    request,
+    getOpenApi: () => request("/api-docs/openapi.json"),
+    health: () => request("/_health"),
     login: async (payload) => {
       const response = await request("/api/auth/login", json("POST", payload));
       setToken(response.access_token);
