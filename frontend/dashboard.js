@@ -49,6 +49,7 @@ let dashboardState = {
     templates: [],
     parentIntakes: [],
   },
+  openApi: null,
 };
 
 function showDashboardToast(message) {
@@ -107,7 +108,10 @@ function selectedStorybookChild() {
 }
 
 function apiMethodCount() {
-  return Object.keys(window.KindleleafApi || {}).filter((key) => typeof window.KindleleafApi[key] === "function").length;
+  const paths = dashboardState.openApi?.paths || {};
+  return Object.values(paths).reduce((count, pathItem) => {
+    return count + Object.keys(pathItem || {}).filter((method) => ["get", "post", "patch", "put", "delete"].includes(method)).length;
+  }, 0);
 }
 
 function setAuthSession(session) {
@@ -603,13 +607,15 @@ async function refreshDashboard() {
 
 async function loadDashboardData(options = {}) {
   try {
-    let [dashboard, contentItems, children, cases] = await Promise.all([
+    let [openApi, dashboard, contentItems, children, cases] = await Promise.all([
+      window.KindleleafApi.getOpenApi(),
       window.KindleleafApi.getDashboard(),
       window.KindleleafApi.listContentItems(),
       window.KindleleafApi.listChildren(),
       window.KindleleafApi.listCases(),
     ]);
 
+    dashboardState.openApi = openApi;
     dashboardState.contentItems = contentItems.items || [];
     dashboardState.children = children.items || [];
     dashboardState.cases = cases.items || [];
@@ -626,7 +632,7 @@ async function loadDashboardData(options = {}) {
     }
   } catch (error) {
     showDashboardToast(`后端接口连接失败：${error.message}`);
-    const message = "无法连接后端接口，请确认 Loco 服务已启动，或使用 ?api=http://127.0.0.1:5150 指定地址。";
+    const message = "无法连接后端接口，请确认 http://127.0.0.1:5150 服务已启动。";
     if (workList) {
       workList.replaceChildren(Object.assign(document.createElement("article"), { className: "empty-state", textContent: message }));
     }
@@ -634,7 +640,8 @@ async function loadDashboardData(options = {}) {
 }
 
 async function syncAdminContext(options = {}) {
-  const [school, teacher, classrooms, teachers, templates, parentIntakes] = await Promise.allSettled([
+  const [openApi, school, teacher, classrooms, teachers, templates, parentIntakes] = await Promise.allSettled([
+    window.KindleleafApi.getOpenApi(),
     window.KindleleafApi.getCurrentSchool(),
     window.KindleleafApi.getCurrentTeacher(),
     window.KindleleafApi.listClassrooms(),
@@ -642,6 +649,9 @@ async function syncAdminContext(options = {}) {
     window.KindleleafApi.listTemplates(),
     window.KindleleafApi.listParentIntakes(),
   ]);
+  if (openApi.status === "fulfilled") {
+    dashboardState.openApi = openApi.value;
+  }
   if (school.status === "fulfilled") {
     setText("#today-subtitle", `${school.value.name} · ${school.value.status}`);
   }
@@ -1124,7 +1134,7 @@ async function manageOrganization() {
     window.KindleleafApi.getCurrentTeacher(),
     window.KindleleafApi.listClassrooms(),
   ]);
-  const name = window.prompt("测试班级名称", `接口验证班-${Date.now().toString().slice(-4)}`);
+  const name = window.prompt("临时班级名称", `接口验证班-${Date.now().toString().slice(-4)}`);
   if (!name) {
     showDashboardToast(`当前园所：${school.name}，默认老师：${currentTeacher.name}。`);
     return;
@@ -1382,7 +1392,7 @@ async function manageImageDetails() {
 
 function showRouteCoverage() {
   const covered = apiMethodCount();
-  showDashboardToast(`前端 API client 当前暴露 ${covered} 个方法，系统页提供 8 组管理入口。`);
+  showDashboardToast(`OpenAPI 当前登记 ${covered} 个接口方法，系统页提供 8 组管理入口。`);
 }
 
 function activeStyleId() {
