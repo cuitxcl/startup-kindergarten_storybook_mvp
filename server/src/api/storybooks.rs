@@ -64,7 +64,7 @@ impl StoryProviderKind {
         }
     }
 
-    fn generate(&self, input: StoryGenerationInput) -> StoryGenerationOutput {
+    fn generate(&self, input: StoryGenerationInput) -> Result<StoryGenerationOutput, ApiError> {
         match self {
             Self::DeepSeek(provider) => provider.generate(input),
             #[cfg(test)]
@@ -72,7 +72,7 @@ impl StoryProviderKind {
         }
     }
 
-    fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage {
+    fn rewrite_page(&self, input: PageRewriteInput) -> Result<StoryGeneratedPage, ApiError> {
         match self {
             Self::DeepSeek(provider) => provider.rewrite_page(input),
             #[cfg(test)]
@@ -83,8 +83,8 @@ impl StoryProviderKind {
 
 pub trait StoryGenerationProvider {
     fn provider_name(&self) -> &'static str;
-    fn generate(&self, input: StoryGenerationInput) -> StoryGenerationOutput;
-    fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage;
+    fn generate(&self, input: StoryGenerationInput) -> Result<StoryGenerationOutput, ApiError>;
+    fn rewrite_page(&self, input: PageRewriteInput) -> Result<StoryGeneratedPage, ApiError>;
 }
 
 #[derive(Clone)]
@@ -238,18 +238,32 @@ impl StoryGenerationProvider for DeepSeekStoryProvider {
         "deepseek"
     }
 
-    fn generate(&self, input: StoryGenerationInput) -> StoryGenerationOutput {
-        if let Some(output) = self.generate_with_deepseek(input.clone()) {
-            return output;
+    fn generate(&self, input: StoryGenerationInput) -> Result<StoryGenerationOutput, ApiError> {
+        if self.api_key.is_none() {
+            return Err(ApiError::state_conflict(
+                "DeepSeek API Key 未配置，请设置 DEEPSEEK_API_KEY 后重启后端",
+            ));
         }
-        deterministic_story("deepseek", input)
+        if let Some(output) = self.generate_with_deepseek(input.clone()) {
+            return Ok(output);
+        }
+        Err(ApiError::state_conflict(
+            "DeepSeek 调用失败或返回格式不符合要求，请检查 API Key、网络和后端日志",
+        ))
     }
 
-    fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage {
-        if let Some(output) = self.rewrite_with_deepseek(input.clone()) {
-            return output;
+    fn rewrite_page(&self, input: PageRewriteInput) -> Result<StoryGeneratedPage, ApiError> {
+        if self.api_key.is_none() {
+            return Err(ApiError::state_conflict(
+                "DeepSeek API Key 未配置，请设置 DEEPSEEK_API_KEY 后重启后端",
+            ));
         }
-        deterministic_rewrite("deepseek", input)
+        if let Some(output) = self.rewrite_with_deepseek(input.clone()) {
+            return Ok(output);
+        }
+        Err(ApiError::state_conflict(
+            "DeepSeek 调用失败或返回格式不符合要求，请检查 API Key、网络和后端日志",
+        ))
     }
 }
 
@@ -263,12 +277,12 @@ impl StoryGenerationProvider for TestStoryProvider {
         "test_story_provider"
     }
 
-    fn generate(&self, input: StoryGenerationInput) -> StoryGenerationOutput {
-        deterministic_story("test_story_provider", input)
+    fn generate(&self, input: StoryGenerationInput) -> Result<StoryGenerationOutput, ApiError> {
+        Ok(deterministic_story("test_story_provider", input))
     }
 
-    fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage {
-        deterministic_rewrite("test_story_provider", input)
+    fn rewrite_page(&self, input: PageRewriteInput) -> Result<StoryGeneratedPage, ApiError> {
+        Ok(deterministic_rewrite("test_story_provider", input))
     }
 }
 
@@ -540,7 +554,7 @@ async fn generate_storybook(
             teaching_goal: teaching_goal.clone(),
             reading_age_group: payload.reading_age_group.clone(),
             page_count,
-        });
+        })?;
 
     let created_at = now();
     let storybook_id = Uuid::new_v4();
@@ -1026,7 +1040,7 @@ async fn rewrite_page(
             page_number: page_snapshot.page_number,
             teaching_goal: storybook.teaching_goal.clone().unwrap_or_default(),
             original_body_text: page_snapshot.body_text,
-        });
+        })?;
     let pages = state.storybooks.pages.get_mut(&storybook_id).unwrap();
     let page = pages.iter_mut().find(|page| page.id == page_id).unwrap();
     page.page_title = rewritten.page_title;
@@ -1043,6 +1057,7 @@ async fn rewrite_page(
     Ok(Json(page))
 }
 
+#[cfg(test)]
 fn deterministic_story(provider_name: &str, input: StoryGenerationInput) -> StoryGenerationOutput {
     let protagonist = input.child_name.unwrap_or_else(|| "小朋友".to_string());
     let page_count = input.page_count.max(1);
@@ -1092,6 +1107,7 @@ fn deterministic_story(provider_name: &str, input: StoryGenerationInput) -> Stor
     }
 }
 
+#[cfg(test)]
 fn deterministic_rewrite(provider_name: &str, input: PageRewriteInput) -> StoryGeneratedPage {
     StoryGeneratedPage {
         page_role: "story".to_string(),
