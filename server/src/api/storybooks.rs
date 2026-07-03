@@ -8,7 +8,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::env;
+use std::{env, thread};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -134,37 +134,46 @@ impl DeepSeekStoryProvider {
     }
 
     fn chat_completion(&self, system_prompt: &str, user_prompt: String) -> Option<String> {
-        let api_key = self.api_key.as_deref()?;
+        let api_key = self.api_key.clone()?;
         let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(self.timeout_seconds))
-            .build()
-            .ok()?;
-        let response = client
-            .post(endpoint)
-            .bearer_auth(api_key)
-            .json(&json!({
-                "model": self.model,
-                "temperature": 0.7,
-                "response_format": { "type": "json_object" },
-                "messages": [
-                    { "role": "system", "content": system_prompt },
-                    { "role": "user", "content": user_prompt }
-                ]
-            }))
-            .send()
-            .ok()?;
-        if !response.status().is_success() {
-            return None;
-        }
-        let body = response.json::<Value>().ok()?;
-        body.get("choices")
-            .and_then(Value::as_array)
-            .and_then(|choices| choices.first())
-            .and_then(|choice| choice.get("message"))
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
+        let model = self.model.clone();
+        let timeout_seconds = self.timeout_seconds;
+        let system_prompt = system_prompt.to_string();
+
+        thread::spawn(move || {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(timeout_seconds))
+                .build()
+                .ok()?;
+            let response = client
+                .post(endpoint)
+                .bearer_auth(api_key)
+                .json(&json!({
+                    "model": model,
+                    "temperature": 0.7,
+                    "response_format": { "type": "json_object" },
+                    "messages": [
+                        { "role": "system", "content": system_prompt },
+                        { "role": "user", "content": user_prompt }
+                    ]
+                }))
+                .send()
+                .ok()?;
+            if !response.status().is_success() {
+                return None;
+            }
+            let body = response.json::<Value>().ok()?;
+            body.get("choices")
+                .and_then(Value::as_array)
+                .and_then(|choices| choices.first())
+                .and_then(|choice| choice.get("message"))
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .join()
+        .ok()
+        .flatten()
     }
 
     fn generate_with_deepseek(&self, input: StoryGenerationInput) -> Option<StoryGenerationOutput> {
