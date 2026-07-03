@@ -30,11 +30,16 @@
     </div>
   </aside>
 
-  <section class="login-screen" id="login-screen" aria-labelledby="login-title">
-    <form class="ops-panel login-panel" id="login-form">
-      <p class="eyebrow">Teacher Login</p>
-      <h1 id="login-title">老师登录</h1>
-      <p>使用教师邮箱或手机号登录控制台。</p>
+  <section class="login-screen" id="login-screen" aria-labelledby="auth-title">
+    <div class="ops-panel login-panel">
+      <p class="eyebrow">Teacher Account</p>
+      <h1 id="auth-title">老师账号</h1>
+      <p>使用教师邮箱登录，首次使用请先注册。邮箱验证码会打印在后端终端。</p>
+      <div class="auth-mode-switch" aria-label="账号操作">
+        <button class="active" type="button" data-auth-mode="login">登录</button>
+        <button type="button" data-auth-mode="register">注册</button>
+      </div>
+    <form class="auth-form" id="login-form">
       <label>
         账号
         <input name="identifier" autocomplete="username" placeholder="教师邮箱或手机号">
@@ -46,6 +51,38 @@
       <button class="primary" type="submit">登录</button>
       <p class="login-hint" id="login-hint">连接后端 http://127.0.0.1:5150，请使用已创建的教师账号登录。</p>
     </form>
+      <form class="auth-form is-hidden" id="register-form">
+        <label>
+          邮箱
+          <input name="email" type="email" autocomplete="email" placeholder="teacher@school.com">
+        </label>
+        <label>
+          验证码
+          <div class="inline-field">
+            <input name="verification_code" inputmode="numeric" maxlength="6" placeholder="后端终端中的 6 位验证码">
+            <button class="secondary compact-button" type="button" id="send-register-code">发送验证码</button>
+          </div>
+        </label>
+        <label>
+          老师姓名
+          <input name="teacher_name" autocomplete="name" placeholder="例如：王老师">
+        </label>
+        <label>
+          园所名称
+          <input name="school_name" placeholder="例如：彩虹幼儿园">
+        </label>
+        <label>
+          初始班级
+          <input name="classroom_name" placeholder="例如：小一班">
+        </label>
+        <label>
+          密码
+          <input name="password" type="password" autocomplete="new-password" placeholder="至少 8 位">
+        </label>
+        <button class="primary" type="submit">注册并登录</button>
+        <p class="login-hint" id="register-hint">点击发送验证码后，请查看运行后端的 terminal 输出。</p>
+      </form>
+    </div>
   </section>
 
   <main class="ops-shell">

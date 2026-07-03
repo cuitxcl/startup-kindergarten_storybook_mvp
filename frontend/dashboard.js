@@ -19,8 +19,12 @@ const storybookEditor = document.querySelector("#storybook-editor");
 const studioApiStatus = document.querySelector("#studio-api-status");
 const loginScreen = document.querySelector("#login-screen");
 const loginForm = document.querySelector("#login-form");
+const registerForm = document.querySelector("#register-form");
 const loginHint = document.querySelector("#login-hint");
+const registerHint = document.querySelector("#register-hint");
 const authStatus = document.querySelector("#auth-status");
+const authModeButtons = Array.from(document.querySelectorAll("[data-auth-mode]"));
+const sendRegisterCodeButton = document.querySelector("#send-register-code");
 
 let dashboardState = {
   session: null,
@@ -138,6 +142,14 @@ function handleAuthFailure(error) {
   return true;
 }
 
+function setAuthMode(mode) {
+  authModeButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.authMode === mode);
+  });
+  loginForm?.classList.toggle("is-hidden", mode !== "login");
+  registerForm?.classList.toggle("is-hidden", mode !== "register");
+}
+
 async function restoreSession() {
   if (!window.KindleleafApi.currentToken()) {
     setAuthSession(null);
@@ -152,6 +164,37 @@ async function restoreSession() {
     setAuthSession(null);
     loginHint.textContent = `会话已失效：${error.message}`;
     return false;
+  }
+}
+
+function registrationPayload() {
+  const data = new FormData(registerForm);
+  return {
+    email: String(data.get("email") || "").trim(),
+    password: String(data.get("password") || ""),
+    verification_code: String(data.get("verification_code") || "").trim(),
+    teacher_name: String(data.get("teacher_name") || "").trim(),
+    school_name: String(data.get("school_name") || "").trim(),
+    classroom_name: String(data.get("classroom_name") || "").trim() || undefined,
+  };
+}
+
+async function sendRegistrationCode() {
+  const email = String(new FormData(registerForm).get("email") || "").trim();
+  if (!email) {
+    registerHint.textContent = "请先填写邮箱。";
+    return;
+  }
+  sendRegisterCodeButton.disabled = true;
+  try {
+    const result = await window.KindleleafApi.sendRegistrationCode({ email });
+    registerHint.textContent = `验证码已发送到 ${result.email}，请查看后端 terminal 输出。`;
+    showDashboardToast("验证码已生成，请查看后端终端。");
+  } catch (error) {
+    registerHint.textContent = error.message;
+    showDashboardToast(error.message);
+  } finally {
+    sendRegisterCodeButton.disabled = false;
   }
 }
 
@@ -171,6 +214,24 @@ async function loginFromForm(event) {
     await loadDashboardData();
   } catch (error) {
     loginHint.textContent = error.message;
+    showDashboardToast(error.message);
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+async function registerFromForm(event) {
+  event.preventDefault();
+  const submitButton = registerForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  try {
+    const session = await window.KindleleafApi.register(registrationPayload());
+    setAuthSession(session);
+    registerHint.textContent = "注册成功。";
+    showDashboardToast("注册成功，正在同步控制台。");
+    await loadDashboardData();
+  } catch (error) {
+    registerHint.textContent = error.message;
     showDashboardToast(error.message);
   } finally {
     submitButton.disabled = false;
@@ -1674,6 +1735,16 @@ document.addEventListener("click", (event) => {
 if (loginForm) {
   loginForm.addEventListener("submit", loginFromForm);
 }
+
+if (registerForm) {
+  registerForm.addEventListener("submit", registerFromForm);
+}
+
+sendRegisterCodeButton?.addEventListener("click", sendRegistrationCode);
+
+authModeButtons.forEach((button) => {
+  button.addEventListener("click", () => setAuthMode(button.dataset.authMode));
+});
 
 filterButtons.forEach((button) => {
   button.addEventListener("click", () => {

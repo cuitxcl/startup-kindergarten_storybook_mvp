@@ -63,6 +63,12 @@
     request,
     getOpenApi: () => request("/api-docs/openapi.json"),
     health: () => request("/_health"),
+    sendRegistrationCode: (payload) => request("/api/auth/register/send-code", json("POST", payload)),
+    register: async (payload) => {
+      const response = await request("/api/auth/register", json("POST", payload));
+      setToken(response.access_token);
+      return response;
+    },
     login: async (payload) => {
       const response = await request("/api/auth/login", json("POST", payload));
       setToken(response.access_token);
