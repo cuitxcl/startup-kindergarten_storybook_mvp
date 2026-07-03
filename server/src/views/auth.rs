@@ -47,3 +47,10 @@ pub struct TeacherAuthSummary {
 pub struct LogoutResponse {
     pub status: String,
 }
+
+#[derive(Debug, Serialize)]
+pub struct EmailVerificationResponse {
+    pub status: String,
+    pub email: String,
+    pub expires_at: DateTime<Utc>,
+}

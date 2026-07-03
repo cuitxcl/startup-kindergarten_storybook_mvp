@@ -84,6 +84,8 @@ fn openapi_document() -> Value {
 fn paths() -> Value {
     let mut paths = serde_json::Map::new();
 
+    add(&mut paths, "/api/auth/register/send-code", "post", op("Send registration email code", "Auth", false, Some("SendRegistrationCodeRequest"), "EmailVerificationResponse"));
+    add(&mut paths, "/api/auth/register", "post", op("Register teacher account", "Auth", false, Some("RegisterRequest"), "AuthResponse"));
     add(&mut paths, "/api/auth/login", "post", op("Login", "Auth", false, Some("LoginRequest"), "AuthResponse"));
     add(&mut paths, "/api/auth/me", "get", op("Get current session", "Auth", true, None, "CurrentSessionResponse"));
     add(&mut paths, "/api/auth/refresh", "post", op("Refresh current session", "Auth", true, None, "AuthResponse"));
@@ -280,7 +282,7 @@ fn schemas() -> Value {
     let mut schemas = serde_json::Map::new();
 
     for name in [
-        "AuthResponse", "CurrentSessionResponse", "LogoutResponse",
+        "AuthResponse", "CurrentSessionResponse", "LogoutResponse", "EmailVerificationResponse",
         "SchoolRecord", "ClassroomRecord", "TeacherRecord", "CurrentTeacherResponse",
         "TeacherDashboardResponse", "ContentItemListResponse", "ActivityListResponse",
         "ChildRecord", "ChildDetailResponse", "ChildPhotoRecord", "ParentRecord",
@@ -322,7 +324,7 @@ fn schemas() -> Value {
     }
 
     for name in [
-        "LoginRequest", "UpdateSchoolRequest", "CreateClassroomRequest",
+        "LoginRequest", "SendRegistrationCodeRequest", "RegisterRequest", "UpdateSchoolRequest", "CreateClassroomRequest",
         "UpdateClassroomRequest", "CreateChildRequest", "UpdateChildRequest",
         "AddChildPhotoRequest", "UpdateChildPhotoRequest", "CreateParentIntakeRequest",
         "CreateParentIntakeLinkRequest", "CloneCaseRequest", "CreateTemplateRequest",

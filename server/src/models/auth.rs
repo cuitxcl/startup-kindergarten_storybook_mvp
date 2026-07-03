@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub struct AuthStore {
     pub credentials: BTreeMap<Uuid, TeacherCredentialRecord>,
     pub sessions: BTreeMap<String, AuthSessionRecord>,
+    pub email_verification_codes: BTreeMap<String, EmailVerificationCodeRecord>,
 }
 
 impl AuthStore {
@@ -14,6 +15,7 @@ impl AuthStore {
         Self {
             credentials: BTreeMap::new(),
             sessions: BTreeMap::new(),
+            email_verification_codes: BTreeMap::new(),
         }
     }
 }
@@ -36,6 +38,15 @@ pub struct AuthSessionRecord {
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EmailVerificationCodeRecord {
+    pub email: String,
+    pub code: String,
+    pub purpose: String,
+    pub expires_at: DateTime<Utc>,
+    pub consumed_at: Option<DateTime<Utc>>,
 }
 
 pub fn password_hash(password: &str) -> String {

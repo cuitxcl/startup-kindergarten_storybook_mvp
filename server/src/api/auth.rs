@@ -14,13 +14,19 @@ use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 use crate::models::auth::password_hash;
-pub use crate::models::auth::{AuthSessionRecord, AuthStore, TeacherCredentialRecord};
+pub use crate::models::auth::{
+    AuthSessionRecord, AuthStore, EmailVerificationCodeRecord, TeacherCredentialRecord,
+};
+use crate::models::organization::{ClassroomRecord, SchoolRecord, TeacherRecord};
 use crate::views::auth::{
-    AuthResponse, AuthSessionSummary, CurrentSessionResponse, LogoutResponse, TeacherAuthSummary,
+    AuthResponse, AuthSessionSummary, CurrentSessionResponse, EmailVerificationResponse,
+    LogoutResponse, TeacherAuthSummary,
 };
 
 pub fn router() -> Router<SharedState> {
     Router::new()
+        .route("/auth/register/send-code", post(send_registration_code))
+        .route("/auth/register", post(register))
         .route("/auth/login", post(login))
         .route("/auth/me", get(me))
         .route("/auth/refresh", post(refresh_session))
@@ -44,6 +50,21 @@ pub async fn require_session(
 pub struct LoginRequest {
     pub identifier: String,
     pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SendRegistrationCodeRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub email: String,
+    pub password: String,
+    pub verification_code: String,
+    pub teacher_name: String,
+    pub school_name: String,
+    pub classroom_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +116,123 @@ pub fn issue_test_token(state: &Arc<RwLock<crate::api::AppState>>) -> String {
     token
 }
 
+async fn send_registration_code(
+    State(state): State<SharedState>,
+    Json(payload): Json<SendRegistrationCodeRequest>,
+) -> Result<Json<EmailVerificationResponse>, ApiError> {
+    let email = normalize_email(payload.email)?;
+    let mut state = state.write().expect("state lock poisoned");
+    if active_teacher_email_exists(&state, &email) {
+        return Err(ApiError::state_conflict("该邮箱已注册"));
+    }
+    let code = verification_code();
+    let expires_at = now() + chrono::Duration::minutes(10);
+    state.auth.email_verification_codes.insert(
+        email.clone(),
+        EmailVerificationCodeRecord {
+            email: email.clone(),
+            code: code.clone(),
+            purpose: "teacher_register".to_string(),
+            expires_at,
+            consumed_at: None,
+        },
+    );
+    println!("邮箱注册验证码 {email}: {code}");
+    Ok(Json(EmailVerificationResponse {
+        status: "sent".to_string(),
+        email,
+        expires_at,
+    }))
+}
+
+async fn register(
+    State(state): State<SharedState>,
+    Json(payload): Json<RegisterRequest>,
+) -> Result<Json<AuthResponse>, ApiError> {
+    let email = normalize_email(payload.email)?;
+    let password = required_trimmed(payload.password, "password")?;
+    if password.chars().count() < 8 {
+        return Err(ApiError::validation("password", "密码至少 8 位"));
+    }
+    let verification_code = required_trimmed(payload.verification_code, "verification_code")?;
+    let teacher_name = required_trimmed(payload.teacher_name, "teacher_name")?;
+    let school_name = required_trimmed(payload.school_name, "school_name")?;
+    let classroom_name = payload.classroom_name.and_then(normalize_optional_owned);
+
+    let mut state = state.write().expect("state lock poisoned");
+    if active_teacher_email_exists(&state, &email) {
+        return Err(ApiError::state_conflict("该邮箱已注册"));
+    }
+    consume_registration_code(&mut state, &email, &verification_code)?;
+
+    let created_at = now();
+    let school_id = Uuid::new_v4();
+    let teacher_id = Uuid::new_v4();
+    state.organization.schools.insert(
+        school_id,
+        SchoolRecord {
+            id: school_id,
+            name: school_name,
+            code: None,
+            status: "active".to_string(),
+            created_at,
+            updated_at: created_at,
+        },
+    );
+    state.organization.teachers.insert(
+        teacher_id,
+        TeacherRecord {
+            id: teacher_id,
+            school_id: Some(school_id),
+            name: teacher_name,
+            email: Some(email.clone()),
+            phone: None,
+            role: "school_admin".to_string(),
+            status: "active".to_string(),
+            created_at,
+            updated_at: created_at,
+        },
+    );
+    if state.organization.current_school_id.is_nil() {
+        state.organization.current_school_id = school_id;
+    }
+    if state.organization.current_teacher_id.is_nil() {
+        state.organization.current_teacher_id = teacher_id;
+    }
+    if let Some(classroom_name) = classroom_name {
+        let classroom_id = Uuid::new_v4();
+        state.organization.classrooms.insert(
+            classroom_id,
+            ClassroomRecord {
+                id: classroom_id,
+                school_id,
+                teacher_id: Some(teacher_id),
+                name: classroom_name,
+                grade_level: None,
+                status: "active".to_string(),
+                created_at,
+                updated_at: created_at,
+            },
+        );
+    }
+    state.auth.credentials.insert(
+        teacher_id,
+        TeacherCredentialRecord {
+            teacher_id,
+            password_hash: password_hash(&password),
+            must_change_password: false,
+            last_login_at: Some(created_at),
+        },
+    );
+    let teacher = state
+        .organization
+        .teachers
+        .get(&teacher_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("teacher"))?;
+    issue_auth_response(&mut state, teacher)
+}
+
 async fn login(
     State(state): State<SharedState>,
     Json(payload): Json<LoginRequest>,
@@ -124,34 +262,8 @@ async fn login(
     if credential.password_hash != password_hash(&password) {
         return Err(invalid_credentials());
     }
-    let issued_at = now();
-    let expires_at = issued_at + chrono::Duration::hours(12);
-    credential.last_login_at = Some(issued_at);
-    let must_change_password = credential.must_change_password;
-    let token = format!("dev-{}-{}", teacher.id.simple(), Uuid::new_v4().simple());
-    state.auth.sessions.insert(
-        token.clone(),
-        AuthSessionRecord {
-            token: token.clone(),
-            teacher_id: teacher.id,
-            school_id: teacher.school_id,
-            status: "active".to_string(),
-            issued_at,
-            expires_at,
-            last_seen_at: issued_at,
-        },
-    );
-    let current_school = current_school(&state, teacher.school_id)?;
-    let default_classroom = default_classroom(&state, teacher.id, current_school.id);
-    Ok(Json(AuthResponse {
-        access_token: token,
-        token_type: "Bearer".to_string(),
-        expires_at,
-        teacher: teacher_summary(&teacher),
-        current_school,
-        default_classroom,
-        must_change_password,
-    }))
+    credential.last_login_at = Some(now());
+    issue_auth_response(&mut state, teacher)
 }
 
 async fn me(
@@ -192,7 +304,7 @@ async fn refresh_session(
         .ok_or_else(|| ApiError::not_found("teacher"))?;
     let issued_at = now();
     let expires_at = issued_at + chrono::Duration::hours(12);
-    let new_token = format!("dev-{}-{}", teacher.id.simple(), Uuid::new_v4().simple());
+    let new_token = format!("session-{}-{}", teacher.id.simple(), Uuid::new_v4().simple());
     if let Some(session) = state.auth.sessions.get_mut(token) {
         session.status = "revoked".to_string();
         session.last_seen_at = issued_at;
@@ -369,12 +481,107 @@ fn invalid_credentials() -> ApiError {
     ApiError::unauthorized("账号或密码错误")
 }
 
+fn issue_auth_response(
+    state: &mut crate::api::AppState,
+    teacher: TeacherRecord,
+) -> Result<Json<AuthResponse>, ApiError> {
+    let issued_at = now();
+    let expires_at = issued_at + chrono::Duration::hours(12);
+    let token = format!("session-{}-{}", teacher.id.simple(), Uuid::new_v4().simple());
+    state.auth.sessions.insert(
+        token.clone(),
+        AuthSessionRecord {
+            token: token.clone(),
+            teacher_id: teacher.id,
+            school_id: teacher.school_id,
+            status: "active".to_string(),
+            issued_at,
+            expires_at,
+            last_seen_at: issued_at,
+        },
+    );
+    let credential = state
+        .auth
+        .credentials
+        .get(&teacher.id)
+        .ok_or_else(invalid_credentials)?;
+    let current_school = current_school(state, teacher.school_id)?;
+    let default_classroom = default_classroom(state, teacher.id, current_school.id);
+    Ok(Json(AuthResponse {
+        access_token: token,
+        token_type: "Bearer".to_string(),
+        expires_at,
+        teacher: teacher_summary(&teacher),
+        current_school,
+        default_classroom,
+        must_change_password: credential.must_change_password,
+    }))
+}
+
+fn active_teacher_email_exists(state: &crate::api::AppState, email: &str) -> bool {
+    state.organization.teachers.values().any(|teacher| {
+        teacher.status == "active"
+            && teacher
+                .email
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case(email))
+    })
+}
+
+fn normalize_email(value: String) -> Result<String, ApiError> {
+    let email = required_trimmed(value, "email")?.to_lowercase();
+    if !email.contains('@') || email.starts_with('@') || email.ends_with('@') {
+        return Err(ApiError::validation("email", "邮箱格式不合法"));
+    }
+    Ok(email)
+}
+
+fn verification_code() -> String {
+    let raw = Uuid::new_v4().as_u128() % 1_000_000;
+    format!("{raw:06}")
+}
+
+fn consume_registration_code(
+    state: &mut crate::api::AppState,
+    email: &str,
+    code: &str,
+) -> Result<(), ApiError> {
+    let record = state
+        .auth
+        .email_verification_codes
+        .get_mut(email)
+        .ok_or_else(|| ApiError::validation("verification_code", "请先获取邮箱验证码"))?;
+    if record.purpose != "teacher_register" || record.email != email {
+        return Err(ApiError::validation("verification_code", "验证码不匹配"));
+    }
+    if record.consumed_at.is_some() {
+        return Err(ApiError::validation("verification_code", "验证码已使用"));
+    }
+    if record.expires_at <= now() {
+        return Err(ApiError::validation("verification_code", "验证码已过期"));
+    }
+    if record.code != code {
+        return Err(ApiError::validation("verification_code", "验证码不正确"));
+    }
+    record.consumed_at = Some(now());
+    Ok(())
+}
+
 fn required_trimmed(value: String, field: &'static str) -> Result<String, ApiError> {
     let value = value.trim();
     if value.is_empty() {
         return Err(ApiError::validation(field, "不能为空"));
     }
     Ok(value.to_string())
+}
+
+fn normalize_optional_owned(value: String) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -475,6 +682,56 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn registers_teacher_with_email_code() {
+        let state = Arc::new(RwLock::new(AppState::empty()));
+        let app = router(state.clone());
+        let (status, sent) = json_request_on(
+            app.clone(),
+            "POST",
+            "/api/auth/register/send-code",
+            json!({ "email": "new-teacher@example.test" }),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(sent["status"], "sent");
+
+        let code = state
+            .read()
+            .unwrap()
+            .auth
+            .email_verification_codes
+            .get("new-teacher@example.test")
+            .unwrap()
+            .code
+            .clone();
+        let (status, body) = json_request_on(
+            app.clone(),
+            "POST",
+            "/api/auth/register",
+            json!({
+                "email": "new-teacher@example.test",
+                "password": "password123",
+                "verification_code": code,
+                "teacher_name": "新老师",
+                "school_name": "新园所",
+                "classroom_name": "一班"
+            }),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["teacher"]["email"], "new-teacher@example.test");
+        assert_eq!(body["current_school"]["name"], "新园所");
+        assert!(body["access_token"].as_str().unwrap().starts_with("session-"));
+
+        let token = body["access_token"].as_str().unwrap();
+        let (status, me) = get_json_on(app, "/api/auth/me", Some(token)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(me["teacher"]["name"], "新老师");
     }
 
     #[tokio::test]
