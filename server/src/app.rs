@@ -11,7 +11,7 @@ use loco_rs::{
 };
 use tower_http::cors::CorsLayer;
 
-use crate::{api, commons::shared_demo_state};
+use crate::{api, commons::shared_state};
 
 pub struct App;
 
@@ -44,7 +44,7 @@ impl Hooks for App {
     }
 
     async fn before_routes(_ctx: &AppContext) -> Result<AxumRouter<AppContext>> {
-        Ok(api::router(shared_demo_state()).with_state(()))
+        Ok(api::router(shared_state()).with_state(()))
     }
 
     async fn after_routes(router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {

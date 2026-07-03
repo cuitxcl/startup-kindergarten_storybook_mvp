@@ -1,7 +1,7 @@
 use axum::{Router, middleware, routing::post};
 
 use super::{
-    auth, children, content, dashboard, delivery, images, organization, storybooks, visuals,
+    auth, children, content, dashboard, delivery, images, openapi, organization, storybooks, visuals,
 };
 use crate::commons::SharedState;
 
@@ -24,5 +24,8 @@ pub fn router(state: SharedState) -> Router {
             auth::require_session,
         ));
 
-    public_routes.merge(protected_routes).with_state(state)
+    public_routes
+        .merge(protected_routes)
+        .merge(openapi::router())
+        .with_state(state)
 }

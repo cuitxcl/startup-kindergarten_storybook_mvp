@@ -9,10 +9,11 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
+#[cfg(test)]
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
-use crate::models::auth::demo_password_hash;
+use crate::models::auth::password_hash;
 pub use crate::models::auth::{AuthSessionRecord, AuthStore, TeacherCredentialRecord};
 use crate::views::auth::{
     AuthResponse, AuthSessionSummary, CurrentSessionResponse, LogoutResponse, TeacherAuthSummary,
@@ -52,7 +53,7 @@ pub struct AuthenticatedTeacher {
 }
 
 #[cfg(test)]
-pub const TEST_BEARER_TOKEN: &str = "dev-test-token";
+pub const TEST_BEARER_TOKEN: &str = "test-token";
 
 impl FromRequestParts<SharedState> for AuthenticatedTeacher {
     type Rejection = ApiError;
@@ -67,17 +68,18 @@ impl FromRequestParts<SharedState> for AuthenticatedTeacher {
     }
 }
 
-pub fn issue_demo_token_for_tests(state: &Arc<RwLock<crate::api::AppState>>) -> String {
+#[cfg(test)]
+pub fn issue_test_token(state: &Arc<RwLock<crate::api::AppState>>) -> String {
     let mut state = state.write().expect("state lock poisoned");
     let teacher = state
         .organization
         .teachers
         .get(&state.organization.current_teacher_id)
         .cloned()
-        .expect("demo teacher exists");
+        .expect("test teacher exists");
     let issued_at = now();
     let expires_at = issued_at + chrono::Duration::hours(12);
-    let token = format!("dev-test-{}", Uuid::new_v4().simple());
+    let token = format!("test-{}", Uuid::new_v4().simple());
     state.auth.sessions.insert(
         token.clone(),
         AuthSessionRecord {
@@ -119,7 +121,7 @@ async fn login(
         .credentials
         .get_mut(&teacher.id)
         .ok_or_else(invalid_credentials)?;
-    if credential.password_hash != demo_password_hash(&password) {
+    if credential.password_hash != password_hash(&password) {
         return Err(invalid_credentials());
     }
     let issued_at = now();
@@ -387,7 +389,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        router(Arc::new(RwLock::new(AppState::demo())))
+        router(Arc::new(RwLock::new(AppState::test_fixture())))
     }
 
     async fn json_request_on(
@@ -441,7 +443,7 @@ mod tests {
             "POST",
             "/api/auth/login",
             json!({
-                "identifier": "teacher@example.com",
+                "identifier": "teacher@example.test",
                 "password": "password123"
             }),
             None,
@@ -454,7 +456,7 @@ mod tests {
         let token = login["access_token"].as_str().unwrap();
         let (status, me) = get_json_on(app, "/api/auth/me", Some(token)).await;
         assert_eq!(status, StatusCode::OK, "{me}");
-        assert_eq!(me["teacher"]["email"], "teacher@example.com");
+        assert_eq!(me["teacher"]["email"], "teacher@example.test");
         assert_eq!(me["current_school"]["name"], "Kindleaf 幼儿园");
     }
 
@@ -465,7 +467,7 @@ mod tests {
             "POST",
             "/api/auth/login",
             json!({
-                "identifier": "teacher@example.com",
+                "identifier": "teacher@example.test",
                 "password": "wrong-password"
             }),
             None,
@@ -483,7 +485,7 @@ mod tests {
             "POST",
             "/api/auth/login",
             json!({
-                "identifier": "teacher@example.com",
+                "identifier": "teacher@example.test",
                 "password": "password123"
             }),
             None,

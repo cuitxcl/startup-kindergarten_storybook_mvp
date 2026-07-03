@@ -841,7 +841,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        router(Arc::new(RwLock::new(AppState::demo())))
+        router(Arc::new(RwLock::new(AppState::test_fixture())))
     }
 
     async fn request_json(
@@ -915,7 +915,7 @@ mod tests {
     }
 
     async fn create_storybook(app: axum::Router) -> String {
-        let case_id = crate::api::demo_uuid(31);
+        let case_id = crate::commons::test_uuid(31);
         let (status, body) = request_json(
             app,
             "POST",
@@ -934,8 +934,8 @@ mod tests {
     }
 
     async fn create_custom_storybook(app: axum::Router) -> String {
-        let case_id = crate::api::demo_uuid(31);
-        let child_id = crate::api::demo_uuid(10);
+        let case_id = crate::commons::test_uuid(31);
+        let child_id = crate::commons::test_uuid(10);
         let (status, body) = request_json(
             app,
             "POST",
@@ -1268,7 +1268,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
 
-        let child_id = crate::api::demo_uuid(10).to_string();
+        let child_id = crate::commons::test_uuid(10).to_string();
         let (status, cloned) = request_json(
             app,
             "POST",

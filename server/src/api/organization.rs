@@ -358,7 +358,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        router(Arc::new(RwLock::new(AppState::demo())))
+        router(Arc::new(RwLock::new(AppState::test_fixture())))
     }
 
     async fn json_request(method: &str, uri: &str, body: Value) -> (StatusCode, Value) {
@@ -512,7 +512,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_teacher_list_for_non_admin() {
-        let mut state = AppState::demo();
+        let mut state = AppState::test_fixture();
         let teacher_id = state.organization.current_teacher_id;
         state
             .organization

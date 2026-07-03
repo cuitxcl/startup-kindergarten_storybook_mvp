@@ -1244,7 +1244,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        router(Arc::new(RwLock::new(AppState::demo())))
+        router(Arc::new(RwLock::new(AppState::test_fixture())))
     }
 
     async fn request_json(

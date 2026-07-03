@@ -89,7 +89,7 @@ impl IntoResponse for ApiError {
                 code: self.code,
                 message: self.message,
                 details: self.details,
-                request_id: "local-dev".to_string(),
+                request_id: "request-id-unavailable".to_string(),
             },
         };
         (self.status, Json(body)).into_response()

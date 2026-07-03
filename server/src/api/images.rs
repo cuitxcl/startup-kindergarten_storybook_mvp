@@ -51,28 +51,32 @@ pub fn router() -> Router<SharedState> {
 #[derive(Clone, Debug)]
 pub enum ImageProviderKind {
     Seedream(SeedreamImageProvider),
-    Fake(FakeSeedreamImageProvider),
+    #[cfg(test)]
+    Test(TestSeedreamImageProvider),
 }
 
 impl ImageProviderKind {
     fn provider_name(&self) -> &'static str {
         match self {
             Self::Seedream(provider) => provider.provider_name(),
-            Self::Fake(provider) => provider.provider_name(),
+            #[cfg(test)]
+            Self::Test(provider) => provider.provider_name(),
         }
     }
 
     fn model_name(&self) -> &'static str {
         match self {
             Self::Seedream(provider) => provider.model_name(),
-            Self::Fake(provider) => provider.model_name(),
+            #[cfg(test)]
+            Self::Test(provider) => provider.model_name(),
         }
     }
 
     fn generate(&self, input: ImageGenerationInput) -> ImageGenerationProviderOutput {
         match self {
             Self::Seedream(provider) => provider.generate(input),
-            Self::Fake(provider) => provider.generate(input),
+            #[cfg(test)]
+            Self::Test(provider) => provider.generate(input),
         }
     }
 }
@@ -100,20 +104,22 @@ impl ImageGenerationProvider for SeedreamImageProvider {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Default)]
-pub struct FakeSeedreamImageProvider;
+pub struct TestSeedreamImageProvider;
 
-impl ImageGenerationProvider for FakeSeedreamImageProvider {
+#[cfg(test)]
+impl ImageGenerationProvider for TestSeedreamImageProvider {
     fn provider_name(&self) -> &'static str {
-        "fake_seedream"
+        "test_seedream"
     }
 
     fn model_name(&self) -> &'static str {
-        "fake-seedream-v1"
+        "test-seedream-v1"
     }
 
     fn generate(&self, input: ImageGenerationInput) -> ImageGenerationProviderOutput {
-        deterministic_seedream_output("fake_seedream", "fake-seedream-v1", input)
+        deterministic_seedream_output("test_seedream", "test-seedream-v1", input)
     }
 }
 
@@ -839,7 +845,7 @@ fn deterministic_seedream_output(
         .map(|id| id.to_string())
         .unwrap_or_else(|| "batch".to_string());
     ImageGenerationProviderOutput {
-        image_url: format!("https://example.com/{provider_name}/{page_suffix}.png"),
+        image_url: format!("https://example.test/{provider_name}/{page_suffix}.png"),
         width: 1024,
         height: 1024,
         raw_prompt_text: format!(
@@ -1426,7 +1432,7 @@ fn list_response<T>(items: Vec<T>) -> ListResponse<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FakeSeedreamImageProvider, ImageProviderKind};
+    use super::{TestSeedreamImageProvider, ImageProviderKind};
     use crate::api::{AppState, router};
     use axum::{
         body::Body,
@@ -1438,8 +1444,8 @@ mod tests {
     use uuid::Uuid;
 
     fn test_state() -> Arc<RwLock<AppState>> {
-        let mut state = AppState::demo();
-        state.images.image_provider = ImageProviderKind::Fake(FakeSeedreamImageProvider);
+        let mut state = AppState::test_fixture();
+        state.images.image_provider = ImageProviderKind::Test(TestSeedreamImageProvider);
         Arc::new(RwLock::new(state))
     }
 
@@ -1554,7 +1560,7 @@ mod tests {
                 "filename": "lele.png",
                 "mime_type": "image/png",
                 "file_size": 1024,
-                "checksum": "sha256:demo"
+                "checksum": "sha256:test"
             }),
         )
         .await;
@@ -1569,13 +1575,13 @@ mod tests {
             "/api/assets",
             json!({
                 "asset_type": "child_photo",
-                "storage_url": "https://example.com/lele.png",
+                "storage_url": "https://example.test/lele.png",
                 "storage_key": storage_key,
                 "mime_type": "image/png",
                 "width": 512,
                 "height": 512,
                 "file_size": 1024,
-                "checksum": "sha256:demo",
+                "checksum": "sha256:test",
                 "metadata_json": {
                     "upload_intent_id": intent_id
                 }
@@ -1592,11 +1598,11 @@ mod tests {
             "/api/assets",
             json!({
                 "asset_type": "child_photo",
-                "storage_url": "https://example.com/reuse.png",
+                "storage_url": "https://example.test/reuse.png",
                 "storage_key": storage_key,
                 "mime_type": "image/png",
                 "file_size": 1024,
-                "checksum": "sha256:demo",
+                "checksum": "sha256:test",
                 "metadata_json": {
                     "upload_intent_id": intent_id
                 }
@@ -1619,7 +1625,7 @@ mod tests {
                 "filename": "lele.png",
                 "mime_type": "image/png",
                 "file_size": 1024,
-                "checksum": "sha256:demo"
+                "checksum": "sha256:test"
             }),
         )
         .await;
@@ -1631,11 +1637,11 @@ mod tests {
             "/api/assets",
             json!({
                 "asset_type": "child_photo",
-                "storage_url": "https://example.com/lele.png",
+                "storage_url": "https://example.test/lele.png",
                 "storage_key": "uploads/child_photo/wrong",
                 "mime_type": "image/png",
                 "file_size": 1024,
-                "checksum": "sha256:demo",
+                "checksum": "sha256:test",
                 "metadata_json": {
                     "upload_intent_id": intent_id
                 }
@@ -1662,7 +1668,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(task["provider_name"], "fake_seedream");
+        assert_eq!(task["provider_name"], "test_seedream");
         assert_eq!(task["outputs"].as_array().unwrap().len(), 1);
         assert_eq!(task["outputs"][0]["image_asset"]["width"], 1024);
         assert_eq!(
@@ -2001,7 +2007,7 @@ mod tests {
 
         let (status, costs) = get_json(
             app,
-            "/api/admin/generation-costs?provider_name=fake_seedream",
+            "/api/admin/generation-costs?provider_name=test_seedream",
         )
         .await;
         assert_eq!(status, StatusCode::OK);

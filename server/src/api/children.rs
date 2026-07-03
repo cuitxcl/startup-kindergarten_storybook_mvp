@@ -930,7 +930,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        router(Arc::new(RwLock::new(AppState::demo())))
+        router(Arc::new(RwLock::new(AppState::test_fixture())))
     }
 
     async fn request_json(
@@ -1098,7 +1098,7 @@ mod tests {
             "/api/assets",
             json!({
                 "asset_type": "child_photo",
-                "storage_url": "https://example.com/child-photo.png",
+                "storage_url": "https://example.test/child-photo.png",
                 "mime_type": "image/png",
                 "width": 1024,
                 "height": 1024
@@ -1168,7 +1168,7 @@ mod tests {
             "/api/assets",
             json!({
                 "asset_type": "storybook_page_image",
-                "storage_url": "https://example.com/page-image.png",
+                "storage_url": "https://example.test/page-image.png",
                 "mime_type": "image/png"
             }),
         )
@@ -1204,7 +1204,7 @@ mod tests {
             "/api/assets",
             json!({
                 "asset_type": "child_photo",
-                "storage_url": "https://example.com/intake-photo.png",
+                "storage_url": "https://example.test/intake-photo.png",
                 "mime_type": "image/png"
             }),
         )
@@ -1270,7 +1270,7 @@ mod tests {
             "/api/assets",
             json!({
                 "asset_type": "storybook_page_image",
-                "storage_url": "https://example.com/page-image.png",
+                "storage_url": "https://example.test/page-image.png",
                 "mime_type": "image/png"
             }),
         )

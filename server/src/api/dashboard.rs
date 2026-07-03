@@ -535,7 +535,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> Arc<RwLock<AppState>> {
-        Arc::new(RwLock::new(AppState::demo()))
+        Arc::new(RwLock::new(AppState::test_fixture()))
     }
 
     fn test_app(state: Arc<RwLock<AppState>>) -> axum::Router {
@@ -543,7 +543,7 @@ mod tests {
     }
 
     fn test_token(state: &Arc<RwLock<AppState>>) -> String {
-        api::auth::issue_demo_token_for_tests(state)
+        api::auth::issue_test_token(state)
     }
 
     async fn json_request(
@@ -587,8 +587,8 @@ mod tests {
     }
 
     async fn create_storybook(app: axum::Router) -> Uuid {
-        let case_id = crate::api::demo_uuid(31);
-        let child_id = crate::api::demo_uuid(10);
+        let case_id = crate::commons::test_uuid(31);
+        let child_id = crate::commons::test_uuid(10);
         let (status, body) = json_request(
             app,
             "POST",

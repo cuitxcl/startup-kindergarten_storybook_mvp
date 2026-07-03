@@ -51,28 +51,32 @@ pub fn router() -> Router<SharedState> {
 #[derive(Clone, Debug)]
 pub enum StoryProviderKind {
     DeepSeek(DeepSeekStoryProvider),
-    Fake(FakeStoryProvider),
+    #[cfg(test)]
+    Test(TestStoryProvider),
 }
 
 impl StoryProviderKind {
     fn provider_name(&self) -> &'static str {
         match self {
             Self::DeepSeek(provider) => provider.provider_name(),
-            Self::Fake(provider) => provider.provider_name(),
+            #[cfg(test)]
+            Self::Test(provider) => provider.provider_name(),
         }
     }
 
     fn generate(&self, input: StoryGenerationInput) -> StoryGenerationOutput {
         match self {
             Self::DeepSeek(provider) => provider.generate(input),
-            Self::Fake(provider) => provider.generate(input),
+            #[cfg(test)]
+            Self::Test(provider) => provider.generate(input),
         }
     }
 
     fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage {
         match self {
             Self::DeepSeek(provider) => provider.rewrite_page(input),
-            Self::Fake(provider) => provider.rewrite_page(input),
+            #[cfg(test)]
+            Self::Test(provider) => provider.rewrite_page(input),
         }
     }
 }
@@ -249,20 +253,22 @@ impl StoryGenerationProvider for DeepSeekStoryProvider {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Default)]
-pub struct FakeStoryProvider;
+pub struct TestStoryProvider;
 
-impl StoryGenerationProvider for FakeStoryProvider {
+#[cfg(test)]
+impl StoryGenerationProvider for TestStoryProvider {
     fn provider_name(&self) -> &'static str {
-        "fake_story_provider"
+        "test_story_provider"
     }
 
     fn generate(&self, input: StoryGenerationInput) -> StoryGenerationOutput {
-        deterministic_story("fake_story_provider", input)
+        deterministic_story("test_story_provider", input)
     }
 
     fn rewrite_page(&self, input: PageRewriteInput) -> StoryGeneratedPage {
-        deterministic_rewrite("fake_story_provider", input)
+        deterministic_rewrite("test_story_provider", input)
     }
 }
 
@@ -1569,7 +1575,7 @@ fn list_response<T>(items: Vec<T>) -> ListResponse<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FakeStoryProvider, StoryProviderKind};
+    use super::{TestStoryProvider, StoryProviderKind};
     use crate::api::{AppState, router};
     use axum::{
         body::Body,
@@ -1581,8 +1587,8 @@ mod tests {
     use uuid::Uuid;
 
     fn test_state() -> Arc<RwLock<AppState>> {
-        let mut state = AppState::demo();
-        state.storybooks.story_provider = StoryProviderKind::Fake(FakeStoryProvider);
+        let mut state = AppState::test_fixture();
+        state.storybooks.story_provider = StoryProviderKind::Test(TestStoryProvider);
         Arc::new(RwLock::new(state))
     }
 
@@ -1686,11 +1692,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generates_storybook_with_fake_deepseek_contract() {
+    async fn generates_storybook_with_test_provider_contract() {
         let app = test_app();
         let body = create_plain_storybook(app.clone()).await;
         assert_eq!(body["storybook"]["story_status"], "story_ready");
-        assert_eq!(body["story_task"]["provider"], "fake_story_provider");
+        assert_eq!(body["story_task"]["provider"], "test_story_provider");
         let storybook_id = body["storybook"]["id"].as_str().unwrap();
 
         let (status, detail) = get_json(app, &format!("/api/storybooks/{storybook_id}")).await;
@@ -1702,7 +1708,7 @@ mod tests {
     #[tokio::test]
     async fn generates_storybook_from_teacher_brief_without_case() {
         let app = test_app();
-        let child_id = crate::api::demo_uuid(10);
+        let child_id = crate::commons::test_uuid(10);
         let (status, body) = request_json(
             app.clone(),
             "POST",
@@ -1844,9 +1850,9 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_generation_from_inactive_case_template() {
-        let mut state = AppState::demo();
-        state.storybooks.story_provider = StoryProviderKind::Fake(FakeStoryProvider);
-        let template_id = crate::api::demo_uuid(30);
+        let mut state = AppState::test_fixture();
+        state.storybooks.story_provider = StoryProviderKind::Test(TestStoryProvider);
+        let template_id = crate::commons::test_uuid(30);
         state
             .content
             .story_templates
@@ -1854,7 +1860,7 @@ mod tests {
             .unwrap()
             .status = "archived".to_string();
         let app = test_app_with_state(state);
-        let case_id = crate::api::demo_uuid(31);
+        let case_id = crate::commons::test_uuid(31);
         let (status, body) = request_json(
             app,
             "POST",

@@ -14,7 +14,7 @@ pub struct VisualConsistencyStore {
 }
 
 impl VisualConsistencyStore {
-    pub fn demo() -> Self {
+    pub fn empty() -> Self {
         Self {
             character_profiles: BTreeMap::new(),
             parent_character_profiles: BTreeMap::new(),

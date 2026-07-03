@@ -19,7 +19,7 @@ pub struct ImageGenerationStore {
 }
 
 impl ImageGenerationStore {
-    pub fn demo() -> Self {
+    pub fn empty() -> Self {
         Self {
             upload_intents: BTreeMap::new(),
             assets: BTreeMap::new(),

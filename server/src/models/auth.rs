@@ -3,8 +3,6 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-use crate::models::organization::OrganizationStore;
-
 #[derive(Clone, Debug)]
 pub struct AuthStore {
     pub credentials: BTreeMap<Uuid, TeacherCredentialRecord>,
@@ -12,21 +10,9 @@ pub struct AuthStore {
 }
 
 impl AuthStore {
-    pub fn demo(organization: &OrganizationStore) -> Self {
-        let mut credentials = BTreeMap::new();
-        for teacher in organization.teachers.values() {
-            credentials.insert(
-                teacher.id,
-                TeacherCredentialRecord {
-                    teacher_id: teacher.id,
-                    password_hash: demo_password_hash("password123"),
-                    must_change_password: false,
-                    last_login_at: None,
-                },
-            );
-        }
+    pub fn empty() -> Self {
         Self {
-            credentials,
+            credentials: BTreeMap::new(),
             sessions: BTreeMap::new(),
         }
     }
@@ -52,6 +38,6 @@ pub struct AuthSessionRecord {
     pub last_seen_at: DateTime<Utc>,
 }
 
-pub fn demo_password_hash(password: &str) -> String {
-    format!("demo-hash:{password}")
+pub fn password_hash(password: &str) -> String {
+    format!("local-hash:{password}")
 }

@@ -10,7 +10,7 @@ pub struct DeliveryStore {
 }
 
 impl DeliveryStore {
-    pub fn demo() -> Self {
+    pub fn empty() -> Self {
         Self {
             exports: BTreeMap::new(),
             share_links: BTreeMap::new(),

@@ -14,7 +14,7 @@ pub struct StorybookStore {
 }
 
 impl StorybookStore {
-    pub fn demo() -> Self {
+    pub fn empty() -> Self {
         Self {
             storybooks: BTreeMap::new(),
             pages: BTreeMap::new(),

@@ -502,11 +502,11 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> axum::Router {
-        router(Arc::new(RwLock::new(AppState::demo())))
+        router(Arc::new(RwLock::new(AppState::test_fixture())))
     }
 
     fn operator_app() -> axum::Router {
-        let mut state = AppState::demo();
+        let mut state = AppState::test_fixture();
         let teacher_id = state.organization.current_teacher_id;
         state
             .organization
