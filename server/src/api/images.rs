@@ -5,12 +5,18 @@ use axum::{
     http::HeaderMap,
     routing::{get, post},
 };
-use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use uuid::Uuid;
+
+pub use crate::models::images::{
+    GenerationCostLogRecord, ImageAssetRecord, ImageGenerationOutputRecord, ImageGenerationStore,
+    ImageGenerationTaskRecord, ImageReviewEventRecord, UploadIntentRecord,
+};
+use crate::views::images::{
+    ImageOutputWithAsset, ImageTaskDetailResponse, ListResponse, StorybookImageTaskResponse,
+};
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -40,31 +46,6 @@ pub fn router() -> Router<SharedState> {
             post(review_image_output),
         )
         .route("/admin/generation-costs", get(list_generation_costs))
-}
-
-#[derive(Clone, Debug)]
-pub struct ImageGenerationStore {
-    pub upload_intents: BTreeMap<Uuid, UploadIntentRecord>,
-    pub assets: BTreeMap<Uuid, ImageAssetRecord>,
-    pub tasks: BTreeMap<Uuid, ImageGenerationTaskRecord>,
-    pub outputs: BTreeMap<Uuid, ImageGenerationOutputRecord>,
-    pub review_events: BTreeMap<Uuid, ImageReviewEventRecord>,
-    pub cost_logs: BTreeMap<Uuid, GenerationCostLogRecord>,
-    pub image_provider: ImageProviderKind,
-}
-
-impl ImageGenerationStore {
-    pub fn demo() -> Self {
-        Self {
-            upload_intents: BTreeMap::new(),
-            assets: BTreeMap::new(),
-            tasks: BTreeMap::new(),
-            outputs: BTreeMap::new(),
-            review_events: BTreeMap::new(),
-            cost_logs: BTreeMap::new(),
-            image_provider: ImageProviderKind::Seedream(SeedreamImageProvider::default()),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -156,113 +137,6 @@ pub struct ImageGenerationProviderOutput {
     pub review_status: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct UploadIntentRecord {
-    pub id: Uuid,
-    pub asset_type: String,
-    pub filename: String,
-    pub mime_type: String,
-    pub file_size: i64,
-    pub checksum: Option<String>,
-    pub upload_url: String,
-    pub storage_key: String,
-    pub status: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ImageAssetRecord {
-    pub id: Uuid,
-    pub asset_type: String,
-    pub storage_url: String,
-    pub storage_key: Option<String>,
-    pub mime_type: Option<String>,
-    pub width: Option<i32>,
-    pub height: Option<i32>,
-    pub file_size: Option<i64>,
-    pub checksum: Option<String>,
-    pub review_result: Option<String>,
-    pub metadata_json: Value,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ImageGenerationTaskRecord {
-    pub id: Uuid,
-    pub idempotency_key: Option<String>,
-    pub task_type: String,
-    pub parent_task_id: Option<Uuid>,
-    pub retry_of_task_id: Option<Uuid>,
-    pub school_id: Option<Uuid>,
-    pub teacher_id: Option<Uuid>,
-    pub storybook_id: Option<Uuid>,
-    pub storybook_page_id: Option<Uuid>,
-    pub character_profile_id: Option<Uuid>,
-    pub character_profile_version: Option<i32>,
-    pub reference_image_id: Option<Uuid>,
-    pub style_id: String,
-    pub prompt_template_version: String,
-    pub scene_spec_json: Option<Value>,
-    pub input_snapshot_json: Value,
-    pub raw_prompt_text: Option<String>,
-    pub provider_name: Option<String>,
-    pub model_name: Option<String>,
-    pub provider_request_id: Option<String>,
-    pub status: String,
-    pub failure_reason: Option<String>,
-    pub retry_count: i32,
-    pub max_retries: i32,
-    pub queued_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ImageGenerationOutputRecord {
-    pub id: Uuid,
-    pub task_id: Uuid,
-    pub image_asset_id: Uuid,
-    pub candidate_index: i32,
-    pub is_selected: bool,
-    pub review_status: String,
-    pub quality_notes: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ImageReviewEventRecord {
-    pub id: Uuid,
-    pub task_id: Uuid,
-    pub output_id: Option<Uuid>,
-    pub reviewer_teacher_id: Option<Uuid>,
-    pub review_action: String,
-    pub reason_code: Option<String>,
-    pub notes: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct GenerationCostLogRecord {
-    pub id: Uuid,
-    pub task_id: Uuid,
-    pub school_id: Option<Uuid>,
-    pub teacher_id: Option<Uuid>,
-    pub storybook_id: Option<Uuid>,
-    pub storybook_page_id: Option<Uuid>,
-    pub provider_name: String,
-    pub model_name: String,
-    pub input_units: Option<Decimal>,
-    pub output_units: Option<Decimal>,
-    pub input_cost: Decimal,
-    pub output_cost: Decimal,
-    pub total_cost: Decimal,
-    pub currency: String,
-    pub billed_units_json: Value,
-    pub created_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CreateUploadIntentRequest {
     pub asset_type: String,
@@ -323,38 +197,6 @@ pub struct ReviewImageOutputRequest {
 pub struct CostQuery {
     pub provider_name: Option<String>,
     pub storybook_id: Option<Uuid>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ListResponse<T> {
-    pub items: Vec<T>,
-    pub page: u32,
-    pub page_size: u32,
-    pub total: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ImageTaskDetailResponse {
-    #[serde(flatten)]
-    pub task: ImageGenerationTaskRecord,
-    pub outputs: Vec<ImageOutputWithAsset>,
-    pub cost: Option<GenerationCostLogRecord>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ImageOutputWithAsset {
-    #[serde(flatten)]
-    pub output: ImageGenerationOutputRecord,
-    pub image_asset: ImageAssetRecord,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StorybookImageTaskResponse {
-    pub task_id: Uuid,
-    pub task_type: String,
-    pub status: String,
-    pub page_task_count: usize,
-    pub skipped_page_ids: Vec<Uuid>,
 }
 
 async fn create_upload_intent(

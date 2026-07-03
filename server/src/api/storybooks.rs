@@ -6,12 +6,17 @@ use axum::{
     routing::{get, patch, post},
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::env;
 use std::time::Duration;
 use uuid::Uuid;
+
+pub use crate::models::storybooks::{StorybookPageRecord, StorybookRecord, StorybookStore};
+use crate::views::storybooks::{
+    CaseSummary, ChildSummary, GenerateStorybookResponse, ListResponse, StoryTaskSummary,
+    StorybookDetailResponse,
+};
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -41,23 +46,6 @@ pub fn router() -> Router<SharedState> {
             "/storybooks/{storybook_id}/pages/{page_id}/rewrite",
             post(rewrite_page),
         )
-}
-
-#[derive(Clone, Debug)]
-pub struct StorybookStore {
-    pub storybooks: BTreeMap<Uuid, StorybookRecord>,
-    pub pages: BTreeMap<Uuid, Vec<StorybookPageRecord>>,
-    pub story_provider: StoryProviderKind,
-}
-
-impl StorybookStore {
-    pub fn demo() -> Self {
-        Self {
-            storybooks: BTreeMap::new(),
-            pages: BTreeMap::new(),
-            story_provider: StoryProviderKind::DeepSeek(DeepSeekStoryProvider::default()),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -176,7 +164,8 @@ impl DeepSeekStoryProvider {
     }
 
     fn generate_with_deepseek(&self, input: StoryGenerationInput) -> Option<StoryGenerationOutput> {
-        let system_prompt = "你是幼儿园老师的绘本故事生成助手。只返回严格 JSON，不要使用 Markdown。";
+        let system_prompt =
+            "你是幼儿园老师的绘本故事生成助手。只返回严格 JSON，不要使用 Markdown。";
         let user_prompt = format!(
             r#"请生成一本适合幼儿园孩子阅读的绘本故事。
 输出 JSON 格式：
@@ -215,7 +204,8 @@ impl DeepSeekStoryProvider {
     }
 
     fn rewrite_with_deepseek(&self, input: PageRewriteInput) -> Option<StoryGeneratedPage> {
-        let system_prompt = "你是幼儿园老师的绘本单页改写助手。只返回严格 JSON，不要使用 Markdown。";
+        let system_prompt =
+            "你是幼儿园老师的绘本单页改写助手。只返回严格 JSON，不要使用 Markdown。";
         let user_prompt = format!(
             r#"请改写绘本第 {page_number} 页，输出 JSON：
 {{
@@ -312,57 +302,6 @@ pub struct StoryGeneratedPage {
     pub scene_spec_json: Value,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct StorybookRecord {
-    pub id: Uuid,
-    pub school_id: Option<Uuid>,
-    pub teacher_id: Uuid,
-    pub child_id: Option<Uuid>,
-    pub story_template_id: Option<Uuid>,
-    pub case_storybook_id: Option<Uuid>,
-    pub source_storybook_id: Option<Uuid>,
-    pub title: String,
-    pub content_type: String,
-    pub theme: String,
-    pub teaching_goal: Option<String>,
-    pub style_id: Option<String>,
-    pub reading_age_group: Option<String>,
-    pub generation_config_json: Value,
-    pub role_manifest_json: Value,
-    pub story_status: String,
-    pub illustration_status: String,
-    pub status: String,
-    pub export_status: String,
-    pub share_status: String,
-    pub share_scope: String,
-    pub derivation_type: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub exported_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct StorybookPageRecord {
-    pub id: Uuid,
-    pub storybook_id: Uuid,
-    pub page_number: i32,
-    pub page_role: String,
-    pub page_title: Option<String>,
-    pub body_text: String,
-    pub prompt_text: Option<String>,
-    pub teacher_tip: Option<String>,
-    pub scene_spec_json: Option<Value>,
-    pub scene_spec_status: String,
-    pub page_visual_subjects_json: Option<Value>,
-    pub current_image_asset_id: Option<Uuid>,
-    pub current_image_task_id: Option<Uuid>,
-    pub illustration_status: String,
-    pub is_locked: bool,
-    pub content_source: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct GenerateStorybookRequest {
     pub content_type: String,
@@ -431,50 +370,6 @@ pub struct UpdatePageRequest {
 #[derive(Debug, Deserialize)]
 pub struct RewritePageRequest {
     pub override_locked: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ListResponse<T> {
-    pub items: Vec<T>,
-    pub page: u32,
-    pub page_size: u32,
-    pub total: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GenerateStorybookResponse {
-    pub storybook: StorybookRecord,
-    pub story_task: StoryTaskSummary,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StoryTaskSummary {
-    pub provider: String,
-    pub status: String,
-    pub poll_url: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StorybookDetailResponse {
-    #[serde(flatten)]
-    pub storybook: StorybookRecord,
-    pub child: Option<ChildSummary>,
-    pub source_case: Option<CaseSummary>,
-    pub pages: Vec<StorybookPageRecord>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChildSummary {
-    pub id: Uuid,
-    pub name: String,
-    pub profile_completion_status: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CaseSummary {
-    pub id: Uuid,
-    pub title: String,
-    pub theme: String,
 }
 
 async fn generate_storybook(

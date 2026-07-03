@@ -2,6 +2,7 @@
 name = "kindergarten-storybook-server"
 version = "0.1.0"
 edition = "2024"
+default-run = "kindergarten-storybook-server"
 
 [workspace]
 members = [".", "migration"]
@@ -29,3 +30,8 @@ tower-http = { version = "0.6", features = ["cors"] }
 
 [dependencies.migration]
 path = "migration"
+
+[[bin]]
+name = "kindergarten-storybook-server"
+path = "src/bin/main.rs"
+required-features = []

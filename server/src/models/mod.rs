@@ -5,4 +5,12 @@
 //! The migration crate in `server/migration` is the source of truth for the
 //! schema defined from `docs/数据模型设计.md`.
 pub mod _entities;
+pub mod app_state;
+pub mod auth;
+pub mod children;
+pub mod content;
+pub mod delivery;
+pub mod images;
+pub mod organization;
 pub mod storybooks;
+pub mod visuals;

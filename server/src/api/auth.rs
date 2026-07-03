@@ -8,11 +8,15 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use serde::Deserialize;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
+
+use crate::models::auth::demo_password_hash;
+pub use crate::models::auth::{AuthSessionRecord, AuthStore, TeacherCredentialRecord};
+use crate::views::auth::{
+    AuthResponse, AuthSessionSummary, CurrentSessionResponse, LogoutResponse, TeacherAuthSummary,
+};
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -35,101 +39,10 @@ pub async fn require_session(
     Ok(next.run(request).await)
 }
 
-#[derive(Clone, Debug)]
-pub struct AuthStore {
-    pub credentials: BTreeMap<Uuid, TeacherCredentialRecord>,
-    pub sessions: BTreeMap<String, AuthSessionRecord>,
-}
-
-impl AuthStore {
-    pub fn demo(organization: &crate::api::organization::OrganizationStore) -> Self {
-        let mut credentials = BTreeMap::new();
-        for teacher in organization.teachers.values() {
-            credentials.insert(
-                teacher.id,
-                TeacherCredentialRecord {
-                    teacher_id: teacher.id,
-                    password_hash: demo_password_hash("password123"),
-                    must_change_password: false,
-                    last_login_at: None,
-                },
-            );
-        }
-        Self {
-            credentials,
-            sessions: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct TeacherCredentialRecord {
-    pub teacher_id: Uuid,
-    #[serde(skip_serializing)]
-    pub password_hash: String,
-    pub must_change_password: bool,
-    pub last_login_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct AuthSessionRecord {
-    pub token: String,
-    pub teacher_id: Uuid,
-    pub school_id: Option<Uuid>,
-    pub status: String,
-    pub issued_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    pub last_seen_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub identifier: String,
     pub password: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AuthResponse {
-    pub access_token: String,
-    pub token_type: String,
-    pub expires_at: DateTime<Utc>,
-    pub teacher: TeacherAuthSummary,
-    pub current_school: crate::api::organization::SchoolRecord,
-    pub default_classroom: Option<crate::api::organization::ClassroomRecord>,
-    pub must_change_password: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CurrentSessionResponse {
-    pub session: AuthSessionSummary,
-    pub teacher: TeacherAuthSummary,
-    pub current_school: crate::api::organization::SchoolRecord,
-    pub default_classroom: Option<crate::api::organization::ClassroomRecord>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AuthSessionSummary {
-    pub teacher_id: Uuid,
-    pub school_id: Option<Uuid>,
-    pub issued_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    pub last_seen_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TeacherAuthSummary {
-    pub id: Uuid,
-    pub school_id: Option<Uuid>,
-    pub name: String,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub role: String,
-    pub status: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct LogoutResponse {
-    pub status: String,
 }
 
 #[derive(Clone, Debug)]
@@ -460,10 +373,6 @@ fn required_trimmed(value: String, field: &'static str) -> Result<String, ApiErr
         return Err(ApiError::validation(field, "不能为空"));
     }
     Ok(value.to_string())
-}
-
-fn demo_password_hash(password: &str) -> String {
-    format!("demo-hash:{password}")
 }
 
 #[cfg(test)]
