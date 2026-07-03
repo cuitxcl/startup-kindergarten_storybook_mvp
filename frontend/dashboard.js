@@ -1507,23 +1507,18 @@ async function generateStoryFromBrief() {
   const theme = storyFrameworkPanel?.querySelector("[data-story-brief-theme]")?.value?.trim();
   const goal = storyFrameworkPanel?.querySelector("[data-story-brief-goal]")?.value?.trim();
   const pageCountValue = Number(storyFrameworkPanel?.querySelector("[data-story-brief-page-count]")?.value || 6);
-  const child = dashboardState.children.find((item) => item.profile_completion_status !== "missing_required") || dashboardState.children[0];
   if (!theme) {
     throw new Error("请先输入故事主题。");
   }
   if (!Number.isInteger(pageCountValue) || pageCountValue < 1 || pageCountValue > 10) {
     throw new Error("页数必须在 1 到 10 之间。");
   }
-  if (!child) {
-    throw new Error("请先创建孩子档案。");
-  }
   const response = await window.KindleleafApi.generateStorybook({
-    content_type: "custom_storybook",
-    child_id: child.id,
-    title_override: `${child.nickname || child.name}的${theme}`,
+    content_type: "plain_storybook",
+    title_override: theme,
     theme_override: theme,
     style_id: activeStyleId(),
-    reading_age_group: child.age_group || "5-6",
+    reading_age_group: "5-6",
     teaching_goal: goal || `围绕${theme}生成适合幼儿阅读的故事`,
     page_count: pageCountValue,
     generation_options: {
@@ -1537,7 +1532,7 @@ async function generateStoryFromBrief() {
     },
   });
   dashboardState.confirmedStorybookIds.delete(response.storybook.id);
-  showDashboardToast(`AI 已生成故事：${response.storybook.title}`);
+  showDashboardToast(`AI 已生成普通绘本母本：${response.storybook.title}`);
   await refreshDashboard();
   await openStorybook(response.storybook.id);
 }
