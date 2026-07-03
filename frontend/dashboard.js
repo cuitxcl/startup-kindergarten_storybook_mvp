@@ -185,16 +185,22 @@ async function sendRegistrationCode() {
     registerHint.textContent = "请先填写邮箱。";
     return;
   }
+  const originalText = sendRegisterCodeButton.textContent;
   sendRegisterCodeButton.disabled = true;
+  sendRegisterCodeButton.textContent = "发送中...";
   try {
     const result = await window.KindleleafApi.sendRegistrationCode({ email });
     registerHint.textContent = `验证码已发送到 ${result.email}，请查看后端 terminal 输出。`;
+    sendRegisterCodeButton.textContent = "已发送";
     showDashboardToast("验证码已生成，请查看后端终端。");
   } catch (error) {
     registerHint.textContent = error.message;
     showDashboardToast(error.message);
   } finally {
-    sendRegisterCodeButton.disabled = false;
+    setTimeout(() => {
+      sendRegisterCodeButton.disabled = false;
+      sendRegisterCodeButton.textContent = originalText;
+    }, 1200);
   }
 }
 

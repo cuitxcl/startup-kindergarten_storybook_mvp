@@ -151,6 +151,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(196, 91, 52, 0.2
 .login-panel input:focus { outline: 3px solid rgba(196, 91, 52, 0.18); border-color: rgba(196, 91, 52, 0.42); }
 .login-panel .primary { width: fit-content; min-width: 112px; min-height: 46px; border-radius: 999px; }
 .login-hint { margin-bottom: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.auth-inline-hint { margin-top: -6px; color: #7a4d1c; }
 .auth-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid rgba(147, 117, 72, 0.14); border-radius: 999px; background: rgba(255, 255, 255, 0.72); }
 .auth-mode-switch button { min-height: 38px; border: 0; border-radius: 999px; color: #4f6154; background: transparent; font: inherit; font-weight: 900; cursor: pointer; }
 .auth-mode-switch button.active { color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-deep)); box-shadow: 0 10px 18px rgba(158, 66, 32, 0.18); }
