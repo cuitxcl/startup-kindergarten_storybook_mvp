@@ -270,6 +270,12 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(196, 91, 52, 0.2
 .privacy-checks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .privacy-checks article { display: grid; gap: 8px; padding: 14px; border: 1px solid rgba(147, 117, 72, 0.1); border-radius: 20px; background: rgba(255, 255, 255, 0.72); }
 .privacy-list article { display: grid; grid-template-columns: minmax(92px, auto) minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px; border: 1px solid rgba(147, 117, 72, 0.1); border-radius: 20px; background: rgba(255, 255, 255, 0.72); }
+.loading-modal { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 24px; background: rgba(35, 49, 39, 0.22); backdrop-filter: blur(8px); }
+.loading-panel { width: min(420px, calc(100vw - 32px)); display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: center; padding: 22px; border: 1px solid rgba(255, 255, 255, 0.72); border-radius: 22px; color: var(--ink); background: rgba(255, 253, 248, 0.96); box-shadow: 0 28px 80px rgba(35, 49, 39, 0.18); }
+.loading-panel strong { display: block; margin-bottom: 4px; font-size: 18px; }
+.loading-panel p { margin: 0; font-size: 13px; line-height: 1.55; }
+.loading-spinner { width: 38px; height: 38px; border: 4px solid rgba(196, 91, 52, 0.18); border-top-color: var(--brand); border-radius: 999px; animation: loading-spin 0.85s linear infinite; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
 .toast { position: fixed; right: 24px; bottom: 24px; z-index: 40; max-width: 360px; padding: 14px 18px; border-radius: var(--radius-md); color: #34583e; background: rgba(220, 236, 220, 0.96); border: 1px solid rgba(111, 155, 128, 0.24); box-shadow: var(--shadow-md); font-weight: 800; }
 
 @media (max-width: 1120px) {

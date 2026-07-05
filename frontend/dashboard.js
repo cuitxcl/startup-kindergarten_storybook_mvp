@@ -1,4 +1,7 @@
 const dashboardToast = document.querySelector("#toast");
+const loadingModal = document.querySelector("#loading-modal");
+const loadingTitle = document.querySelector("#loading-title");
+const loadingCopy = document.querySelector("#loading-copy");
 const navLinks = Array.from(document.querySelectorAll("[data-page-link]"));
 const pages = Array.from(document.querySelectorAll("[data-page]"));
 const filterButtons = Array.from(document.querySelectorAll("[data-filter]"));
@@ -63,6 +66,32 @@ function showDashboardToast(message) {
   showDashboardToast.timer = setTimeout(() => {
     dashboardToast.classList.add("is-hidden");
   }, 2600);
+}
+
+function showLoadingModal(title, copy) {
+  if (loadingTitle) loadingTitle.textContent = title;
+  if (loadingCopy) loadingCopy.textContent = copy;
+  loadingModal?.classList.remove("is-hidden");
+}
+
+function hideLoadingModal() {
+  loadingModal?.classList.add("is-hidden");
+}
+
+function loadingMessageForAction(action) {
+  if (action === "generate-story-from-brief") {
+    return {
+      title: "正在生成故事",
+      copy: "DeepSeek 正在根据主题生成故事框架，请稍等。",
+    };
+  }
+  if (action === "generate-storybook") {
+    return {
+      title: "正在创建绘本",
+      copy: "服务器正在根据母本生成绘本内容，请稍等。",
+    };
+  }
+  return null;
 }
 
 function text(value, fallback = "-") {
@@ -1659,7 +1688,11 @@ async function handleAction(action, target) {
   if (!action) {
     return;
   }
+  const loadingMessage = loadingMessageForAction(action);
   target.disabled = true;
+  if (loadingMessage) {
+    showLoadingModal(loadingMessage.title, loadingMessage.copy);
+  }
   try {
     if (action === "save-story-framework") await saveStoryFramework();
     else if (action === "confirm-story-framework") await confirmStoryFramework();
@@ -1713,6 +1746,9 @@ async function handleAction(action, target) {
       showDashboardToast(error.message);
     }
   } finally {
+    if (loadingMessage) {
+      hideLoadingModal();
+    }
     target.disabled = false;
   }
 }
