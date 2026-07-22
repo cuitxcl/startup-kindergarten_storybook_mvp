@@ -1,0 +1,26 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.46s
+     Running `target/debug/kindleaf-server -e production start`
+
+                      ▄     ▀                     
+                                 ▀  ▄             
+                  ▄       ▀     ▄  ▄ ▄▀           
+                                    ▄ ▀▄▄         
+                        ▄     ▀    ▀  ▀▄▀█▄       
+                                          ▀█▄     
+▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ ▀▀█    
+ ██████  █████   ███ █████   ███ █████   ███ ▀█   
+ ██████  █████   ███ █████   ▀▀▀ █████   ███ ▄█▄  
+ ██████  █████   ███ █████       █████   ███ ████▄
+ ██████  █████   ███ █████   ▄▄▄ █████   ███ █████
+ ██████  █████   ███  ████   ███ █████   ███ ████▀
+   ▀▀▀██▄ ▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀ ██▀  
+       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀    
+                https://loco.rs
+
+environment: production
+     logger: info
+compilation: debug
+      modes: server
+
+listening on http://0.0.0.0:8121
+{"timestamp":"2026-07-19T03:50:34.239873Z","level":"ERROR","fields":{"message":"worker failed to perform job","err":"Failed to acquire connection from pool: Connection pool timed out"},"target":"loco_rs::bgworker"}

@@ -1,0 +1,51 @@
+== Kindleaf provider smoke suite ==
+Provider smoke scripts share Loco test port 8081, so this suite runs them sequentially.
+
+1. text provider
+== Kindleaf generation provider smoke ==
+API_BASE_URL=http://127.0.0.1:8081
+DEEPSEEK_BASE_URL=http://127.0.0.1:18182
+DB_NAME=kindleaf_generation_provider_smoke_1784454674
+logs=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/smoke-generation-provider
+1. migrate
+2. start fake DeepSeek
+3. start backend with deepseek provider
+4. create real text generation jobs
+deepseek_plan_job=d3d5e58d-0c5f-4bb2-a545-a6a7a303dd72
+deepseek_roles_job=4e1c7040-faf8-47ab-96dc-d908981ea0d3
+deepseek_pages_job=ff9d00b3-7921-4efe-952b-968a2af09823
+deepseek_text_applied=0c5670b3-5eed-4ba9-a9a4-9e9cddf7bf4c
+deepseek_customization_job=561d3b91-953e-4890-adca-abac76e7e8a3
+== generation provider smoke ok ==
+
+2. image provider
+== Kindleaf image provider smoke ==
+API_BASE_URL=http://127.0.0.1:8081
+OPENAI_BASE_URL=http://127.0.0.1:18183
+DB_NAME=kindleaf_image_provider_smoke_1784454681
+logs=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/smoke-image-provider
+1. migrate
+2. start fake OpenAI image provider
+3. start backend with openai image provider
+4. create real image generation job
+openai_image_job=36723858-e117-43fe-8bd9-0fa3b71e39b0
+== image provider smoke ok ==
+
+3. composite provider
+== Kindleaf composite provider smoke ==
+API_BASE_URL=http://127.0.0.1:8081
+DEEPSEEK_BASE_URL=http://127.0.0.1:18182
+OPENAI_BASE_URL=http://127.0.0.1:18183
+DB_NAME=kindleaf_composite_provider_smoke_1784454687
+logs=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/smoke-composite-provider
+1. migrate
+2. start fake providers
+3. start backend with composite provider
+4. verify provider summary
+provider=deepseek+openai
+5. create text and image jobs
+composite_text_job=7e3f71a1-1a2a-4694-af3b-53048cdd9bc7
+composite_image_job=59904319-54e3-473d-8a3a-15e210cedea5
+== composite provider smoke ok ==
+
+== provider smoke suite ok ==

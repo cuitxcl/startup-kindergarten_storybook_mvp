@@ -13,9 +13,6 @@ name = "migration-cli"
 path = "src/main.rs"
 
 [dependencies]
-async-std = { version = "1", features = ["attributes", "tokio1"] }
-sea-orm-migration = { version = "1", default-features = false, features = [
-  "cli",
-  "runtime-tokio-rustls",
-  "sqlx-postgres",
-] }
+async-std = { version = "1", features = ["attributes"] }
+sea-orm-migration = { version = "1", features = ["runtime-async-std-rustls", "sqlx-postgres"] }
+

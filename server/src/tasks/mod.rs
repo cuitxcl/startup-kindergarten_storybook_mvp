@@ -1,1 +1,1 @@
-//! Loco CLI tasks.
+pub mod generation;

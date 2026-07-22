@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kindleaf-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: kindleaf_development
+    ports:
+      - "55432:5432"
+    volumes:
+      - kindleaf-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kindleaf_development"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: kindleaf-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      APP_HOST: ${COMPOSE_APP_HOST:-http://127.0.0.1:8080}
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/kindleaf_development}
+      KINDLEAF_DEMO_SEED: ${KINDLEAF_DEMO_SEED:-1}
+      KINDLEAF_GENERATION_PROVIDER: ${KINDLEAF_GENERATION_PROVIDER:-mock}
+      KINDLEAF_AUTH_TOKEN_SECRET: ${COMPOSE_KINDLEAF_AUTH_TOKEN_SECRET:-}
+      KINDLEAF_AUTH_TOKEN_TTL_SECONDS: ${KINDLEAF_AUTH_TOKEN_TTL_SECONDS:-604800}
+      KINDLEAF_STORAGE_ROOT: ${KINDLEAF_STORAGE_ROOT:-/var/lib/kindleaf}
+      KINDLEAF_COST_BUDGET_WARNING_PERCENT: ${KINDLEAF_COST_BUDGET_WARNING_PERCENT:-80}
+      KINDLEAF_COST_BUDGET_LIMIT_MICROS: ${KINDLEAF_COST_BUDGET_LIMIT_MICROS:-2000000}
+      DEEPSEEK_API_KEY: ${COMPOSE_DEEPSEEK_API_KEY:-}
+      SEEDREAM_API_KEY: ${COMPOSE_SEEDREAM_API_KEY:-}
+      ARK_API_KEY: ${COMPOSE_ARK_API_KEY:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - kindleaf-storage-data:/var/lib/kindleaf
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    command: ["-e", "development", "start"]
+
+  migrate:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/kindleaf_development}
+    command: ["-e", "development", "db", "migrate"]
+
+  frontend:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: ${COMPOSE_VITE_API_BASE_URL:-http://127.0.0.1:8080}
+    container_name: kindleaf-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  kindleaf-postgres-data:
+  kindleaf-storage-data:

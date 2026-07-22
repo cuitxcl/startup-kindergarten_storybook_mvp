@@ -1,9 +1,13 @@
-//! Backward-compatible controller facade.
-//!
-//! API handlers live in `crate::api`; response DTOs live in `crate::views`.
-
-pub use crate::api::{
-    auth, children, content, dashboard, delivery, images, organization, router as api, storybooks,
-    visuals,
-};
-pub use crate::commons::{ApiError, SharedState, now};
+pub mod auth;
+pub mod children;
+pub mod delivery;
+pub mod generation;
+pub mod health;
+pub mod marketplace;
+pub mod operator;
+pub mod organization;
+pub mod parent_intakes;
+pub mod routes;
+pub mod storybooks;
+pub mod submissions;
+pub mod workspaces;

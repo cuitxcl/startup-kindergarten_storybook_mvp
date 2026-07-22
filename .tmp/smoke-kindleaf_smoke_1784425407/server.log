@@ -1,0 +1,25 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running `target/debug/kindleaf-server -e production start`
+
+                      ▄     ▀                     
+                                 ▀  ▄             
+                  ▄       ▀     ▄  ▄ ▄▀           
+                                    ▄ ▀▄▄         
+                        ▄     ▀    ▀  ▀▄▀█▄       
+                                          ▀█▄     
+▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ ▀▀█    
+ ██████  █████   ███ █████   ███ █████   ███ ▀█   
+ ██████  █████   ███ █████   ▀▀▀ █████   ███ ▄█▄  
+ ██████  █████   ███ █████       █████   ███ ████▄
+ ██████  █████   ███ █████   ▄▄▄ █████   ███ █████
+ ██████  █████   ███  ████   ███ █████   ███ ████▀
+   ▀▀▀██▄ ▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀ ██▀  
+       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀    
+                https://loco.rs
+
+environment: production
+     logger: info
+compilation: debug
+      modes: server
+
+listening on http://0.0.0.0:8121

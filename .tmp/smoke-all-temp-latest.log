@@ -1,0 +1,135 @@
+== Kindleaf full smoke ==
+API_BASE_URL=http://127.0.0.1:8111
+FRONTEND_BASE_URL=http://127.0.0.1:5178
+DB_NAME=kindleaf_full_smoke_1784460292
+logs=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/smoke
+1. migrate
+2. start backend
+3. start frontend
+4. API smoke
+== Kindleaf API smoke ==
+BASE=http://127.0.0.1:8111
+1. health
+kindleaf-server
+2. auth/me and workspaces
+林老师 / 4 workspaces
+registered=Smoke注册老师的个人空间
+registered_generation_provider=mock
+registered_cross_workspace_forbidden=ok
+3. dashboard
+星星幼儿园 / storybooks=1
+4. permission boundaries
+teacher_invite=星星幼儿园
+teacher_invite_accepted=active
+teacher_children_scope=1
+teacher_children_page=1/1
+teacher_children_page_empty=1/1
+teacher_generation_provider=mock
+teacher_generation_job_redacted=6b633b69-6764-412d-8f2d-6294a77d176e
+teacher_generation_job_list_redacted=6b633b69-6764-412d-8f2d-6294a77d176e
+permission boundaries ok
+5. create child
+children_page=1/2
+child_updated=Smoke更新儿童1784460298:100
+child=f3108601-b586-4d48-a438-785dffeeb30d
+6. create plain storybook
+storybook=0d30c8b5-9546-43d4-92ac-9acdfefbf9b8 page=59d9638b-a785-4ba8-aa0c-99212d58c5da role=e0be267f-57af-487d-84b3-d987b2147893
+storybook_cross_workspace_forbidden=ok
+7. update page and image task
+generated_image_png=ok
+generated_image_cross_workspace_forbidden=ok
+image_job=6702e871-763d-4ad4-bee3-bcf55fb9d47c
+8. derive custom storybook
+custom=2babfaaa-8c7d-44b8-930a-a8d7c1d5c49e
+storybook_page=1/3
+child_storybook_page=1/1
+storybook_search=1/1
+storybook_search_empty=0
+9. visibility, export, share
+visibility=workspace
+exports=1
+export_page=1/1
+export=succeeded
+export_pdf=ok
+export_cross_workspace_forbidden=ok
+share_links=1
+share_link_page=1/1
+share=Smoke普通绘本1784460298
+public_export=succeeded
+public_export_pdf=ok
+share_revoked=revoked
+share_links_after_revoke=0
+10. marketplace copy
+template_page=1/2
+template_filter=1/1
+template_search_empty=0
+copied=8588fcfc-8f27-4f6e-a447-0b53dad2712b
+11. admin member, class, submission
+invite=星星幼儿园
+accepted=smoke-1784460298@example.com
+member=active
+member_page=1/4
+class_page=1/2
+submission_for_reject=submitted
+submission_rejected=rejected
+storybook_rejected_returned=private
+submission=submitted
+storybook_submission=market_submission
+submission_page=1/3
+submission_page_empty=3/3
+operator_queue=Smoke普通绘本1784460298
+operator_submission_page=1/3
+operator_submission_page_empty=3/3
+template_updated=Smoke市场模板编辑1784460298
+template_update_visible=Smoke市场模板编辑1784460298
+storybook_listed=market_listed
+template_listed=Smoke市场模板编辑1784460298
+approved_copied=47189a6c-39d8-47ea-9cfe-6560ef99bd6f
+12. parent intake
+intake_link=Smoke家长链接1784460298
+intake_link_page=1/1
+intake_link_public=星星幼儿园
+intake_link_access=1
+资料已提交给老师确认，包含 2 个兴趣元素
+parent_intake_page=1/1
+intake_link_revoked=Smoke撤回家长链接1784460298
+intake_link_public_revoked=revoked
+intake_link_expired=Smoke过期家长链接1784460298
+intake_link_public_expired=expired
+confirmed=Smoke家长提交1784460298
+13. audit logs
+audit_api=34
+audit_page=1/34
+audit_page_empty=34/34
+audit_operator=41
+operator_audit_page=1/41
+operator_audit_page_empty=41/41
+audit_logs=35
+== smoke ok ==
+5. UI smoke
+
+> kindleaf-frontend-prototype@0.1.0 smoke:ui
+> node ../scripts/smoke-ui.mjs
+
+== Kindleaf UI smoke ==
+FRONTEND_BASE=http://127.0.0.1:5178
+API_BASE=http://127.0.0.1:8111
+1. register personal workspace
+1b. invalid session returns to login
+2. login and dashboard
+2b. teacher cannot access school admin pages
+3. API detail pages do not fall back to mock data
+4. invite and accept school teacher
+5. create classroom
+6. create child profile
+7. submit parent intake and confirm
+8. create plain storybook
+plain=2d796694-a4d3-4db3-91b6-79cb24c4b324
+9. edit page, generate image, and share inside workspace
+10. export and share plain storybook
+11. derive custom storybook
+custom=e9682eda-c03e-4247-b46e-cb720da1d8a1
+12. submit, approve, and copy from marketplace
+12b. recover generation queue from school admin
+== ui smoke ok ==
+== full smoke ok ==

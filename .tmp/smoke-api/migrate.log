@@ -1,0 +1,2 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.90s
+     Running `target/debug/kindleaf-server -e test db migrate`

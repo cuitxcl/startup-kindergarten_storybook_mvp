@@ -6,31 +6,36 @@ logger:
 
 server:
   binding: 127.0.0.1
+  port: 8080
   host: http://127.0.0.1
-  port: 5150
+  ident: kindleaf-server
+  middlewares:
+    cors:
+      enable: true
+    logger:
+      enable: true
+    catch_panic:
+      enable: true
 
 database:
-  uri: '{{ get_env(name="DATABASE_URL", default="postgres://postgres:postgres@localhost:5432/kindergarten_storybook_development") }}'
+  uri: {{ get_env(name="DATABASE_URL", default="postgres://postgres:postgres@127.0.0.1:55432/kindleaf_development") }}
   enable_logging: true
+  connect_timeout: 5000
+  idle_timeout: 5000
   min_connections: 1
-  max_connections: 5
-  connect_timeout: 500
-  idle_timeout: 500
-  auto_migrate: true
+  max_connections: 10
+  auto_migrate: false
   dangerously_truncate: false
   dangerously_recreate: false
 
 workers:
-  mode: ForegroundBlocking
+  mode: BackgroundAsync
 
-ai:
-  deepseek:
-    api_key: '{{ get_env(name="DEEPSEEK_API_KEY", default="") }}'
-    base_url: '{{ get_env(name="DEEPSEEK_BASE_URL", default="https://api.deepseek.com") }}'
-    model: '{{ get_env(name="DEEPSEEK_MODEL", default="deepseek-chat") }}'
-
-queue: null
-auth: null
-mailer: null
-initializers: null
-scheduler: null
+scheduler:
+  jobs:
+    requeue_generation_jobs:
+      run: requeue_generation_jobs
+      schedule: "every 5 minutes"
+      run_on_start: true
+      tags: [generation, recovery]
+  output: stdout

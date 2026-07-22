@@ -1,0 +1,27 @@
+# Kindleaf trial reverse proxy.
+#
+# Usage:
+#   1. Replace kindleaf.example.com with the real trial domain.
+#   2. Point the domain DNS A/AAAA record to this host.
+#   3. Start the backend on 127.0.0.1:8080 and frontend on 127.0.0.1:5173.
+#   4. Run: caddy run --config deploy/Caddyfile.example
+#
+# For same-origin production/trial frontend builds, set:
+#   COMPOSE_VITE_API_BASE_URL=/api
+
+kindleaf.example.com {
+  encode zstd gzip
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+
+  @api path /api/*
+  reverse_proxy @api 127.0.0.1:8080
+
+  reverse_proxy 127.0.0.1:5173
+}

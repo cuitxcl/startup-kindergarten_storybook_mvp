@@ -1,0 +1,21 @@
+== Kindleaf real provider readiness check ==
+mode=deepseek
+root=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp
+API_PORT=8081
+DB_CONTAINER=kindleaf-postgres
+ok: command bash
+ok: command cargo
+ok: command node
+ok: command curl
+ok: command docker
+missing key: DEEPSEEK_API_KEY placeholder
+ok: DEEPSEEK_BASE_URL=https://api.deepseek.com
+ok: DEEPSEEK_ENDPOINT_PATH=/chat/completions
+ok: DEEPSEEK_MODEL=deepseek-v4-flash
+ok: API_PORT 8081 is available
+ok: Docker container kindleaf-postgres is running
+ok: PostgreSQL accepts local smoke connections on 127.0.0.1:55432
+ok: storage writable exports=tmp/exports generated-images=tmp/generated-images
+ok: storage limits export_max_bytes=52428800 generated_image_max_bytes=15728640
+ok: storage filename validation=uuid-pdf, mock|seedream-uuid-png
+== readiness failed: missing provider keys ==

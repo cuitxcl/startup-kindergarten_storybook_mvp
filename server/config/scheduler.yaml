@@ -1,0 +1,8 @@
+jobs:
+  requeue_generation_jobs:
+    run: requeue_generation_jobs
+    schedule: "every 5 minutes"
+    run_on_start: true
+    tags: [generation, recovery]
+
+output: stdout

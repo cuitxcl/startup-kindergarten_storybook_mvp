@@ -1,0 +1,109 @@
+== Kindleaf API temp-db smoke ==
+API_BASE_URL=http://127.0.0.1:8081
+DB_CONTAINER=kindleaf-postgres
+DB_NAME=kindleaf_api_smoke_1784459803
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/kindleaf_api_smoke_1784459803
+logs=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/smoke-api
+1. migrate
+2. start backend
+3. API smoke
+== Kindleaf API smoke ==
+BASE=http://127.0.0.1:8081
+1. health
+kindleaf-server
+2. auth/me and workspaces
+林老师 / 4 workspaces
+registered=Smoke注册老师的个人空间
+registered_generation_provider=mock
+registered_cross_workspace_forbidden=ok
+3. dashboard
+星星幼儿园 / storybooks=1
+4. permission boundaries
+teacher_invite=星星幼儿园
+teacher_invite_accepted=active
+teacher_children_scope=1
+teacher_children_page=1/1
+teacher_children_page_empty=1/1
+teacher_generation_provider=mock
+teacher_generation_job_redacted=d5eb5fee-3646-4da5-8aba-cce82067d672
+teacher_generation_job_list_redacted=d5eb5fee-3646-4da5-8aba-cce82067d672
+permission boundaries ok
+5. create child
+children_page=1/2
+child_updated=Smoke更新儿童1784459811:100
+child=380647ba-3569-4ffa-ae64-5423235a9734
+6. create plain storybook
+storybook=b079e887-cffa-44ee-b542-f415c3c13de2 page=49e1cb0d-6006-4cf7-965a-9f40076f80e0 role=1e705f40-2e06-4acf-b6ea-d7947f9ac4ad
+storybook_cross_workspace_forbidden=ok
+7. update page and image task
+generated_image_png=ok
+generated_image_cross_workspace_forbidden=ok
+image_job=7e433bca-66d4-49ec-80b2-21f67f3a4958
+8. derive custom storybook
+custom=af7a4c8a-e2bb-4726-b024-79e9af7710d4
+storybook_page=1/3
+child_storybook_page=1/1
+storybook_search=1/1
+storybook_search_empty=0
+9. visibility, export, share
+visibility=workspace
+exports=1
+export_page=1/1
+export=succeeded
+export_pdf=ok
+export_cross_workspace_forbidden=ok
+share_links=1
+share_link_page=1/1
+share=Smoke普通绘本1784459811
+public_export=succeeded
+public_export_pdf=ok
+share_revoked=revoked
+share_links_after_revoke=0
+10. marketplace copy
+template_page=1/2
+template_filter=1/1
+template_search_empty=0
+copied=802b04d6-2707-4482-a384-b49eebacf873
+11. admin member, class, submission
+invite=星星幼儿园
+accepted=smoke-1784459811@example.com
+member=active
+member_page=1/4
+class_page=1/2
+submission_for_reject=submitted
+submission_rejected=rejected
+storybook_rejected_returned=private
+submission=submitted
+storybook_submission=market_submission
+submission_page=1/3
+submission_page_empty=3/3
+operator_queue=Smoke普通绘本1784459811
+operator_submission_page=1/3
+operator_submission_page_empty=3/3
+template_updated=Smoke市场模板编辑1784459811
+template_update_visible=Smoke市场模板编辑1784459811
+storybook_listed=market_listed
+template_listed=Smoke市场模板编辑1784459811
+approved_copied=63a40911-39a4-4dec-bd19-885796720750
+12. parent intake
+intake_link=Smoke家长链接1784459811
+intake_link_page=1/1
+intake_link_public=星星幼儿园
+intake_link_access=1
+资料已提交给老师确认，包含 2 个兴趣元素
+parent_intake_page=1/1
+intake_link_revoked=Smoke撤回家长链接1784459811
+intake_link_public_revoked=revoked
+intake_link_expired=Smoke过期家长链接1784459811
+intake_link_public_expired=expired
+confirmed=Smoke家长提交1784459811
+13. audit logs
+audit_api=34
+audit_page=1/34
+audit_page_empty=34/34
+audit_operator=41
+operator_audit_page=1/41
+operator_audit_page_empty=41/41
+audit_logs=35
+== smoke ok ==
+== API temp-db smoke ok ==

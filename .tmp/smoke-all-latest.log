@@ -1,0 +1,91 @@
+== Kindleaf full smoke ==
+API_BASE_URL=http://127.0.0.1:8111
+FRONTEND_BASE_URL=http://127.0.0.1:5178
+DB_NAME=kindleaf_development
+logs=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/smoke
+1. start backend
+2. start frontend
+3. API smoke
+== Kindleaf API smoke ==
+BASE=http://127.0.0.1:8111
+1. health
+kindleaf-server
+2. auth/me and workspaces
+林老师 / 4 workspaces
+registered=Smoke注册老师的个人空间
+registered_generation_provider=mock
+registered_cross_workspace_forbidden=ok
+3. dashboard
+星星幼儿园 / storybooks=1
+4. permission boundaries
+teacher_invite=星星幼儿园
+teacher_invite_accepted=active
+teacher_children_scope=1
+teacher_children_page=1/1
+teacher_children_page_empty=1/1
+teacher_generation_provider=mock
+teacher_generation_job_redacted=9e7fed45-46d0-4af9-a68b-9218dd6cf556
+teacher_generation_job_list_redacted=9e7fed45-46d0-4af9-a68b-9218dd6cf556
+permission boundaries ok
+5. create child
+children_page=1/2
+child_updated=Smoke更新儿童1784460043:100
+child=4c48c9e3-c805-4069-b40e-a394069acea1
+6. create plain storybook
+storybook=4726503b-7f5a-4287-9d31-d77451dd8a1a page=7794f2ed-c084-4f01-9e3d-21eb25ddf6e9 role=4c83afac-6d24-4bc2-b922-1ac5d6db2076
+storybook_cross_workspace_forbidden=ok
+7. update page and image task
+generated_image_png=ok
+generated_image_cross_workspace_forbidden=ok
+image_job=3c143dc1-69ab-4606-a3e9-0c4d1a0a25ae
+8. derive custom storybook
+custom=8219f23e-fb55-442f-a696-76a720309150
+storybook_page=1/3
+child_storybook_page=1/1
+storybook_search=1/1
+storybook_search_empty=0
+9. visibility, export, share
+visibility=workspace
+exports=1
+export_page=1/1
+export=succeeded
+export_pdf=ok
+export_cross_workspace_forbidden=ok
+share_links=1
+share_link_page=1/1
+share=Smoke普通绘本1784460043
+public_export=succeeded
+public_export_pdf=ok
+share_revoked=revoked
+share_links_after_revoke=0
+10. marketplace copy
+template_page=1/2
+template_filter=1/1
+template_search_empty=0
+copied=ac7d688e-143e-406e-91cf-f6bed39b2aa0
+11. admin member, class, submission
+invite=星星幼儿园
+accepted=smoke-1784460043@example.com
+member=active
+member_page=1/4
+class_page=1/2
+submission_for_reject=submitted
+submission_rejected=rejected
+storybook_rejected_returned=private
+submission=submitted
+storybook_submission=market_submission
+submission_page=1/3
+submission_page_empty=3/3
+operator_queue=Smoke普通绘本1784460043
+operator_submission_page=1/3
+operator_submission_page_empty=3/3
+template_updated=Smoke市场模板编辑1784460043
+template_update_visible=Smoke市场模板编辑1784460043
+storybook_listed=market_listed
+template_listed=Smoke市场模板编辑1784460043
+approved_copied=d68cba0c-e0d8-4bc2-b22a-e1be33308df7
+12. parent intake
+expected HTTP 400 but got 409 for POST /api/parent-intakes
+{"error":{"code":"state_conflict","message":"数据库操作失败：Query Error: error returned from database: relation \"parent_intake_links\" does not exist","field":null}}ERROR:  relation "parent_intake_links" does not exist
+LINE 1: delete from parent_intake_links
+                    ^

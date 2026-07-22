@@ -1,0 +1,5 @@
+   Compiling kindleaf-server v0.1.0 (/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.37s
+     Running `target/debug/kindleaf-server -e test db migrate`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.64s
+     Running `target/debug/kindleaf-server -e test db seed`

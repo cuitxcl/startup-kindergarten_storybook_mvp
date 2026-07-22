@@ -1,0 +1,43 @@
+== Kindleaf real provider smoke suite ==
+This suite may call real providers and consume quota.
+Seedream image smoke verifies PNG download, auth boundaries, and generation cost ledger.
+DeepSeek key: missing
+Seedream/ARK key: missing
+
+0. local prerequisite check
+== Kindleaf real provider readiness check ==
+mode=composite
+root=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp
+API_PORT=8081
+DB_CONTAINER=kindleaf-postgres
+ok: command bash
+ok: command cargo
+ok: command node
+ok: command curl
+ok: command docker
+missing key: DEEPSEEK_API_KEY placeholder
+ok: DEEPSEEK_BASE_URL=https://api.deepseek.com
+ok: DEEPSEEK_ENDPOINT_PATH=/chat/completions
+ok: DEEPSEEK_MODEL=deepseek-v4-flash
+missing key: SEEDREAM_API_KEY or ARK_API_KEY
+ok: Seedream base URL=https://ark.cn-beijing.volces.com
+ok: Seedream endpoint path=/api/v3/images/generations
+ok: Seedream image model=doubao-seedream-5-0-lite
+ok: API_PORT 8081 is available
+ok: Docker container kindleaf-postgres is running
+ok: PostgreSQL accepts local smoke connections on 127.0.0.1:55432
+ok: storage writable exports=tmp/exports generated-images=tmp/generated-images
+ok: storage limits export_max_bytes=52428800 generated_image_max_bytes=15728640
+ok: storage filename validation=uuid-pdf, mock|seedream-uuid-png
+warning: provider keys are missing, but --allow-missing-keys was set
+== real provider readiness ok ==
+
+1. real DeepSeek text
+skip real DeepSeek text smoke
+
+2. real Seedream image
+skip real Seedream image smoke; set SEEDREAM_API_KEY or ARK_API_KEY to enable
+
+3. real DeepSeek + Seedream composite
+skip real composite smoke; configure both DEEPSEEK_API_KEY and SEEDREAM_API_KEY/ARK_API_KEY to enable
+no real provider smoke was run; configure at least one real provider key

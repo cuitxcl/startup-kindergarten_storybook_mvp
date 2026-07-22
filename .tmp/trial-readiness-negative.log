@@ -1,0 +1,25 @@
+== Kindleaf trial readiness check ==
+root=/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp
+strict=true
+ok: command bash
+ok: command node
+ok: command cargo
+ok: APP_HOST=https://trial.kindleaf.example
+ok: APP_HOST uses HTTPS
+ok: DATABASE_URL is set
+ok: KINDLEAF_GENERATION_PROVIDER=auto-composite
+ok: DEEPSEEK_API_KEY is set
+ok: DEEPSEEK_BASE_URL=https://api.deepseek.com
+ok: DEEPSEEK_ENDPOINT_PATH=/chat/completions
+ok: DEEPSEEK_MODEL=deepseek-v4-flash
+ok: SEEDREAM_API_KEY or ARK_API_KEY is set
+ok: Seedream base URL=https://ark.cn-beijing.volces.com
+failed: Seedream endpoint path must be an absolute path or URL: api/v3/images/generations
+ok: Seedream image model=doubao-seedream-5-0-lite
+ok: KINDLEAF_AUTH_TOKEN_SECRET is set
+ok: KINDLEAF_AUTH_TOKEN_TTL_SECONDS=604800
+ok: storage {"root":"/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/trial-readiness-storage","exportsDir":"/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/trial-readiness-storage/exports","imagesDir":"/Users/Zhuanz/RustroverProjects/kindergarten_storybook_mvp/.tmp/trial-readiness-storage/generated-images","exportMaxBytes":52428800,"imageMaxBytes":15728640}
+ok: KINDLEAF_COST_BUDGET_WARNING_PERCENT=80
+ok: KINDLEAF_COST_BUDGET_LIMIT_MICROS=2000000
+ok: KINDLEAF_DEMO_SEED is not enabled
+== trial readiness failed: 1 issue(s), 0 warning(s) ==
