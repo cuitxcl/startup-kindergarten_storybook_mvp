@@ -1891,7 +1891,9 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
     use std::thread;
+    use std::time::Duration as StdDuration;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -2174,6 +2176,68 @@ mod tests {
         assert_eq!(output["image"]["page_id"], "page-1");
         assert_eq!(output["image"]["prompt"], "明亮教室");
         assert_eq!(output["image"]["privacy_audit"]["redacted"], false);
+    }
+
+    #[tokio::test]
+    async fn seedream_provider_sends_reference_image_payload_for_edit_mode() {
+        let body = format!(
+            r#"{{"data":[{{"b64_json":"{}"}}]}}"#,
+            TRANSPARENT_PNG_BASE64
+        );
+        let (base_url, captured_request) = spawn_capturing_http_server(&body);
+        let provider = SeedreamImageProvider {
+            api_key: Some("test-key".to_string()),
+            base_url,
+            endpoint_path: "/api/v3/images/generations".to_string(),
+            model: "doubao-seedream-5-0-lite".to_string(),
+            size: "1024x1024".to_string(),
+            timeout_seconds: 45,
+        };
+
+        let image_id = Uuid::new_v4().to_string();
+        let output = provider
+            .generate_image(ImageGenerationRequest {
+                image_id: &image_id,
+                target_id: "role-1",
+                target_type: "role",
+                mode: "storybook_role_reference_image",
+                prompt: "重绘主角参考图，保持幼儿绘本风格",
+                reference_images: vec![ImageReference {
+                    url: "https://example.test/reference-role.png".to_string(),
+                    source: "role_reference".to_string(),
+                    role_id: Some("role-1".to_string()),
+                    label: Some("主角参考图".to_string()),
+                }],
+                edit_instruction: Some("保持角色身份，改成更清晰的正面半身形象".to_string()),
+                image_mode: ImageGenerationMode::EditImage,
+                strength: Some(0.45),
+            })
+            .await
+            .expect("seedream edit response should be parsed");
+
+        assert_eq!(output["image"]["target_type"], "role");
+        assert_eq!(output["image"]["role_id"], "role-1");
+        assert_eq!(output["image"]["image_mode"], "edit_image");
+
+        let request = captured_request
+            .lock()
+            .expect("captured request lock")
+            .clone();
+        let json_body = captured_json_body(&request);
+        assert_eq!(json_body["image_mode"], "edit_image");
+        assert_eq!(
+            json_body["image"][0],
+            "https://example.test/reference-role.png"
+        );
+        assert_eq!(json_body["reference_images"][0]["role_id"], "role-1");
+        assert_eq!(
+            json_body["edit_instruction"],
+            "保持角色身份，改成更清晰的正面半身形象"
+        );
+        let strength = json_body["strength"]
+            .as_f64()
+            .expect("strength should be numeric");
+        assert!((strength - 0.45).abs() < 0.0001);
     }
 
     #[tokio::test]
@@ -2857,6 +2921,71 @@ mod tests {
         });
 
         format!("http://{}", addr)
+    }
+
+    fn spawn_capturing_http_server(body: &str) -> (String, Arc<Mutex<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local test server");
+        let addr = listener.local_addr().expect("local addr");
+        let body = body.to_string();
+        let captured_request = Arc::new(Mutex::new(String::new()));
+        let captured_for_thread = Arc::clone(&captured_request);
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(StdDuration::from_millis(250)));
+                let mut request = Vec::new();
+                loop {
+                    let mut buffer = [0u8; 4096];
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(size) => {
+                            request.extend_from_slice(&buffer[..size]);
+                            if http_request_body_complete(&request) {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if let Ok(mut guard) = captured_for_thread.lock() {
+                    *guard = String::from_utf8_lossy(&request).to_string();
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        (format!("http://{}", addr), captured_request)
+    }
+
+    fn http_request_body_complete(request: &[u8]) -> bool {
+        let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            return false;
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]);
+        let Some(content_length) = headers.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if name.eq_ignore_ascii_case("content-length") {
+                value.trim().parse::<usize>().ok()
+            } else {
+                None
+            }
+        }) else {
+            return true;
+        };
+        request.len().saturating_sub(header_end + 4) >= content_length
+    }
+
+    fn captured_json_body(request: &str) -> JsonValue {
+        let (_, body) = request
+            .split_once("\r\n\r\n")
+            .expect("captured request should include headers and body");
+        serde_json::from_str(body).expect("captured request body should be json")
     }
 
     fn valid_plan_output() -> JsonValue {

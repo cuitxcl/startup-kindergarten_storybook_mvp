@@ -423,6 +423,8 @@ pub async fn update_role(
         .into_iter()
         .find(|role| role.id == role_id)
         .ok_or_else(|| DbErr::RecordNotFound("role".to_string()))?;
+    let old_role = role.clone();
+    let explicit_reference_status = payload.reference_status.is_some();
 
     if let Some(value) = payload.name {
         role.name = value;
@@ -447,6 +449,14 @@ pub async fn update_role(
     }
     if let Some(value) = payload.reference_status {
         role.reference_status = value;
+    }
+    let should_mark_pages_for_regeneration = role_edit_requires_page_regeneration(&old_role, &role);
+    if should_mark_pages_for_regeneration && !explicit_reference_status {
+        role.reference_status = if role.reference_image_url.is_some() {
+            "needs_regeneration".to_string()
+        } else {
+            "not_started".to_string()
+        };
     }
 
     let row = db
@@ -487,6 +497,9 @@ pub async fn update_role(
         [workspace_id.into(), storybook_id.into()],
     ))
     .await?;
+    if should_mark_pages_for_regeneration {
+        mark_storybook_pages_need_regeneration(db, storybook_id).await?;
+    }
 
     Ok(StorybookRole {
         id: row.try_get("", "id")?,
@@ -499,6 +512,24 @@ pub async fn update_role(
         reference_image_prompt: row.try_get("", "reference_image_prompt")?,
         reference_status: row.try_get("", "reference_status")?,
     })
+}
+
+async fn mark_storybook_pages_need_regeneration(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<(), DbErr> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_pages
+        set status = 'needs_regeneration'
+        where storybook_id = $1
+          and status not in ('generating', 'needs_regeneration')
+        "#,
+        [storybook_id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 pub async fn derive_custom(
@@ -1038,6 +1069,19 @@ fn ensure_deliverable_ready(book: &Storybook) -> Result<(), DbErr> {
     Ok(())
 }
 
+fn role_edit_requires_page_regeneration(before: &StorybookRole, after: &StorybookRole) -> bool {
+    (before.needs_consistency || after.needs_consistency)
+        && role_visual_signature_changed(before, after)
+}
+
+fn role_visual_signature_changed(before: &StorybookRole, after: &StorybookRole) -> bool {
+    before.name.trim() != after.name.trim()
+        || before.role_type.trim() != after.role_type.trim()
+        || before.appearance.trim() != after.appearance.trim()
+        || before.story_function.trim() != after.story_function.trim()
+        || before.needs_consistency != after.needs_consistency
+}
+
 fn is_allowed_status_transition(from: &StorybookStatus, to: &StorybookStatus) -> bool {
     use StorybookStatus::{
         Draft, Editing, Exportable, ImagePending, Listed, PlanPending, RolesPending, Submitted,
@@ -1106,6 +1150,33 @@ mod tests {
             &StorybookStatus::Submitted,
             &StorybookStatus::Listed
         ));
+    }
+
+    #[test]
+    fn role_visual_edit_requires_page_regeneration_for_consistent_roles() {
+        let before = StorybookRole {
+            id: Uuid::new_v4(),
+            name: "小汽车".to_string(),
+            role_type: "protagonist".to_string(),
+            appearance: "红色玩具车".to_string(),
+            story_function: "带孩子练习轮流".to_string(),
+            needs_consistency: true,
+            reference_image_url: Some("https://example.test/car.png".to_string()),
+            reference_image_prompt: Some("红色玩具车，圆角".to_string()),
+            reference_status: "ready".to_string(),
+        };
+        let mut after = before.clone();
+
+        after.appearance = "蓝色玩具车".to_string();
+        assert!(role_edit_requires_page_regeneration(&before, &after));
+
+        after = before.clone();
+        after.reference_image_prompt = Some("更柔和的线条".to_string());
+        assert!(!role_edit_requires_page_regeneration(&before, &after));
+
+        after = before.clone();
+        after.needs_consistency = false;
+        assert!(role_edit_requires_page_regeneration(&before, &after));
     }
 
     #[test]
