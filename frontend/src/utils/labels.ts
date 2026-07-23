@@ -49,6 +49,7 @@ export const generationJobTypeLabel: Record<string, string> = {
   storybook_plan: "故事方案",
   storybook_roles: "角色与道具",
   storybook_pages: "分页图文",
+  storybook_role_reference_image: "角色参考图",
   storybook_page_image: "插图生成",
   customization_plan: "定制方案",
 };

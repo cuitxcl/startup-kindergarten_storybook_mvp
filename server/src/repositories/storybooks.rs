@@ -439,6 +439,15 @@ pub async fn update_role(
     if let Some(value) = payload.needs_consistency {
         role.needs_consistency = value;
     }
+    if payload.reference_image_url.is_some() {
+        role.reference_image_url = clean_optional_text(payload.reference_image_url);
+    }
+    if payload.reference_image_prompt.is_some() {
+        role.reference_image_prompt = clean_optional_text(payload.reference_image_prompt);
+    }
+    if let Some(value) = payload.reference_status {
+        role.reference_status = value;
+    }
 
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -449,9 +458,13 @@ pub async fn update_role(
                 role_type = $4,
                 appearance = $5,
                 story_function = $6,
-                needs_consistency = $7
+                needs_consistency = $7,
+                reference_image_url = $8,
+                reference_image_prompt = $9,
+                reference_status = $10
             where storybook_id = $1 and id = $2
-            returning id, name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency
+            returning id, name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency,
+                      reference_image_url, reference_image_prompt, reference_status
             "#,
             [
                 storybook_id.into(),
@@ -461,6 +474,9 @@ pub async fn update_role(
                 role.appearance.clone().into(),
                 role.story_function.clone().into(),
                 role.needs_consistency.into(),
+                role.reference_image_url.clone().into(),
+                role.reference_image_prompt.clone().into(),
+                role.reference_status.clone().into(),
             ],
         ))
         .await?
@@ -479,6 +495,9 @@ pub async fn update_role(
         appearance: row.try_get("", "appearance")?,
         story_function: row.try_get("", "story_function")?,
         needs_consistency: row.try_get("", "needs_consistency")?,
+        reference_image_url: row.try_get("", "reference_image_url")?,
+        reference_image_prompt: row.try_get("", "reference_image_prompt")?,
+        reference_status: row.try_get("", "reference_status")?,
     })
 }
 
@@ -685,7 +704,8 @@ async fn roles_for(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency
+            select id, name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency,
+                   reference_image_url, reference_image_prompt, coalesce(reference_status, 'not_started') as reference_status
             from storybook_roles
             where storybook_id = $1
             order by role_type, name
@@ -702,6 +722,9 @@ async fn roles_for(
                 appearance: row.try_get("", "appearance")?,
                 story_function: row.try_get("", "story_function")?,
                 needs_consistency: row.try_get("", "needs_consistency")?,
+                reference_image_url: row.try_get("", "reference_image_url")?,
+                reference_image_prompt: row.try_get("", "reference_image_prompt")?,
+                reference_status: row.try_get("", "reference_status")?,
             })
         })
         .collect()
@@ -747,8 +770,9 @@ async fn seed_default_pages_and_roles(
         db.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            insert into storybook_roles (id, storybook_id, name, role_type, appearance, story_function, needs_consistency)
-            values ($1, $2, '老师形象', 'teacher', '温柔、清楚、适合幼儿园场景', '引导故事推进', true)
+            insert into storybook_roles
+              (id, storybook_id, name, role_type, appearance, story_function, needs_consistency, reference_status)
+            values ($1, $2, '老师形象', 'teacher', '温柔、清楚、适合幼儿园场景', '引导故事推进', true, 'not_started')
             "#,
             [role_id.into(), storybook_id.into()],
         ))
@@ -777,8 +801,11 @@ async fn clone_pages_and_roles(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
-        insert into storybook_roles (id, storybook_id, name, role_type, appearance, story_function, needs_consistency)
-        select gen_random_uuid(), $2, name, role_type, appearance, story_function, needs_consistency
+        insert into storybook_roles
+          (id, storybook_id, name, role_type, appearance, story_function, needs_consistency,
+           reference_image_url, reference_image_prompt, reference_status)
+        select gen_random_uuid(), $2, name, role_type, appearance, story_function, needs_consistency,
+               reference_image_url, reference_image_prompt, reference_status
         from storybook_roles
         where storybook_id = $1
         "#,
@@ -786,6 +813,12 @@ async fn clone_pages_and_roles(
     ))
     .await?;
     Ok(())
+}
+
+fn clean_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 struct CustomChildProfile {
@@ -1189,6 +1222,9 @@ mod tests {
                 appearance: "温和、稳定".to_string(),
                 story_function: "引导孩子轮流等待".to_string(),
                 needs_consistency: true,
+                reference_image_url: None,
+                reference_image_prompt: None,
+                reference_status: "not_started".to_string(),
             }],
         }
     }

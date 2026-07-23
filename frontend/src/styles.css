@@ -331,6 +331,41 @@ button.compact-row.active {
 }
 .compact-row div, .table-row div { display: grid; gap: 4px; min-width: 0; }
 .compact-row span, .table-row span { color: var(--muted); font-size: 13px; }
+.compact-row .badge-stack {
+  display: flex;
+  align-items: center;
+  justify-content: end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.reference-preview {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
+}
+.reference-preview img,
+.reference-empty {
+  width: 112px;
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  object-fit: cover;
+  background: #fff;
+}
+.reference-empty {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.reference-preview p { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .dashboard-recent-row small { color: var(--muted); font-size: 12px; line-height: 1.45; }
 .compact-row.static { color: inherit; }
 .compact-action { width: fit-content; min-height: 36px; padding: 8px 12px; }

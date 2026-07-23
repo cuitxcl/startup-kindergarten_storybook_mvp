@@ -2,8 +2,10 @@ import { ArrowRight, CheckCircle2, Copy, Download, Pencil, Send } from "lucide-r
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
+  apiResourceUrl,
   cancelGenerationJob,
   createPageImageTask,
+  createRoleReferenceImageTask,
   createShareLink,
   createStorybookExport,
   downloadGenerationImageFile,
@@ -76,8 +78,10 @@ export function StorybookDetailPage() {
     appearance: string;
     storyFunction: string;
     needsConsistency: boolean;
-  }>({ name: "", roleType: "teacher", appearance: "", storyFunction: "", needsConsistency: true });
+    referenceImagePrompt: string;
+  }>({ name: "", roleType: "teacher", appearance: "", storyFunction: "", needsConsistency: true, referenceImagePrompt: "" });
   const [roleSaving, setRoleSaving] = useState(false);
+  const [roleImageGenerating, setRoleImageGenerating] = useState(false);
   const selectedPage = book?.pages.find((page) => page.id === selectedPageId) || book?.pages[0];
   const selectedRole = book?.roles.find((role) => role.id === selectedRoleId) || book?.roles[0];
   const deliveryBlockers = book ? [
@@ -169,8 +173,9 @@ export function StorybookDetailPage() {
       appearance: selectedRole.appearance,
       storyFunction: selectedRole.storyFunction,
       needsConsistency: selectedRole.needsConsistency,
+      referenceImagePrompt: selectedRole.referenceImagePrompt || `${selectedRole.name}，${selectedRole.appearance}，儿童绘本角色参考图`,
     });
-  }, [selectedRole?.id]);
+  }, [selectedRole?.id, selectedRole?.referenceImagePrompt]);
 
   function updatePageForm(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setPageForm((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -292,6 +297,7 @@ export function StorybookDetailPage() {
         appearance: roleForm.appearance,
         storyFunction: roleForm.storyFunction,
         needsConsistency: roleForm.needsConsistency,
+        referenceImagePrompt: roleForm.referenceImagePrompt,
       });
       await refreshGenerationJobs(book.id);
       setRemoteBook((current) => current ? {
@@ -307,6 +313,41 @@ export function StorybookDetailPage() {
     }
   }
 
+  async function generateRoleReferenceImage() {
+    if (!book || !selectedRole) return;
+    if (!shouldUseApi) {
+      setNotice({ title: "角色参考图已生成", copy: "这是 mock 反馈：真实接入后会生成角色参考图，并用于后续分页插图。", tone: "good" });
+      return;
+    }
+    setRoleImageGenerating(true);
+    try {
+      const job = await createRoleReferenceImageTask(workspace.id, book.id, selectedRole.id, {
+        prompt: roleForm.referenceImagePrompt || `${roleForm.name}，${roleForm.appearance}，儿童绘本角色参考图`,
+        referenceImageUrls: selectedRole.referenceImageUrl ? [selectedRole.referenceImageUrl] : [],
+        imageMode: selectedRole.referenceImageUrl ? "edit_image" : "text_to_image",
+        editInstruction: selectedRole.referenceImageUrl ? "保持角色核心形象一致，优化为更清晰稳定的角色参考图。" : undefined,
+        strength: selectedRole.referenceImageUrl ? 0.45 : undefined,
+      });
+      setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+      const settledJob = await waitForGenerationJob(job);
+      await refreshGenerationJobs(book.id);
+      const updated = await getStorybook(workspace.id, book.id);
+      setRemoteBook(updated);
+      const updatedRole = updated.roles.find((role) => role.id === selectedRole.id);
+      setNotice({
+        title: settledJob.status === "failed" ? "角色参考图生成失败" : "角色参考图已生成",
+        copy: settledJob.status === "failed"
+          ? `${generationErrorMessage(settledJob)}。任务编号：${settledJob.id.slice(0, 8)}。`
+          : `${updatedRole?.name || selectedRole.name} 的参考图已写回角色，后续插图会优先引用。`,
+        tone: settledJob.status === "failed" ? "info" : "good",
+      });
+    } catch (err) {
+      setNotice({ title: "角色参考图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+    } finally {
+      setRoleImageGenerating(false);
+    }
+  }
+
   async function generateIllustration() {
     if (!book || !selectedPage) return;
     if (!shouldUseApi) {
@@ -317,8 +358,11 @@ export function StorybookDetailPage() {
     setImageGenerating(true);
     setRetryImageJob(null);
     try {
+      const referenceRoles = book.roles.filter((role) => role.needsConsistency && role.referenceImageUrl);
       const job = await createPageImageTask(workspace.id, book.id, selectedPage.id, {
         prompt: pageForm.illustrationPrompt,
+        referenceRoleIds: referenceRoles.map((role) => role.id),
+        imageMode: referenceRoles.length ? "reference_image" : "text_to_image",
       });
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
       const settledJob = await waitForGenerationJob(job);
@@ -693,12 +737,28 @@ export function StorybookDetailPage() {
               {book.roles.map((role) => (
                 <button className={`compact-row ${selectedRole?.id === role.id ? "active" : ""}`} type="button" key={role.id} onClick={() => setSelectedRoleId(role.id)}>
                   <div><strong>{role.name}</strong><span>{role.appearance}</span></div>
-                  <Badge>{roleLabelMap(role.roleType)}</Badge>
+                  <div className="badge-stack">
+                    <Badge>{roleLabelMap(role.roleType)}</Badge>
+                    <Badge tone={role.referenceStatus === "ready" ? "good" : role.referenceStatus === "failed" ? "danger" : "neutral"}>{roleReferenceStatusLabel(role.referenceStatus)}</Badge>
+                  </div>
                 </button>
               ))}
             </div>
             {selectedRole && (
               <div className="form-stack">
+                <div className="reference-preview">
+                  {selectedRole.referenceImageUrl ? (
+                    <img src={apiResourceUrl(selectedRole.referenceImageUrl)} alt={`${selectedRole.name} 的角色参考图`} />
+                  ) : (
+                    <div className="reference-empty">待生成角色参考图</div>
+                  )}
+                  <div>
+                    <Badge tone={selectedRole.referenceStatus === "ready" ? "good" : selectedRole.referenceStatus === "failed" ? "danger" : "neutral"}>
+                      {roleReferenceStatusLabel(selectedRole.referenceStatus)}
+                    </Badge>
+                    <p>先确认角色参考图，再生成分页插图，可以显著提高跨页形象一致性。</p>
+                  </div>
+                </div>
                 <label>角色名称<input name="name" value={roleForm.name} onChange={updateRoleForm} /></label>
                 <label>
                   类型
@@ -712,8 +772,14 @@ export function StorybookDetailPage() {
                 </label>
                 <label>外观设定<textarea name="appearance" rows={3} value={roleForm.appearance} onChange={updateRoleForm} /></label>
                 <label>故事作用<textarea name="storyFunction" rows={3} value={roleForm.storyFunction} onChange={updateRoleForm} /></label>
+                <label>参考图提示词<textarea name="referenceImagePrompt" rows={3} value={roleForm.referenceImagePrompt} onChange={updateRoleForm} /></label>
                 <label className="check-row"><input type="checkbox" checked={roleForm.needsConsistency} onChange={(event) => setRoleForm((current) => ({ ...current, needsConsistency: event.target.checked }))} />跨页保持一致</label>
-                <button className="button secondary" type="button" disabled={roleSaving} onClick={saveRole}>{roleSaving ? "保存中..." : "保存角色设定"}</button>
+                <div className="inline-actions">
+                  <button className="button secondary" type="button" disabled={roleSaving} onClick={saveRole}>{roleSaving ? "保存中..." : "保存角色设定"}</button>
+                  <button className="button primary" type="button" disabled={roleImageGenerating} onClick={generateRoleReferenceImage}>
+                    {roleImageGenerating ? "生成中..." : selectedRole.referenceImageUrl ? "重绘参考图" : "生成参考图"}
+                  </button>
+                </div>
               </div>
             )}
           </Card>
@@ -963,9 +1029,20 @@ function generationErrorMessage(job: GenerationJob) {
   return output?.error?.message || "生成任务失败，可稍后重试";
 }
 
+function roleReferenceStatusLabel(status?: string) {
+  return {
+    not_started: "未生成参考图",
+    generating: "参考图生成中",
+    ready: "参考图已确认",
+    needs_regeneration: "需要重绘",
+    failed: "生成失败",
+  }[status || "not_started"] || "参考图待确认";
+}
+
 function extractPageId(output: unknown) {
-  const value = output as { image?: { page_id?: string } } | undefined;
-  return value?.image?.page_id;
+  const value = output as { image?: { page_id?: string; target_id?: string; target_type?: string } } | undefined;
+  if (value?.image?.page_id) return value.image.page_id;
+  return value?.image?.target_type === "page" ? value.image.target_id : undefined;
 }
 
 function extractImageResult(output: unknown): { imageUrl: string; altText?: string; prompt?: string; styleNotes: string[] } | null {
@@ -1002,6 +1079,7 @@ const generationJobTypeLabel: Record<string, string> = {
   storybook_plan: "故事方案",
   storybook_roles: "角色与道具",
   storybook_pages: "分页图文",
+  storybook_role_reference_image: "角色参考图",
   storybook_page_image: "插图生成",
   customization_plan: "定制方案",
 };

@@ -16,7 +16,8 @@ const TEXT_JOB_TYPES: &[&str] = &[
 
 pub const SUPPORTED_TEXT_JOB_TYPES: &[&str] = TEXT_JOB_TYPES;
 pub const DEFAULT_TEXT_SCHEMA_VERSION: &str = "generation.provider.v1";
-const SUPPORTED_IMAGE_JOB_TYPES: &[&str] = &["storybook_page_image"];
+const SUPPORTED_IMAGE_JOB_TYPES: &[&str] =
+    &["storybook_page_image", "storybook_role_reference_image"];
 
 pub struct GenerationRequest<'a> {
     pub job_type: &'a str,
@@ -25,8 +26,40 @@ pub struct GenerationRequest<'a> {
 
 pub struct ImageGenerationRequest<'a> {
     pub image_id: &'a str,
-    pub page_id: &'a str,
+    pub target_id: &'a str,
+    pub target_type: &'a str,
+    pub mode: &'a str,
     pub prompt: &'a str,
+    pub reference_images: Vec<ImageReference>,
+    pub edit_instruction: Option<String>,
+    pub image_mode: ImageGenerationMode,
+    pub strength: Option<f32>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ImageReference {
+    pub url: String,
+    pub source: String,
+    pub role_id: Option<String>,
+    pub label: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageGenerationMode {
+    TextToImage,
+    ReferenceImage,
+    EditImage,
+}
+
+impl ImageGenerationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TextToImage => "text_to_image",
+            Self::ReferenceImage => "reference_image",
+            Self::EditImage => "edit_image",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -457,16 +490,39 @@ impl AiGenerationProvider for SeedreamImageProvider {
                 GenerationProviderError::new(format!("创建 Seedream 客户端失败：{err}"))
             })?;
         let (sanitized_prompt, redaction_labels) = sanitize_image_prompt_with_audit(request.prompt);
+        let mut payload = json!({
+            "model": self.model,
+            "prompt": sanitized_prompt,
+            "size": self.size,
+            "response_format": "b64_json",
+            "watermark": false,
+            "image_mode": request.image_mode.as_str(),
+        });
+        if !request.reference_images.is_empty() {
+            payload["image"] = json!(
+                request
+                    .reference_images
+                    .iter()
+                    .map(|item| item.url.clone())
+                    .collect::<Vec<_>>()
+            );
+            payload["reference_images"] = json!(request.reference_images);
+        }
+        if let Some(edit_instruction) = request
+            .edit_instruction
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            payload["edit_instruction"] = json!(edit_instruction);
+        }
+        if let Some(strength) = request.strength {
+            payload["strength"] = json!(strength.clamp(0.0, 1.0));
+        }
         let response = client
             .post(self.endpoint())
             .bearer_auth(api_key)
-            .json(&json!({
-                "model": self.model,
-                "prompt": sanitized_prompt,
-                "size": self.size,
-                "response_format": "b64_json",
-                "watermark": false
-            }))
+            .json(&payload)
             .send()
             .await
             .map_err(|err| {
@@ -495,13 +551,20 @@ impl AiGenerationProvider for SeedreamImageProvider {
         Ok(json!({
             "schema_version": "generation.provider.v1",
             "provider": self.name(),
-            "mode": "storybook_page_image",
+            "mode": request.mode,
             "message": "插图任务已完成",
             "image": {
-                "page_id": request.page_id,
+                "target_id": request.target_id,
+                "target_type": request.target_type,
+                "page_id": if request.target_type == "page" { request.target_id } else { "" },
+                "role_id": if request.target_type == "role" { request.target_id } else { "" },
                 "image_url": image_url,
                 "alt_text": "AI 生成的幼儿园绘本插图",
                 "prompt": sanitized_prompt,
+                "image_mode": request.image_mode.as_str(),
+                "reference_images": request.reference_images,
+                "edit_instruction": request.edit_instruction,
+                "strength": request.strength,
                 "privacy_audit": {
                     "redacted": !redaction_labels.is_empty(),
                     "labels": redaction_labels
@@ -541,13 +604,20 @@ impl AiGenerationProvider for MockGenerationProvider {
         Ok(json!({
             "schema_version": "generation.mock.v1",
             "provider": self.name(),
-            "mode": "storybook_page_image",
+            "mode": request.mode,
             "message": "插图任务已完成，当前为 mock 图片结果",
             "image": {
-                "page_id": request.page_id,
+                "target_id": request.target_id,
+                "target_type": request.target_type,
+                "page_id": if request.target_type == "page" { request.target_id } else { "" },
+                "role_id": if request.target_type == "role" { request.target_id } else { "" },
                 "image_url": image_url,
                 "alt_text": "幼儿园教室里的温暖共读场景",
                 "prompt": request.prompt,
+                "image_mode": request.image_mode.as_str(),
+                "reference_images": request.reference_images,
+                "edit_instruction": request.edit_instruction,
+                "strength": request.strength,
                 "style_notes": ["温暖纸感", "儿童绘本", "角色外观保持一致"]
             }
         }))
@@ -1851,8 +1921,14 @@ mod tests {
         let output = provider
             .generate_image(ImageGenerationRequest {
                 image_id: &image_id,
-                page_id: "page-1",
+                target_id: "page-1",
+                target_type: "page",
+                mode: "storybook_page_image",
                 prompt: "明亮教室",
+                reference_images: vec![],
+                edit_instruction: None,
+                image_mode: ImageGenerationMode::TextToImage,
+                strength: None,
             })
             .await
             .expect("mock image should be generated");
@@ -2081,8 +2157,14 @@ mod tests {
         let output = provider
             .generate_image(ImageGenerationRequest {
                 image_id: &image_id,
-                page_id: "page-1",
+                target_id: "page-1",
+                target_type: "page",
+                mode: "storybook_page_image",
                 prompt: "明亮教室",
+                reference_images: vec![],
+                edit_instruction: None,
+                image_mode: ImageGenerationMode::TextToImage,
+                strength: None,
             })
             .await
             .expect("seedream image response should be parsed");
@@ -2114,8 +2196,14 @@ mod tests {
         let output = provider
             .generate_image(ImageGenerationRequest {
                 image_id: &image_id,
-                page_id: "page-1",
+                target_id: "page-1",
+                target_type: "page",
+                mode: "storybook_page_image",
                 prompt: "明亮教室，家长电话 138 0013 8000，爸爸近期出差，parent@example.com",
+                reference_images: vec![],
+                edit_instruction: None,
+                image_mode: ImageGenerationMode::TextToImage,
+                strength: None,
             })
             .await
             .expect("seedream image response should be parsed");

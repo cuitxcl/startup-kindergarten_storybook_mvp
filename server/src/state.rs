@@ -310,6 +310,9 @@ fn seed_roles() -> Vec<StorybookRole> {
             appearance: "白色小兔，圆脸，长耳朵，黄色背带裤".to_string(),
             story_function: "学习分享和轮流的主角".to_string(),
             needs_consistency: true,
+            reference_image_url: None,
+            reference_image_prompt: None,
+            reference_status: "not_started".to_string(),
         },
         StorybookRole {
             id: Uuid::new_v4(),
@@ -318,6 +321,9 @@ fn seed_roles() -> Vec<StorybookRole> {
             appearance: "戴圆眼镜的长颈鹿老师，温柔引导".to_string(),
             story_function: "引导孩子表达和轮流".to_string(),
             needs_consistency: true,
+            reference_image_url: None,
+            reference_image_prompt: None,
+            reference_status: "not_started".to_string(),
         },
     ]
 }

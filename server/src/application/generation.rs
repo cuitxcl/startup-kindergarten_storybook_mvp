@@ -76,12 +76,39 @@ pub async fn create_page_image_task(
         common::require_editor(&state, headers, workspace_id)?;
         find_storybook(&state, workspace_id, storybook_id)?;
         let job_id = Uuid::new_v4();
+        let prompt = payload.prompt.unwrap_or_default();
+        let image_mode = payload.image_mode.unwrap_or_else(|| {
+            if payload.reference_image_urls.is_empty() {
+                "text_to_image".to_string()
+            } else {
+                "reference_image".to_string()
+            }
+        });
+        let reference_role_ids = payload.reference_role_ids;
+        let reference_images = payload
+            .reference_image_urls
+            .into_iter()
+            .map(|url| {
+                serde_json::json!({
+                    "url": url,
+                    "source": "direct",
+                    "role_id": null,
+                    "label": null
+                })
+            })
+            .collect::<Vec<_>>();
+        let edit_instruction = payload.edit_instruction;
+        let strength = payload.strength;
         let output_json = serde_json::json!({
             "image": {
                 "page_id": page_id,
                 "image_url": format!("/generated-images/mock-{job_id}.png"),
                 "alt_text": "幼儿园教室里的温暖共读场景",
-                "prompt": payload.prompt.clone().unwrap_or_default(),
+                "prompt": prompt,
+                "image_mode": image_mode,
+                "reference_images": reference_images,
+                "edit_instruction": edit_instruction,
+                "strength": strength,
                 "style_notes": ["温暖纸感", "儿童绘本", "角色外观保持一致"]
             },
             "message": "插图任务已完成，当前为 mock 图片结果"
@@ -94,8 +121,123 @@ pub async fn create_page_image_task(
             status: "succeeded".to_string(),
             input_json: serde_json::json!({
                 "page_id": page_id,
-                "prompt": payload.prompt.unwrap_or_default(),
-                "mode": "storybook_page_image"
+                "prompt": output_json["image"]["prompt"].clone(),
+                "mode": "storybook_page_image",
+                "image_mode": output_json["image"]["image_mode"].clone(),
+                "reference_role_ids": reference_role_ids,
+                "reference_images": output_json["image"]["reference_images"].clone(),
+                "edit_instruction": output_json["image"]["edit_instruction"].clone(),
+                "strength": output_json["image"]["strength"].clone()
+            }),
+            output_json: Some(output_json),
+            attempt_count: 1,
+            last_error: None,
+            next_run_at: None,
+            locked_by: None,
+            locked_at: None,
+            created_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+        })
+    }
+}
+
+pub async fn create_role_reference_image_task(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    role_id: Uuid,
+    payload: CreateImageTaskRequest,
+) -> Result<GenerationJob, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_editor_db(ctx, headers, workspace_id).await?;
+        let queued = crate::repositories::generation::create_role_reference_image_job_record(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+            role_id,
+            payload,
+        )
+        .await
+        .map_err(common::db_error)?;
+        enqueue_generation_page_image_job(ctx, workspace_id, queued.id)
+            .await
+            .map_err(|err| ApiError::state_conflict(format!("角色参考图任务入队失败：{err}")))?;
+        crate::repositories::audit::log(
+            &ctx.db,
+            Some(workspace_id),
+            Some(common::actor_user_id(headers)?),
+            "generation_job.created",
+            "generation_job",
+            Some(queued.id),
+            json!({
+                "storybook_id": storybook_id,
+                "role_id": role_id,
+                "job_type": queued.job_type,
+                "status": queued.status,
+            }),
+        )
+        .await
+        .map_err(common::db_error)?;
+        return Ok(queued);
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let state = shared_state(ctx)?;
+        common::require_editor(&state, headers, workspace_id)?;
+        let book = find_storybook(&state, workspace_id, storybook_id)?;
+        let role = book
+            .roles
+            .iter()
+            .find(|role| role.id == role_id)
+            .ok_or_else(|| ApiError::not_found("role"))?;
+        let job_id = Uuid::new_v4();
+        let prompt = payload.prompt.unwrap_or_else(|| {
+            format!(
+                "为幼儿园绘本角色生成参考图：{}，{}",
+                role.name, role.appearance
+            )
+        });
+        let output_json = serde_json::json!({
+            "image": {
+                "target_id": role_id,
+                "target_type": "role",
+                "role_id": role_id,
+                "image_url": format!("/generated-images/mock-{job_id}.png"),
+                "alt_text": "AI 生成的角色参考图",
+                "prompt": prompt,
+                "image_mode": payload.image_mode.unwrap_or_else(|| "text_to_image".to_string()),
+                "reference_images": payload.reference_image_urls
+                    .into_iter()
+                    .map(|url| serde_json::json!({
+                        "url": url,
+                        "source": "direct",
+                        "role_id": null,
+                        "label": null
+                    }))
+                    .collect::<Vec<_>>(),
+                "edit_instruction": payload.edit_instruction,
+                "strength": payload.strength,
+                "style_notes": ["角色参考图", "后续插图保持一致"]
+            },
+            "message": "角色参考图任务已完成，当前为 mock 图片结果"
+        });
+        Ok(GenerationJob {
+            id: job_id,
+            workspace_id,
+            storybook_id: Some(storybook_id),
+            job_type: "storybook_role_reference_image".to_string(),
+            status: "succeeded".to_string(),
+            input_json: serde_json::json!({
+                "role_id": role_id,
+                "prompt": output_json["image"]["prompt"].clone(),
+                "mode": "storybook_role_reference_image",
+                "image_mode": output_json["image"]["image_mode"].clone(),
+                "reference_images": output_json["image"]["reference_images"].clone(),
+                "edit_instruction": output_json["image"]["edit_instruction"].clone(),
+                "strength": output_json["image"]["strength"].clone()
             }),
             output_json: Some(output_json),
             attempt_count: 1,

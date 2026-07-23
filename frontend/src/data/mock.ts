@@ -73,6 +73,9 @@ const roles = [
     appearance: "白色小兔，圆脸，长耳朵，黄色背带裤",
     storyFunction: "学习分享和轮流的主角",
     needsConsistency: true,
+    referenceImageUrl: undefined,
+    referenceImagePrompt: "白色小兔，圆脸，长耳朵，黄色背带裤，儿童绘本角色参考图",
+    referenceStatus: "not_started" as const,
   },
   {
     id: "r2",
@@ -81,6 +84,9 @@ const roles = [
     appearance: "棕色小熊，蓝色上衣，表情友好",
     storyFunction: "想一起玩的朋友",
     needsConsistency: true,
+    referenceImageUrl: undefined,
+    referenceImagePrompt: "棕色小熊，蓝色上衣，表情友好，儿童绘本角色参考图",
+    referenceStatus: "not_started" as const,
   },
   {
     id: "r3",
@@ -89,6 +95,9 @@ const roles = [
     appearance: "戴圆眼镜的长颈鹿老师，浅绿色围裙",
     storyFunction: "引导孩子表达和轮流",
     needsConsistency: true,
+    referenceImageUrl: undefined,
+    referenceImagePrompt: "戴圆眼镜的长颈鹿老师，浅绿色围裙，儿童绘本角色参考图",
+    referenceStatus: "not_started" as const,
   },
 ];
 

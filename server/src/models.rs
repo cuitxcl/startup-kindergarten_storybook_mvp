@@ -178,6 +178,9 @@ pub struct StorybookRole {
     pub appearance: String,
     pub story_function: String,
     pub needs_consistency: bool,
+    pub reference_image_url: Option<String>,
+    pub reference_image_prompt: Option<String>,
+    pub reference_status: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -522,11 +525,24 @@ pub struct UpdateRoleRequest {
     pub appearance: Option<String>,
     pub story_function: Option<String>,
     pub needs_consistency: Option<bool>,
+    pub reference_image_url: Option<String>,
+    pub reference_image_prompt: Option<String>,
+    pub reference_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateImageTaskRequest {
     pub prompt: Option<String>,
+    #[serde(default)]
+    pub reference_role_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub reference_image_urls: Vec<String>,
+    #[serde(default)]
+    pub edit_instruction: Option<String>,
+    #[serde(default)]
+    pub image_mode: Option<String>,
+    #[serde(default)]
+    pub strength: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

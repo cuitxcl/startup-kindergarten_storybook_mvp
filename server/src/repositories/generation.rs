@@ -8,8 +8,8 @@ use crate::models::{
     GenerationCostReport, GenerationCostSummary, GenerationJob, PaginationMeta,
 };
 use crate::services::generation_provider::{
-    ConfiguredGenerationProvider, GenerationProviderError, GenerationRequest,
-    ImageGenerationRequest,
+    ConfiguredGenerationProvider, GenerationProviderError, GenerationRequest, ImageGenerationMode,
+    ImageGenerationRequest, ImageReference,
 };
 
 const ALLOWED_JOB_TYPES: &[&str] = &[
@@ -17,6 +17,7 @@ const ALLOWED_JOB_TYPES: &[&str] = &[
     "storybook_roles",
     "storybook_pages",
     "storybook_page_image",
+    "storybook_role_reference_image",
     "customization_plan",
 ];
 const INLINE_WORKER_ID: &str = "inline-mock-executor";
@@ -44,24 +45,22 @@ pub async fn retry_failed_job(
 
     let provider = ConfiguredGenerationProvider::from_env();
     let provider_name = provider.name_for_job_type(&job.job_type);
-    let retried = if job.job_type == "storybook_page_image" {
-        let page_id = job
-            .input_json
-            .get("page_id")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| DbErr::Custom("插图任务缺少 page_id，无法重试".to_string()))?;
-        let prompt = job
-            .input_json
-            .get("prompt")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| DbErr::Custom("插图任务缺少 prompt，无法重试".to_string()))?;
+    let retried = if is_image_job(&job.job_type) {
+        let target = image_target_from_job(&job)?;
+        let image_request = image_request_from_job(&job)?;
 
         let image_id = job.id.to_string();
         match provider
             .generate_image(ImageGenerationRequest {
                 image_id: &image_id,
-                page_id,
-                prompt,
+                target_id: target.target_id.as_str(),
+                target_type: target.target_type,
+                mode: &job.job_type,
+                prompt: image_request.prompt.as_str(),
+                reference_images: image_request.reference_images,
+                edit_instruction: image_request.edit_instruction,
+                image_mode: image_request.image_mode,
+                strength: image_request.strength,
             })
             .await
         {
@@ -177,12 +176,23 @@ pub async fn create_page_image_job_record(
     let page_prompt = page_prompt(db, workspace_id, storybook_id, page_id).await?;
     let prompt = payload
         .prompt
+        .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(page_prompt);
+    let reference_images = page_image_reference_images(db, storybook_id, &payload).await?;
+    let image_mode =
+        normalize_image_mode(payload.image_mode.as_deref(), !reference_images.is_empty());
+    let edit_instruction = clean_optional_text(payload.edit_instruction);
+    let strength = payload.strength.map(|value| value.clamp(0.0, 1.0));
     let input_json = json!({
         "page_id": page_id,
         "prompt": prompt,
-        "mode": "storybook_page_image"
+        "mode": "storybook_page_image",
+        "image_mode": image_mode.as_str(),
+        "reference_role_ids": payload.reference_role_ids,
+        "reference_images": reference_images,
+        "edit_instruction": edit_instruction,
+        "strength": strength
     });
     enqueue_job(
         db,
@@ -192,6 +202,220 @@ pub async fn create_page_image_job_record(
         input_json,
     )
     .await
+}
+
+pub async fn create_role_reference_image_job_record(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    role_id: Uuid,
+    payload: CreateImageTaskRequest,
+) -> Result<GenerationJob, DbErr> {
+    ensure_generation_budget_available(db, Some(workspace_id)).await?;
+    let role_prompt = role_reference_prompt(db, workspace_id, storybook_id, role_id).await?;
+    let prompt = payload
+        .prompt
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(role_prompt);
+    let reference_images = clean_reference_image_urls(&payload.reference_image_urls)
+        .into_iter()
+        .map(|url| ImageReference {
+            url,
+            source: "direct".to_string(),
+            role_id: None,
+            label: None,
+        })
+        .collect::<Vec<_>>();
+    let image_mode =
+        normalize_image_mode(payload.image_mode.as_deref(), !reference_images.is_empty());
+    let input_json = json!({
+        "role_id": role_id,
+        "prompt": prompt,
+        "mode": "storybook_role_reference_image",
+        "image_mode": image_mode.as_str(),
+        "reference_images": reference_images,
+        "edit_instruction": clean_optional_text(payload.edit_instruction),
+        "strength": payload.strength.map(|value| value.clamp(0.0, 1.0))
+    });
+    enqueue_job(
+        db,
+        workspace_id,
+        Some(storybook_id),
+        "storybook_role_reference_image",
+        input_json,
+    )
+    .await
+}
+
+async fn page_image_reference_images(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    payload: &CreateImageTaskRequest,
+) -> Result<Vec<ImageReference>, DbErr> {
+    let mut references = Vec::new();
+    let selected_roles = payload
+        .reference_role_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+
+    if !payload.reference_role_ids.is_empty() {
+        let rows = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r#"
+                select id, name, reference_image_url
+                from storybook_roles
+                where storybook_id = $1
+                  and reference_image_url is not null
+                "#,
+                [storybook_id.into()],
+            ))
+            .await?;
+        for row in rows {
+            let role_id: Uuid = row.try_get("", "id")?;
+            if !selected_roles.contains(&role_id) {
+                continue;
+            }
+            let Some(url) =
+                clean_optional_text(row.try_get::<Option<String>>("", "reference_image_url")?)
+            else {
+                continue;
+            };
+            references.push(ImageReference {
+                url,
+                source: "storybook_role".to_string(),
+                role_id: Some(role_id.to_string()),
+                label: row.try_get("", "name").ok(),
+            });
+        }
+    }
+
+    for url in clean_reference_image_urls(&payload.reference_image_urls) {
+        if references.iter().any(|item| item.url == url) {
+            continue;
+        }
+        references.push(ImageReference {
+            url,
+            source: "direct".to_string(),
+            role_id: None,
+            label: None,
+        });
+    }
+
+    Ok(references)
+}
+
+struct PageImageRequestInput {
+    prompt: String,
+    reference_images: Vec<ImageReference>,
+    edit_instruction: Option<String>,
+    image_mode: ImageGenerationMode,
+    strength: Option<f32>,
+}
+
+struct ImageJobTarget {
+    target_id: String,
+    target_type: &'static str,
+}
+
+fn is_image_job(job_type: &str) -> bool {
+    matches!(
+        job_type,
+        "storybook_page_image" | "storybook_role_reference_image"
+    )
+}
+
+fn image_target_from_job(job: &GenerationJob) -> Result<ImageJobTarget, DbErr> {
+    if job.job_type == "storybook_role_reference_image" {
+        let role_id = job
+            .input_json
+            .get("role_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| DbErr::Custom("角色参考图任务缺少 role_id，无法执行".to_string()))?;
+        Ok(ImageJobTarget {
+            target_id: role_id.to_string(),
+            target_type: "role",
+        })
+    } else {
+        let page_id = job
+            .input_json
+            .get("page_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| DbErr::Custom("插图任务缺少 page_id，无法执行".to_string()))?;
+        Ok(ImageJobTarget {
+            target_id: page_id.to_string(),
+            target_type: "page",
+        })
+    }
+}
+
+fn image_request_from_job(job: &GenerationJob) -> Result<PageImageRequestInput, DbErr> {
+    let prompt = job
+        .input_json
+        .get("prompt")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| DbErr::Custom("插图任务缺少 prompt，无法执行".to_string()))?
+        .to_string();
+    let reference_images = job
+        .input_json
+        .get("reference_images")
+        .and_then(|value| serde_json::from_value::<Vec<ImageReference>>(value.clone()).ok())
+        .unwrap_or_default();
+    let image_mode = normalize_image_mode(
+        job.input_json
+            .get("image_mode")
+            .and_then(|value| value.as_str()),
+        !reference_images.is_empty(),
+    );
+    let edit_instruction = job
+        .input_json
+        .get("edit_instruction")
+        .and_then(|value| value.as_str())
+        .and_then(|value| clean_optional_text(Some(value.to_string())));
+    let strength = job
+        .input_json
+        .get("strength")
+        .and_then(|value| value.as_f64())
+        .map(|value| (value as f32).clamp(0.0, 1.0));
+
+    Ok(PageImageRequestInput {
+        prompt,
+        reference_images,
+        edit_instruction,
+        image_mode,
+        strength,
+    })
+}
+
+fn normalize_image_mode(value: Option<&str>, has_reference_images: bool) -> ImageGenerationMode {
+    match value.map(str::trim) {
+        Some("edit_image") => ImageGenerationMode::EditImage,
+        Some("reference_image") => ImageGenerationMode::ReferenceImage,
+        _ if has_reference_images => ImageGenerationMode::ReferenceImage,
+        _ => ImageGenerationMode::TextToImage,
+    }
+}
+
+fn clean_reference_image_urls(urls: &[String]) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    for url in urls {
+        let Some(url) = clean_optional_text(Some(url.clone())) else {
+            continue;
+        };
+        if cleaned.iter().any(|item| item == &url) {
+            continue;
+        }
+        cleaned.push(url);
+    }
+    cleaned
+}
+
+fn clean_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub async fn retry_generation_job(
@@ -300,30 +524,29 @@ async fn execute_claimed_generation_record(
     let provider = ConfiguredGenerationProvider::from_env();
     let job_type = job.job_type.clone();
     let provider_name = provider.name_for_job_type(&job_type);
-    let updated = if job_type == "storybook_page_image" {
-        let page_id = job
-            .input_json
-            .get("page_id")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| DbErr::Custom("插图任务缺少 page_id，无法执行".to_string()))?;
-        let prompt = job
-            .input_json
-            .get("prompt")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| DbErr::Custom("插图任务缺少 prompt，无法执行".to_string()))?;
+    let updated = if is_image_job(&job_type) {
+        let target = image_target_from_job(&job)?;
+        let image_request = image_request_from_job(&job)?;
 
         let image_id = job.id.to_string();
         match provider
             .generate_image(ImageGenerationRequest {
                 image_id: &image_id,
-                page_id,
-                prompt,
+                target_id: target.target_id.as_str(),
+                target_type: target.target_type,
+                mode: &job_type,
+                prompt: image_request.prompt.as_str(),
+                reference_images: image_request.reference_images,
+                edit_instruction: image_request.edit_instruction,
+                image_mode: image_request.image_mode,
+                strength: image_request.strength,
             })
             .await
         {
             Ok(output_json) => {
                 let completed = complete_and_apply_running_job(db, job.id, output_json).await?;
                 if completed.status == "succeeded"
+                    && job_type == "storybook_page_image"
                     && let Some(storybook_id) = completed.storybook_id
                 {
                     if let Some(page_id) = job
@@ -497,8 +720,54 @@ async fn apply_completed_generation(
     match job.job_type.as_str() {
         "storybook_roles" => replace_roles_from_generation(db, storybook_id, output).await,
         "storybook_pages" => replace_pages_from_generation(db, storybook_id, output).await,
+        "storybook_role_reference_image" => {
+            apply_role_reference_image(db, storybook_id, job, output).await
+        }
         _ => Ok(()),
     }
+}
+
+async fn apply_role_reference_image(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    job: &GenerationJob,
+    output: &JsonValue,
+) -> Result<(), DbErr> {
+    let role_id = job
+        .input_json
+        .get("role_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| DbErr::Custom("角色参考图任务缺少 role_id，无法写回".to_string()))?;
+    let image_url = output
+        .get("image")
+        .and_then(|value| value.get("image_url"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| DbErr::Custom("角色参考图输出缺少 image_url".to_string()))?;
+    let prompt = output
+        .get("image")
+        .and_then(|value| value.get("prompt"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_roles
+        set reference_image_url = $3,
+            reference_image_prompt = $4,
+            reference_status = 'ready'
+        where storybook_id = $1 and id = $2
+        "#,
+        [
+            storybook_id.into(),
+            role_id.into(),
+            image_url.to_string().into(),
+            prompt.to_string().into(),
+        ],
+    ))
+    .await?;
+    touch_storybook(db, storybook_id).await
 }
 
 async fn replace_roles_from_generation(
@@ -526,8 +795,9 @@ async fn replace_roles_from_generation(
             DbBackend::Postgres,
             r#"
             insert into storybook_roles
-              (id, storybook_id, name, role_type, appearance, story_function, needs_consistency)
-            values ($1, $2, $3, $4, $5, $6, $7)
+              (id, storybook_id, name, role_type, appearance, story_function, needs_consistency,
+               reference_image_url, reference_image_prompt, reference_status)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
             [
                 id.into(),
@@ -540,6 +810,9 @@ async fn replace_roles_from_generation(
                     .and_then(|value| value.as_bool())
                     .unwrap_or(true)
                     .into(),
+                json_optional_text(role, "reference_image_url").into(),
+                json_optional_text(role, "reference_image_prompt").into(),
+                json_text(role, "reference_status", "not_started").into(),
             ],
         ))
         .await?;
@@ -614,6 +887,14 @@ fn json_text(value: &JsonValue, key: &str, fallback: &str) -> String {
         .filter(|item| !item.trim().is_empty())
         .unwrap_or(fallback)
         .to_string()
+}
+
+fn json_optional_text(value: &JsonValue, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|item| item.as_str())
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
 }
 
 async fn fail_running_job(
@@ -795,14 +1076,14 @@ fn estimate_generation_cost_with_pricing(
                 output.map(estimate_json_units).unwrap_or_default(),
             )
         });
-    let image_count = if job.job_type == "storybook_page_image" && status == "succeeded" {
+    let image_count = if is_image_job(&job.job_type) && status == "succeeded" {
         1
     } else {
         0
     };
     let estimated_cost_micros = if status != "succeeded" || provider == "mock" {
         0
-    } else if provider == "seedream" && job.job_type == "storybook_page_image" {
+    } else if provider == "seedream" && is_image_job(&job.job_type) {
         pricing.seedream_image_micros * i64::from(image_count)
     } else if provider == "deepseek" {
         i64::from(estimated_input_units) * pricing.deepseek_input_unit_micros
@@ -1259,6 +1540,35 @@ async fn page_prompt(
     .await?
     .ok_or_else(|| DbErr::RecordNotFound("page".to_string()))?
     .try_get("", "illustration_prompt")
+}
+
+async fn role_reference_prompt(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    role_id: Uuid,
+) -> Result<String, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select r.name, r.role_type, r.appearance, coalesce(r.story_function, '') as story_function
+            from storybook_roles r
+            join storybooks s on s.id = r.storybook_id
+            where s.workspace_id = $1 and s.id = $2 and r.id = $3
+            limit 1
+            "#,
+            [workspace_id.into(), storybook_id.into(), role_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("role".to_string()))?;
+    let name: String = row.try_get("", "name")?;
+    let role_type: String = row.try_get("", "role_type")?;
+    let appearance: String = row.try_get("", "appearance")?;
+    let story_function: String = row.try_get("", "story_function")?;
+    Ok(format!(
+        "为幼儿园绘本角色生成单独参考图。角色名：{name}；角色类型：{role_type}；外观：{appearance}；故事作用：{story_function}。要求：白底或简洁背景，儿童绘本风格，全身或半身清晰，便于后续分页插图保持一致。"
+    ))
 }
 
 fn job_from_row(row: sea_orm::QueryResult) -> Result<GenerationJob, DbErr> {

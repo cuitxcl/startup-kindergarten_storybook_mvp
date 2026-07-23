@@ -72,6 +72,9 @@ export interface StorybookRole {
   appearance: string;
   storyFunction: string;
   needsConsistency: boolean;
+  referenceImageUrl?: string;
+  referenceImagePrompt?: string;
+  referenceStatus: "not_started" | "generating" | "ready" | "needs_regeneration" | "failed";
 }
 
 export interface Storybook {

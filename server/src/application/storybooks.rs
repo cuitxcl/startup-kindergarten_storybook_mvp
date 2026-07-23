@@ -399,6 +399,15 @@ pub async fn update_role(
             appearance: clean_optional(payload.appearance, "appearance")?,
             story_function: clean_optional(payload.story_function, "story_function")?,
             needs_consistency: payload.needs_consistency,
+            reference_image_url: clean_optional(
+                payload.reference_image_url,
+                "reference_image_url",
+            )?,
+            reference_image_prompt: clean_optional(
+                payload.reference_image_prompt,
+                "reference_image_prompt",
+            )?,
+            reference_status: clean_optional(payload.reference_status, "reference_status")?,
         };
         let role = crate::repositories::storybooks::update_role(
             &ctx.db,
@@ -804,6 +813,9 @@ fn mock_roles() -> Vec<StorybookRole> {
         appearance: "温柔、清楚、适合幼儿园场景".to_string(),
         story_function: "引导故事推进".to_string(),
         needs_consistency: true,
+        reference_image_url: None,
+        reference_image_prompt: None,
+        reference_status: "not_started".to_string(),
     }]
 }
 

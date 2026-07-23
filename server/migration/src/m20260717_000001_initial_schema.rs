@@ -299,6 +299,12 @@ async fn create_storybook_roles(manager: &SchemaManager<'_>) -> Result<(), DbErr
                 .col(text(StorybookRoles::Appearance))
                 .col(text_null(StorybookRoles::StoryFunction))
                 .col(boolean_default(StorybookRoles::NeedsConsistency, true))
+                .col(text_null(StorybookRoles::ReferenceImageUrl))
+                .col(text_null(StorybookRoles::ReferenceImagePrompt))
+                .col(string_default(
+                    StorybookRoles::ReferenceStatus,
+                    "not_started",
+                ))
                 .to_owned(),
         )
         .await
@@ -627,6 +633,9 @@ enum StorybookRoles {
     Appearance,
     StoryFunction,
     NeedsConsistency,
+    ReferenceImageUrl,
+    ReferenceImagePrompt,
+    ReferenceStatus,
 }
 #[derive(DeriveIden)]
 enum MarketplaceTemplates {

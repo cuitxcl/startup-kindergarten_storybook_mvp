@@ -185,5 +185,8 @@ fn mock_roles() -> Vec<StorybookRole> {
         appearance: "温柔、清楚、适合幼儿园场景".to_string(),
         story_function: "引导故事推进".to_string(),
         needs_consistency: true,
+        reference_image_url: None,
+        reference_image_prompt: None,
+        reference_status: "not_started".to_string(),
     }]
 }

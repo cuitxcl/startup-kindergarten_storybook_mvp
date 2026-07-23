@@ -25,6 +25,10 @@ pub fn routes() -> Routes {
             post(create_page_image_task),
         )
         .add(
+            "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/roles/{role_id}/reference-image-tasks",
+            post(create_role_reference_image_task),
+        )
+        .add(
             "/api/workspaces/{workspace_id}/generation-jobs",
             get(list_generation_jobs).post(create_generation_job),
         )
@@ -66,6 +70,24 @@ async fn create_page_image_task(
         workspace_id,
         storybook_id,
         page_id,
+        payload,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(Envelope::new(job))))
+}
+
+async fn create_role_reference_image_task(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, storybook_id, role_id)): Path<(Uuid, Uuid, Uuid)>,
+    Json(payload): Json<CreateImageTaskRequest>,
+) -> Result<(StatusCode, Json<Envelope<GenerationJob>>), ApiError> {
+    let job = application::generation::create_role_reference_image_task(
+        &ctx,
+        &headers,
+        workspace_id,
+        storybook_id,
+        role_id,
         payload,
     )
     .await?;
@@ -174,6 +196,9 @@ mod tests {
 
         assert!(uris.contains(
             &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/pages/{page_id}/image-tasks"
+        ));
+        assert!(uris.contains(
+            &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/roles/{role_id}/reference-image-tasks"
         ));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/generation-jobs"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/generation-jobs/{job_id}"));

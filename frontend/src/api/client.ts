@@ -124,6 +124,9 @@ type ApiStorybookRole = {
   appearance: string;
   story_function: string;
   needs_consistency: boolean;
+  reference_image_url?: string | null;
+  reference_image_prompt?: string | null;
+  reference_status?: StorybookRole["referenceStatus"];
 };
 
 type ApiStorybook = {
@@ -880,7 +883,7 @@ export async function updateStorybookRole(
   workspaceId: string,
   storybookId: string,
   roleId: string,
-  payload: Partial<Pick<StorybookRole, "name" | "roleType" | "appearance" | "storyFunction" | "needsConsistency">>,
+  payload: Partial<Pick<StorybookRole, "name" | "roleType" | "appearance" | "storyFunction" | "needsConsistency" | "referenceImageUrl" | "referenceImagePrompt" | "referenceStatus">>,
 ) {
   const response = await request<ApiStorybookRole>(
     `/api/workspaces/${workspaceId}/storybooks/${storybookId}/roles/${roleId}`,
@@ -892,6 +895,9 @@ export async function updateStorybookRole(
         appearance: payload.appearance,
         story_function: payload.storyFunction,
         needs_consistency: payload.needsConsistency,
+        reference_image_url: payload.referenceImageUrl,
+        reference_image_prompt: payload.referenceImagePrompt,
+        reference_status: payload.referenceStatus,
       }),
     },
   );
@@ -902,13 +908,55 @@ export async function createPageImageTask(
   workspaceId: string,
   storybookId: string,
   pageId: string,
-  payload: { prompt?: string },
+  payload: {
+    prompt?: string;
+    referenceRoleIds?: string[];
+    referenceImageUrls?: string[];
+    imageMode?: "text_to_image" | "reference_image" | "edit_image";
+    editInstruction?: string;
+    strength?: number;
+  },
 ): Promise<GenerationJob> {
   const response = await request<ApiGenerationJob>(
     `/api/workspaces/${workspaceId}/storybooks/${storybookId}/pages/${pageId}/image-tasks`,
     {
       method: "POST",
-      body: JSON.stringify({ prompt: payload.prompt }),
+      body: JSON.stringify({
+        prompt: payload.prompt,
+        reference_role_ids: payload.referenceRoleIds || [],
+        reference_image_urls: payload.referenceImageUrls || [],
+        image_mode: payload.imageMode,
+        edit_instruction: payload.editInstruction,
+        strength: payload.strength,
+      }),
+    },
+  );
+  return mapGenerationJob(response);
+}
+
+export async function createRoleReferenceImageTask(
+  workspaceId: string,
+  storybookId: string,
+  roleId: string,
+  payload: {
+    prompt?: string;
+    referenceImageUrls?: string[];
+    imageMode?: "text_to_image" | "reference_image" | "edit_image";
+    editInstruction?: string;
+    strength?: number;
+  },
+): Promise<GenerationJob> {
+  const response = await request<ApiGenerationJob>(
+    `/api/workspaces/${workspaceId}/storybooks/${storybookId}/roles/${roleId}/reference-image-tasks`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: payload.prompt,
+        reference_image_urls: payload.referenceImageUrls || [],
+        image_mode: payload.imageMode,
+        edit_instruction: payload.editInstruction,
+        strength: payload.strength,
+      }),
     },
   );
   return mapGenerationJob(response);
@@ -1663,6 +1711,9 @@ function mapStorybookRole(role: ApiStorybookRole): StorybookRole {
     appearance: role.appearance,
     storyFunction: role.story_function,
     needsConsistency: role.needs_consistency,
+    referenceImageUrl: role.reference_image_url || undefined,
+    referenceImagePrompt: role.reference_image_prompt || undefined,
+    referenceStatus: role.reference_status || "not_started",
   };
 }
 

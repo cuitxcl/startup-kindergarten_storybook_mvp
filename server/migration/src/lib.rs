@@ -15,6 +15,7 @@ mod m20260719_000012_parent_intake_classroom_scope;
 mod m20260720_000013_create_generation_cost_logs;
 mod m20260721_000014_add_export_job_last_error;
 mod m20260721_000015_add_share_link_access_stats;
+mod m20260722_000016_add_storybook_role_reference_images;
 
 pub struct Migrator;
 
@@ -37,6 +38,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260720_000013_create_generation_cost_logs::Migration),
             Box::new(m20260721_000014_add_export_job_last_error::Migration),
             Box::new(m20260721_000015_add_share_link_access_stats::Migration),
+            Box::new(m20260722_000016_add_storybook_role_reference_images::Migration),
         ]
     }
 }

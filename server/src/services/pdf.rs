@@ -492,6 +492,9 @@ mod tests {
                 appearance: "温柔老师".to_string(),
                 story_function: "引导规则".to_string(),
                 needs_consistency: true,
+                reference_image_url: None,
+                reference_image_prompt: None,
+                reference_status: "not_started".to_string(),
             }],
         }
     }
