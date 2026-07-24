@@ -172,7 +172,7 @@ export function ShareLinkPage() {
   const download = async () => {
     if (!displayBook || !token) return;
     if (!shouldUseApi) {
-      setNotice({ title: "PDF 已准备下载", copy: "这是 mock 反馈：真实接入后会下载当前分享版本。", tone: "good" });
+      setNotice({ title: "PDF 已准备下载", copy: "原型模式：会下载当前分享版本。", tone: "good" });
       return;
     }
     setExporting(true);

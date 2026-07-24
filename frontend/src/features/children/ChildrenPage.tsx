@@ -163,7 +163,7 @@ export function ChildrenPage() {
     event.preventDefault();
     if (!shouldUseApi) {
       setOpen(false);
-      setNotice("这是 mock 反馈：真实接入后会创建资料，并进入老师确认流程。");
+      setNotice("原型模式：已创建资料，并进入老师确认流程。");
       return;
     }
     try {
@@ -211,7 +211,7 @@ export function ChildrenPage() {
 
   async function createIntakeLink() {
     if (!shouldUseApi) {
-      setNotice("这是 mock 反馈：真实接入后会生成一条家长资料收集链接。");
+      setNotice("原型模式：已生成一条家长资料收集链接。");
       return;
     }
     setCreatingLink(true);
@@ -275,7 +275,7 @@ export function ChildrenPage() {
 
   async function revokeIntakeLink(link: ParentIntakeLink) {
     if (!shouldUseApi) {
-      setNotice("这是 mock 反馈：真实接入后会撤回这条资料收集链接。");
+      setNotice("原型模式：已撤回这条资料收集链接。");
       return;
     }
     setRevokingLinkId(link.id);
@@ -299,7 +299,7 @@ export function ChildrenPage() {
 
   async function revokeAllActiveIntakeLinks() {
     if (!shouldUseApi) {
-      setNotice("这是 mock 反馈：真实接入后会停用当前所有可填写家长资料链接。");
+      setNotice("原型模式：已停用当前所有可填写家长资料链接。");
       return;
     }
     setRevokingActiveLinks(true);

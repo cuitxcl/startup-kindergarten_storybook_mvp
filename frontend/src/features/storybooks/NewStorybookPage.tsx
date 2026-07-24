@@ -273,7 +273,7 @@ function providerStatusTitle(provider: GenerationProviderStatus) {
   if (provider.productionReady) return "真实文本和图片生成已就绪";
   if (provider.realTextReady) return "真实文本生成已就绪";
   if (provider.realImageReady) return "真实图片生成已就绪";
-  return "当前使用 mock 生成";
+  return "当前使用本地演示生成";
 }
 
 function componentKindLabel(kind: string) {

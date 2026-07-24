@@ -119,7 +119,7 @@ export function SubmissionsPage() {
     }
     if (!shouldUseApi) {
       setOpen(null);
-      setNotice({ title: "投稿草稿已创建", copy: "这是 mock 反馈：真实接入后会进入投稿预览和隐私确认流程。" });
+      setNotice({ title: "投稿草稿已创建", copy: "原型模式：下一步会进入投稿预览和隐私确认流程。" });
       return;
     }
     setSubmitting(true);
@@ -143,7 +143,7 @@ export function SubmissionsPage() {
     if (!selectedSubmission) return;
     if (!shouldUseApi) {
       setOpen(null);
-      setNotice({ title: "隐私确认已保存", copy: "这是 mock 反馈：真实接入后投稿会继续进入平台审核。" });
+      setNotice({ title: "隐私确认已保存", copy: "原型模式：投稿会继续进入平台审核。" });
       return;
     }
     setSubmitting(true);
@@ -258,7 +258,7 @@ export function SubmissionsPage() {
           type="button"
           onClick={() => {
             if (!shouldUseApi) {
-              setNotice({ title: "隐私检查已确认", copy: "这是 mock 反馈：真实接入后会记录确认人、时间和检查项。" });
+              setNotice({ title: "隐私检查已确认", copy: "原型模式：系统会记录确认人、时间和检查项。" });
               return;
             }
             if (!nextPrivacySubmission) {

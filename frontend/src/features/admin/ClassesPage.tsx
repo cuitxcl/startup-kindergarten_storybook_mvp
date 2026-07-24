@@ -79,7 +79,7 @@ export function ClassesPage() {
     event.preventDefault();
     if (!shouldUseApi) {
       setOpen(false);
-      setNotice({ title: "班级已创建", copy: "这是 mock 反馈：真实接入后可继续邀请老师并导入儿童档案。" });
+      setNotice({ title: "班级已创建", copy: "原型模式：可以继续邀请老师并导入儿童档案。" });
       return;
     }
     setSubmitting(true);
@@ -100,7 +100,7 @@ export function ClassesPage() {
 
   async function archive(item: Classroom) {
     if (!shouldUseApi) {
-      setNotice({ title: "班级已归档", copy: "这是 mock 反馈：真实接入后班级会从授权选项中移除。" });
+      setNotice({ title: "班级已归档", copy: "原型模式：该班级会从授权选项中移除。" });
       return;
     }
     setArchivingId(item.id);

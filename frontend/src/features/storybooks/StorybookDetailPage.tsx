@@ -281,7 +281,7 @@ export function StorybookDetailPage() {
   async function savePage() {
     if (!selectedPage || !storybookId) return;
     if (!shouldUseApi) {
-      setNotice({ title: "当前页已保存", copy: `第 ${selectedPage.pageNumber} 页修改已记录在 mock 状态中。`, tone: "good" });
+      setNotice({ title: "当前页已保存", copy: `原型模式：第 ${selectedPage.pageNumber} 页修改已记录。`, tone: "good" });
       setRetryImageJob(null);
       return;
     }
@@ -357,7 +357,7 @@ export function StorybookDetailPage() {
   async function generateRoleReferenceImage() {
     if (!book || !selectedRole) return;
     if (!shouldUseApi) {
-      setNotice({ title: "角色参考图已生成", copy: "这是 mock 反馈：真实接入后会生成角色参考图，并用于后续分页插图。", tone: "good" });
+      setNotice({ title: "角色参考图已生成", copy: "原型模式：角色参考图会用于后续分页插图。", tone: "good" });
       return;
     }
     setRoleImageGenerating(true);
@@ -392,7 +392,7 @@ export function StorybookDetailPage() {
   async function generateIllustration() {
     if (!book || !selectedPage) return;
     if (!shouldUseApi) {
-      setNotice({ title: "插图任务已完成", copy: "这是 mock 反馈：真实接入后会创建图片生成任务并更新当前页插图状态。", tone: "good" });
+      setNotice({ title: "插图任务已完成", copy: "原型模式：图片生成任务会更新当前页插图状态。", tone: "good" });
       setRetryImageJob(null);
       return;
     }
@@ -484,7 +484,7 @@ export function StorybookDetailPage() {
       return;
     }
     if (!shouldUseApi) {
-      setNotice({ title: "PDF 导出已开始", copy: "这是 mock 反馈：真实接入后会创建导出任务并显示下载状态。", tone: "good" });
+      setNotice({ title: "PDF 导出已开始", copy: "原型模式：导出任务会显示下载状态。", tone: "good" });
       setRetryImageJob(null);
       return;
     }
@@ -514,7 +514,7 @@ export function StorybookDetailPage() {
   async function duplicateCurrentStorybook() {
     if (!book) return;
     if (!shouldUseApi) {
-      setNotice({ title: "副本已创建", copy: "这是 mock 反馈：真实接入后会复制分页、角色和编辑内容，并进入新的私有草稿。", tone: "good" });
+      setNotice({ title: "副本已创建", copy: "原型模式：会复制分页、角色和编辑内容，并进入新的私有草稿。", tone: "good" });
       return;
     }
     setDuplicating(true);
@@ -542,7 +542,7 @@ export function StorybookDetailPage() {
       return;
     }
     if (!shouldUseApi) {
-      setNotice({ title: "绘本已标记可交付", copy: "这是 mock 反馈：列表和工作台会把它视为可导出绘本。", tone: "good" });
+      setNotice({ title: "绘本已标记可交付", copy: "原型模式：列表和工作台会把它视为可导出绘本。", tone: "good" });
       return;
     }
     setDeliverySaving(true);
@@ -562,7 +562,7 @@ export function StorybookDetailPage() {
     if (!book) return;
     if (!shouldUseApi) {
       setMetaOpen(false);
-      setNotice({ title: "绘本信息已保存", copy: `这是 mock 反馈：绘本信息会更新为《${metaForm.title.trim()}》。`, tone: "good" });
+      setNotice({ title: "绘本信息已保存", copy: `原型模式：绘本信息会更新为《${metaForm.title.trim()}》。`, tone: "good" });
       return;
     }
     setMetaSaving(true);

@@ -28,9 +28,9 @@ const checks = [
   },
   {
     label: "mock feedback copy",
-    pattern: /mock\s*反馈|mock\s*状态|mock\s*结果|当前为 mock|模拟完成/g,
+    pattern: /mock\s*反馈|mock\s*状态|mock\s*结果|当前为 mock|模拟完成|原型模式|原型生成/g,
     risk: "low",
-    note: "确认 API 模式下不会展示伪成功反馈。",
+    note: "确认 API 模式下不会展示伪成功反馈；非 API 分支可使用原型模式文案。",
   },
 ];
 

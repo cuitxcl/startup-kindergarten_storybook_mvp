@@ -126,7 +126,7 @@ export function AdminPage() {
 
   async function recoverJobs() {
     if (!shouldUseApi) {
-      setRecoverNotice({ title: "已触发恢复", copy: "这是 mock 反馈：真实接入后会扫描积压生成任务并尝试恢复。", tone: "good" });
+      setRecoverNotice({ title: "已触发恢复", copy: "原型模式：系统会模拟扫描积压生成任务并尝试恢复。", tone: "good" });
       return;
     }
     setRecovering(true);

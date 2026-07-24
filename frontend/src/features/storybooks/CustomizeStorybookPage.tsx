@@ -220,7 +220,7 @@ export function CustomizeStorybookPage() {
   const createCustomCopy = async () => {
     if (!source || (customMode === "single" && !selected) || (customMode === "batch" && selectedBatchChildIds.length === 0)) return;
     if (!shouldUseApi) {
-      setNotice({ title: customMode === "batch" ? "批量定制副本已生成" : "定制副本已生成", copy: "这是 mock 反馈：真实接入后会创建独立副本并进入编辑状态。" });
+      setNotice({ title: customMode === "batch" ? "批量定制副本已生成" : "定制副本已生成", copy: "原型模式：会创建独立副本并进入编辑状态。" });
       setStep(4);
       return;
     }
@@ -506,7 +506,7 @@ function providerStatusTitle(provider: GenerationProviderStatus) {
   if (provider.productionReady) return "真实文本和图片生成已就绪";
   if (provider.realTextReady) return "真实文本生成已就绪";
   if (provider.realImageReady) return "真实图片生成已就绪";
-  return "当前使用 mock 生成";
+  return "当前使用本地演示生成";
 }
 
 function componentKindLabel(kind: string) {

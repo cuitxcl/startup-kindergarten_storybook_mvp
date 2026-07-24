@@ -97,7 +97,7 @@ export function MembersPage() {
     event.preventDefault();
     if (!shouldUseApi) {
       setOpen(false);
-      setNotice({ title: "邀请已发送", copy: "这是 mock 反馈：真实接入后老师会收到邀请链接，接受后成为 school_teacher。" });
+      setNotice({ title: "邀请已发送", copy: "原型模式：老师会收到邀请链接，接受后成为园所老师。" });
       return;
     }
     setSubmitting(true);
@@ -145,7 +145,7 @@ export function MembersPage() {
 
   async function revokeInvitation(member: WorkspaceMember) {
     if (!shouldUseApi) {
-      setNotice({ title: "邀请已撤回", copy: "这是 mock 反馈：真实接入后待接受邀请会被停用。" });
+      setNotice({ title: "邀请已撤回", copy: "原型模式：待接受邀请会被停用。" });
       return;
     }
     setRevokingMemberId(member.id);

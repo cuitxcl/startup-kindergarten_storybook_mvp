@@ -90,7 +90,7 @@ export function ChildDetailPage() {
     if (!child) return;
     if (!shouldUseApi) {
       setOpen(false);
-      setNotice({ title: "儿童资料已保存", copy: "这是 mock 反馈：真实接入后会更新资料完整度并记录更新时间。", tone: "good" });
+      setNotice({ title: "儿童资料已保存", copy: "原型模式：资料完整度和更新时间会同步更新。", tone: "good" });
       return;
     }
     try {
@@ -112,7 +112,7 @@ export function ChildDetailPage() {
   async function archiveCurrentChild() {
     if (!child) return;
     if (!shouldUseApi) {
-      setNotice({ title: "儿童资料已归档", copy: "这是 mock 反馈：该档案会从可定制儿童列表中移除。", tone: "good" });
+      setNotice({ title: "儿童资料已归档", copy: "原型模式：该档案会从可定制儿童列表中移除。", tone: "good" });
       return;
     }
     try {
@@ -130,7 +130,7 @@ export function ChildDetailPage() {
   async function restoreCurrentChild() {
     if (!child) return;
     if (!shouldUseApi) {
-      setNotice({ title: "儿童资料已恢复", copy: "这是 mock 反馈：该档案会重新出现在可定制儿童列表中。", tone: "good" });
+      setNotice({ title: "儿童资料已恢复", copy: "原型模式：该档案会重新出现在可定制儿童列表中。", tone: "good" });
       return;
     }
     try {

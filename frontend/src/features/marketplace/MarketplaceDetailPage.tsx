@@ -47,7 +47,7 @@ export function MarketplaceDetailPage() {
     if (!template) return;
     if (!shouldUseApi) {
       setOpen(false);
-      setNotice({ title: "复制已模拟完成", copy: "真实 API 模式下会创建独立普通绘本副本，并自动打开副本详情。" });
+      setNotice({ title: "复制已在原型模式完成", copy: "真实 API 模式下会创建独立普通绘本副本，并自动打开副本详情。" });
       return;
     }
     setCopying(true);
