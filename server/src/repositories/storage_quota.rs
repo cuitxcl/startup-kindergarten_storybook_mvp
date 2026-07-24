@@ -42,14 +42,19 @@ pub async fn ensure_workspace_storage_available(
 ) -> Result<(), DbErr> {
     let summary = workspace_storage_quota(db, workspace_id).await?;
     let projected = summary.used_bytes.saturating_add(additional_bytes);
-    if projected <= summary.quota_bytes {
-        return Ok(());
+    if projected > summary.quota_bytes {
+        return Err(DbErr::Custom(format!(
+            "storage_quota_exceeded: 存储空间不足，当前已用 {} bytes，新增 {} bytes，限额 {} bytes",
+            summary.used_bytes, additional_bytes, summary.quota_bytes
+        )));
     }
 
-    Err(DbErr::Custom(format!(
-        "storage_quota_exceeded: 存储空间不足，当前已用 {} bytes，新增 {} bytes，限额 {} bytes",
-        summary.used_bytes, additional_bytes, summary.quota_bytes
-    )))
+    if summary.workspace_type == "personal" {
+        let user_id = personal_workspace_owner_user_id(db, workspace_id).await?;
+        ensure_user_storage_available(db, user_id, additional_bytes).await?;
+    }
+
+    Ok(())
 }
 
 pub async fn ensure_workspace_storage_available_for_url(
@@ -120,6 +125,47 @@ async fn personal_workspace_ids_for_user(
         .await?;
 
     rows.into_iter().map(|row| row.try_get("", "id")).collect()
+}
+
+async fn personal_workspace_owner_user_id(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+) -> Result<Uuid, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select user_id
+            from workspace_members
+            where workspace_id = $1
+              and role = 'personal_owner'
+              and status = 'active'
+            order by created_at asc
+            limit 1
+            "#,
+            [workspace_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("personal workspace owner".to_string()))?;
+
+    row.try_get("", "user_id")
+}
+
+async fn ensure_user_storage_available(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    additional_bytes: u64,
+) -> Result<(), DbErr> {
+    let summary = user_storage_quota(db, user_id).await?;
+    let projected = summary.used_bytes.saturating_add(additional_bytes);
+    if projected <= summary.quota_bytes {
+        return Ok(());
+    }
+
+    Err(DbErr::Custom(format!(
+        "storage_quota_exceeded: 用户存储空间不足，当前已用 {} bytes，新增 {} bytes，限额 {} bytes",
+        summary.used_bytes, additional_bytes, summary.quota_bytes
+    )))
 }
 
 async fn workspace_generated_image_urls(
