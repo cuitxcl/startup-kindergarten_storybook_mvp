@@ -276,6 +276,20 @@ mod tests {
     }
 
     #[test]
+    fn seedream_role_reference_image_cost_counts_one_image() {
+        let estimate = estimate_generation_cost(&job(
+            "storybook_role_reference_image",
+            "succeeded",
+            json!({"prompt": "稳定的主角参考图", "role_id": Uuid::new_v4()}),
+            json!({"provider": "seedream", "image": {"image_url": "/api/role-reference.png"}}),
+        ));
+
+        assert_eq!(estimate.provider, "seedream");
+        assert_eq!(estimate.image_count, 1);
+        assert_eq!(estimate.estimated_cost_micros, 40_000);
+    }
+
+    #[test]
     fn seedream_image_generation_cost_uses_configured_pricing() {
         let estimate = estimate_generation_cost_with_pricing(
             &job(
