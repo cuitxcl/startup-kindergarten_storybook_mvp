@@ -496,7 +496,7 @@ const text = p.data.components?.find((item)=>item.kind==='text' && item.provider
 const image = p.data.components?.find((item)=>item.kind==='image' && item.provider==='seedream');
 if(!text || !image) process.exit(1);
 if(!Array.isArray(text.supports) || !text.supports.includes('storybook_plan')) process.exit(1);
-if(!Array.isArray(image.supports) || !image.supports.includes('storybook_page_image')) process.exit(1);
+if(!Array.isArray(image.supports) || !image.supports.includes('storybook_page_image') || !image.supports.includes('storybook_role_reference_image')) process.exit(1);
 console.log('teacher_generation_provider=' + p.data.provider + '/' + image.provider);
 "
   teacher_child_json=$(api POST "/api/workspaces/$TEACHER_WS/children" "{\"nickname\":\"Smoke老师授权班级儿童$(date +%s)\",\"age_group\":\"4-5 岁\",\"classroom\":\"中一班\",\"interests\":[\"积木\"],\"traits\":[\"好奇\"],\"focus\":\"验证班级授权\"}")
