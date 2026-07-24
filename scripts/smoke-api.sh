@@ -893,6 +893,7 @@ for (const action of [
   'storybook.page_updated',
   'storybook.role_updated',
   'storybook.custom_derived',
+  'storybook.custom_batch_derived',
   'parent_intake.submitted',
   'parent_intake.confirmed',
   'parent_intake_link.created',
@@ -932,6 +933,10 @@ const childRestored = p.data.find((row)=>row.action==='child.restored' && row.re
 if (!childRestored || childRestored.metadata_json?.status !== 'active') process.exit(1);
 const customDerived = p.data.find((row)=>row.action==='storybook.custom_derived' && row.resource_id==='$created_custom_id');
 if (!customDerived || customDerived.metadata_json?.source_storybook_id !== '$created_plain_id' || customDerived.metadata_json?.target_child_id !== '$created_child_id' || customDerived.metadata_json?.intensity !== 'standard') process.exit(1);
+const batchDerived = p.data.find((row)=>row.action==='storybook.custom_batch_derived' && row.resource_id==='$created_plain_id');
+if (!batchDerived || batchDerived.metadata_json?.source_storybook_id !== '$created_plain_id' || batchDerived.metadata_json?.created_count !== 2 || batchDerived.metadata_json?.intensity !== 'quick') process.exit(1);
+const batchChildIds = batchDerived.metadata_json?.target_child_ids || [];
+if (!batchChildIds.includes('$batch_child_id') || !batchChildIds.includes('$batch_child_two_id')) process.exit(1);
 const storybookDuplicated = p.data.find((row)=>row.action==='storybook.duplicated' && row.resource_id==='$duplicated_storybook_id');
 if (!storybookDuplicated || storybookDuplicated.metadata_json?.source_storybook_id !== '$created_plain_id' || storybookDuplicated.metadata_json?.status !== 'draft') process.exit(1);
 const marketCopied = p.data.find((row)=>row.action==='marketplace_template.copied' && row.resource_id==='$approved_copied_book_id');
@@ -981,6 +986,7 @@ for (const action of [
   'storybook.page_updated',
   'storybook.role_updated',
   'storybook.custom_derived',
+  'storybook.custom_batch_derived',
   'parent_intake.submitted',
   'parent_intake.confirmed',
   'parent_intake_link.created',
@@ -1029,6 +1035,7 @@ where action in (
   'storybook.page_updated',
   'storybook.role_updated',
   'storybook.custom_derived',
+  'storybook.custom_batch_derived',
   'parent_intake.submitted',
   'parent_intake.confirmed',
   'parent_intake_link.created',
