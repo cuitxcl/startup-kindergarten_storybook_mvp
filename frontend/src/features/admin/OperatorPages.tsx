@@ -20,7 +20,7 @@ import {
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
 import { marketplaceTemplates, submissions } from "../../data/mock";
 import type { MarketplaceSubmission, MarketplaceTemplate } from "../../types/domain";
-import { submissionStatusLabel } from "../../utils/labels";
+import { generationJobTypeLabel, submissionStatusLabel } from "../../utils/labels";
 
 const OPERATOR_PAGE_SIZE = 12;
 
@@ -301,8 +301,8 @@ export function OperatorMarketplacePage() {
           <div className="review-list">
             <div><span>模式</span><strong>{provider.mode}</strong></div>
             <div><span>Schema</span><strong>{provider.schemaVersion}</strong></div>
-            <div><span>文本任务</span><strong>{provider.supportsText.length ? provider.supportsText.join(" · ") : "暂无"}</strong></div>
-            <div><span>图片任务</span><strong>{provider.supportsImage.length ? provider.supportsImage.join(" · ") : "暂无"}</strong></div>
+            <div><span>文本任务</span><strong>{formatGenerationJobTypes(provider.supportsText)}</strong></div>
+            <div><span>图片任务</span><strong>{formatGenerationJobTypes(provider.supportsImage)}</strong></div>
             <div><span>需要密钥</span><strong>{provider.requiresApiKey ? "是" : "否"}</strong></div>
             <div><span>文本真实可用</span><strong>{provider.realTextReady ? "是" : "否"}</strong></div>
             <div><span>图片真实可用</span><strong>{provider.realImageReady ? "是" : "否"}</strong></div>
@@ -313,6 +313,7 @@ export function OperatorMarketplacePage() {
               <div key={`${component.kind}-${component.provider}`}>
                 <span>{componentKindLabel(component.kind)}组件</span>
                 <strong>{component.provider} · {component.ready ? "已就绪" : `缺少 ${component.requiredConfiguration.join(" · ")}`}</strong>
+                <small>支持任务：{formatGenerationJobTypes(component.supports)}</small>
                 <small>{component.model} · {component.endpoint}</small>
               </div>
             ))}
@@ -466,7 +467,7 @@ export function OperatorMarketplacePage() {
                 {costReport.items.map((item) => (
                   <div className="table-row" key={item.id}>
                     <div>
-                      <strong>{generationJobTypeLabel(item.jobType)}</strong>
+                      <strong>{formatGenerationJobType(item.jobType)}</strong>
                       <span>{item.storybookTitle || item.workspaceName || "未关联绘本"}</span>
                     </div>
                     <Badge tone="info">{item.provider}</Badge>
@@ -764,15 +765,12 @@ function matchesOperatorSubmissionFilter(item: MarketplaceSubmission, statusFilt
   return !statusFilter || item.status === statusFilter;
 }
 
-function generationJobTypeLabel(jobType: string) {
-  const labels: Record<string, string> = {
-    storybook_plan: "故事方案",
-    storybook_roles: "角色设定",
-    storybook_pages: "分页图文",
-    customization_plan: "定制方案",
-    storybook_page_image: "单页插图",
-  };
-  return labels[jobType] || jobType;
+function formatGenerationJobType(jobType: string) {
+  return generationJobTypeLabel[jobType] || jobType;
+}
+
+function formatGenerationJobTypes(jobTypes: string[]) {
+  return jobTypes.length ? jobTypes.map(formatGenerationJobType).join(" · ") : "暂无";
 }
 
 function generationStatusLabel(status: string) {
