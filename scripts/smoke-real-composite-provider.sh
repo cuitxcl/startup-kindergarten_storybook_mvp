@@ -211,6 +211,8 @@ const text = p.data.components?.find((item)=>item.kind==='text' && item.provider
 const image = p.data.components?.find((item)=>item.kind==='image' && item.provider==='seedream');
 if(!text || !image || text.ready !== true || image.ready !== true) process.exit(1);
 if(text.configured !== true || image.configured !== true) process.exit(1);
+if(!Array.isArray(p.data.supports_image) || !p.data.supports_image.includes('storybook_page_image') || !p.data.supports_image.includes('storybook_role_reference_image')) process.exit(1);
+if(!Array.isArray(image.supports) || !image.supports.includes('storybook_page_image') || !image.supports.includes('storybook_role_reference_image')) process.exit(1);
 if(text.required_configuration?.length || image.required_configuration?.length) process.exit(1);
 const configuredTextEndpoint = process.env.DEEPSEEK_ENDPOINT_PATH || '/chat/completions';
 if(!text.model || !text.endpoint) process.exit(1);

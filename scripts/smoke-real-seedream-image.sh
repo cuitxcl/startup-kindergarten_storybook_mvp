@@ -196,6 +196,8 @@ if(p.data.provider !== 'seedream') process.exit(1);
 if(p.data.mode !== 'image' || p.data.real_image_ready !== true) process.exit(1);
 const image = p.data.components?.find((item)=>item.kind==='image' && item.provider==='seedream');
 if(!image || image.ready !== true || image.configured !== true) process.exit(1);
+if(!Array.isArray(p.data.supports_image) || !p.data.supports_image.includes('storybook_page_image') || !p.data.supports_image.includes('storybook_role_reference_image')) process.exit(1);
+if(!Array.isArray(image.supports) || !image.supports.includes('storybook_page_image') || !image.supports.includes('storybook_role_reference_image')) process.exit(1);
 if(image.required_configuration?.length) process.exit(1);
 const configuredEndpoint = process.env.SEEDREAM_ENDPOINT_PATH || process.env.ARK_IMAGE_ENDPOINT_PATH || '/api/v3/images/generations';
 if(!image.model || !image.endpoint) process.exit(1);
