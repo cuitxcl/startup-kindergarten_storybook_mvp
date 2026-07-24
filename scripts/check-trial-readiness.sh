@@ -105,6 +105,26 @@ validate_non_empty() {
   fi
 }
 
+validate_positive_integer() {
+  local label="$1"
+  local value="$2"
+  if [[ "$value" =~ ^[0-9]+$ && "$value" -gt 0 ]]; then
+    ok "$label=$value"
+  else
+    fail "$label must be a positive integer"
+  fi
+}
+
+validate_optional_positive_integer() {
+  local label="$1"
+  local value="$2"
+  if [[ -z "$value" ]]; then
+    ok "$label is empty; typed defaults remain active"
+    return
+  fi
+  validate_positive_integer "$label" "$value"
+}
+
 first_non_empty() {
   local fallback="$1"
   shift
@@ -232,6 +252,11 @@ app_host="${APP_HOST:-http://127.0.0.1}"
 database_url="${DATABASE_URL:-postgres://postgres:postgres@localhost:5432/kindleaf_production}"
 provider="${KINDLEAF_GENERATION_PROVIDER-mock}"
 storage_root="${KINDLEAF_STORAGE_ROOT:-tmp}"
+user_storage_quota="${KINDLEAF_USER_STORAGE_QUOTA_BYTES:-209715200}"
+workspace_storage_quota="${KINDLEAF_WORKSPACE_STORAGE_QUOTA_BYTES:-}"
+personal_storage_quota="${KINDLEAF_PERSONAL_STORAGE_QUOTA_BYTES:-209715200}"
+school_storage_quota="${KINDLEAF_SCHOOL_STORAGE_QUOTA_BYTES:-5368709120}"
+storage_quota_warning="${KINDLEAF_STORAGE_QUOTA_WARNING_PERCENT:-80}"
 budget_limit="${KINDLEAF_COST_BUDGET_LIMIT_MICROS:-}"
 budget_warning="${KINDLEAF_COST_BUDGET_WARNING_PERCENT:-80}"
 auth_token_secret="${KINDLEAF_AUTH_TOKEN_SECRET:-}"
@@ -316,6 +341,16 @@ if [[ -n "${storage_json:-}" ]]; then
   if [[ "$storage_root" == "tmp" || "$storage_root" == "/tmp"* ]]; then
     risk "KINDLEAF_STORAGE_ROOT=$storage_root is temporary; use a persistent path for trial"
   fi
+fi
+
+validate_positive_integer "KINDLEAF_USER_STORAGE_QUOTA_BYTES" "$user_storage_quota"
+validate_optional_positive_integer "KINDLEAF_WORKSPACE_STORAGE_QUOTA_BYTES" "$workspace_storage_quota"
+validate_positive_integer "KINDLEAF_PERSONAL_STORAGE_QUOTA_BYTES" "$personal_storage_quota"
+validate_positive_integer "KINDLEAF_SCHOOL_STORAGE_QUOTA_BYTES" "$school_storage_quota"
+if [[ "$storage_quota_warning" =~ ^[0-9]+$ && "$storage_quota_warning" -ge 1 && "$storage_quota_warning" -le 100 ]]; then
+  ok "KINDLEAF_STORAGE_QUOTA_WARNING_PERCENT=$storage_quota_warning"
+else
+  fail "KINDLEAF_STORAGE_QUOTA_WARNING_PERCENT must be an integer from 1 to 100"
 fi
 
 if [[ "$budget_warning" =~ ^[0-9]+$ && "$budget_warning" -ge 1 && "$budget_warning" -le 100 ]]; then
