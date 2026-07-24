@@ -105,6 +105,7 @@ async function main() {
   await waitForText("演示数据开关");
   await waitForText("当前生成 provider 状态");
   await waitForText("图片组件");
+  await waitForText("角色参考图");
   await waitForText("seedream");
   await waitForText("缺少 SEEDREAM_API_KEY 或 ARK_API_KEY");
   await waitForText("/api/v3/images/generations");
