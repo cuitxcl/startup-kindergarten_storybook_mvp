@@ -407,6 +407,28 @@ async function main() {
   await waitForText("绘本已标记可交付");
   console.log(`custom=${await currentStorybookId()}`);
 
+  console.log("11b. derive batch custom storybooks");
+  await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/${plainBookId}/customize`);
+  await waitForText("生成定制绘本");
+  await clickByText("批量生成");
+  await waitForText("已选 0");
+  await clickCardContaining("小雨");
+  await waitForText("已选 1");
+  await clickCardContaining(childName);
+  await waitForText("已选 2");
+  await clickByText("确认孩子");
+  await waitForText("批量儿童：2 个");
+  await clickByText("确认档案");
+  await waitForText("定制强度");
+  await clickByText("生成定制方案");
+  await waitForText("定制方案已生成");
+  await clickByText("生成定制副本");
+  await waitForText("批量定制副本已生成");
+  await clickByText("查看生成结果");
+  await waitForUrl("/storybooks/");
+  await waitForText("编辑当前页");
+  console.log(`batch_custom_first=${await currentStorybookId()}`);
+
   console.log("12. submit, approve, and copy from marketplace");
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/admin/submissions`);
   await waitForText("市场投稿");
