@@ -28,7 +28,7 @@ const checks = [
   },
   {
     label: "mock feedback copy",
-    pattern: /mock\s*反馈|mock\s*状态|mock\s*结果|当前为 mock|模拟完成|原型模式|原型生成/g,
+    pattern: /mock\s*反馈|mock\s*状态|mock\s*结果|当前为 mock|模拟完成|原型模式|原型生成|原型反馈/g,
     risk: "low",
     note: "确认 API 模式下不会展示伪成功反馈；非 API 分支可使用原型模式文案。",
   },
@@ -144,11 +144,11 @@ const strictFailures = findings.filter((finding) => {
 
 if (strict) {
   if (strictFailures.length > 0) {
-    console.error(`\nstrict failed: ${strictFailures.length} unguarded data/mock import, demo token, fixed mock id, or mock feedback usage(s)`);
+    console.error(`\nstrict failed: ${strictFailures.length} unguarded data/mock import, demo token, fixed mock id, or mock/prototype feedback usage(s)`);
     for (const failure of strictFailures) {
       console.error(`- ${failure.file}:${failure.line} ${failure.text}`);
     }
     process.exit(1);
   }
-  console.log("\nstrict ok: no unguarded data/mock import, demo-token, fixed mock id outside allowed prototype files, or mock feedback");
+  console.log("\nstrict ok: no unguarded data/mock import, demo-token, fixed mock id outside allowed prototype files, or mock/prototype feedback");
 }
