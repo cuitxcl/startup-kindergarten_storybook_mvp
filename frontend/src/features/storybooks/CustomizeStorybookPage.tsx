@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useOutletContext, useParams } from "react-router-dom";
 import {
   createGenerationJob,
+  deriveCustomStorybooksBatch,
   deriveCustomStorybook,
   getChild,
   getGenerationJob,
@@ -28,7 +29,9 @@ export function CustomizeStorybookPage() {
   const { storybookId } = useParams();
   const location = useLocation();
   const [step, setStep] = useState(0);
+  const [customMode, setCustomMode] = useState<"single" | "batch">("single");
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
+  const [selectedBatchChildIds, setSelectedBatchChildIds] = useState<string[]>([]);
   const [intensity, setIntensity] = useState<"quick" | "standard">("standard");
   const [notice, setNotice] = useState<{ title: string; copy: string } | null>(null);
   const [remoteSource, setRemoteSource] = useState<Storybook | null>(null);
@@ -47,7 +50,9 @@ export function CustomizeStorybookPage() {
   const source = shouldUseApi ? remoteSource : storybooks.find((item) => item.id === storybookId) || storybooks[0];
   const childList = shouldUseApi ? remoteChildren : children.filter((item) => item.workspaceId === workspace.id);
   const selected = childList.find((child) => child.id === selectedChildId) || childList[0];
+  const selectedBatchChildren = childList.filter((child) => selectedBatchChildIds.includes(child.id));
   const generatedTarget = shouldUseApi ? generatedBookId : storybooks.find((item) => item.workspaceId === workspace.id && item.type === "custom")?.id || source?.id;
+  const canContinueSelection = customMode === "batch" ? selectedBatchChildIds.length > 0 : Boolean(selected);
   const primaryLabels = ["确认孩子", "确认档案", "生成定制方案", "生成定制副本", "已生成"];
   const nextStep = () => {
     setNotice(null);
@@ -56,9 +61,15 @@ export function CustomizeStorybookPage() {
   };
 
   const createCustomizationPlan = async () => {
-    if (!source || !selected) return;
+    const planChild = customMode === "batch" ? selectedBatchChildren[0] : selected;
+    if (!source || !planChild) return;
     if (!shouldUseApi) {
-      setNotice({ title: "定制方案已生成", copy: "当前为本地原型反馈；接入 API 后会创建定制方案任务。" });
+      setNotice({
+        title: "定制方案已生成",
+        copy: customMode === "batch"
+          ? "当前为本地原型反馈；批量模式会按每个儿童资料创建独立定制副本。"
+          : "当前为本地原型反馈；接入 API 后会创建定制方案任务。",
+      });
       setStep(3);
       return;
     }
@@ -70,12 +81,14 @@ export function CustomizeStorybookPage() {
         jobType: "customization_plan",
         storybookId: source.id,
         input: {
-          child_id: selected.id,
-          child_nickname: selected.nickname,
+          child_id: planChild.id,
+          child_nickname: customMode === "batch" ? `${planChild.nickname} 等 ${selectedBatchChildren.length} 个儿童` : planChild.nickname,
           intensity,
           source_title: source.title,
-          interests: selected.interests,
-          focus: selected.focus,
+          interests: planChild.interests,
+          focus: planChild.focus,
+          batch_child_ids: customMode === "batch" ? selectedBatchChildIds : undefined,
+          batch_child_count: customMode === "batch" ? selectedBatchChildren.length : undefined,
         },
       });
       const settledJob = await waitForGenerationJob(job);
@@ -165,6 +178,7 @@ export function CustomizeStorybookPage() {
         setRemoteChildren(childRows);
         setChildPageMeta(childPage.meta);
         setSelectedChildId((value) => requestedChild?.id || value || childRows[0]?.id || null);
+        setSelectedBatchChildIds((value) => value.filter((id) => childRows.some((child) => child.id === id)));
         try {
           setGenerationJobs(await listStorybookGenerationJobs(workspace.id, book.id, { limit: 8 }));
         } catch {
@@ -202,9 +216,9 @@ export function CustomizeStorybookPage() {
   }, [childList, location.search]);
 
   const createCustomCopy = async () => {
-    if (!source || !selected) return;
+    if (!source || (customMode === "single" && !selected) || (customMode === "batch" && selectedBatchChildIds.length === 0)) return;
     if (!shouldUseApi) {
-      setNotice({ title: "定制副本已生成", copy: "这是 mock 反馈：真实接入后会创建独立副本并进入编辑状态。" });
+      setNotice({ title: customMode === "batch" ? "批量定制副本已生成" : "定制副本已生成", copy: "这是 mock 反馈：真实接入后会创建独立副本并进入编辑状态。" });
       setStep(4);
       return;
     }
@@ -212,18 +226,35 @@ export function CustomizeStorybookPage() {
     setRetryJob(null);
     setNotice(null);
     try {
-      const book = await deriveCustomStorybook(workspace.id, source.id, { childId: selected.id, intensity, customizationPlan: customizationPlan || undefined });
-      setGeneratedBookId(book.id);
+      if (customMode === "batch") {
+        const result = await deriveCustomStorybooksBatch(workspace.id, source.id, {
+          childIds: selectedBatchChildIds,
+          intensity,
+          customizationPlan: customizationPlan || undefined,
+        });
+        setGeneratedBookId(result.storybooks[0]?.id || null);
+        setNotice({ title: "批量定制副本已生成", copy: `后端已创建 ${result.createdCount} 本独立定制绘本，原普通绘本不会被覆盖。` });
+      } else {
+        const book = await deriveCustomStorybook(workspace.id, source.id, { childId: selected!.id, intensity, customizationPlan: customizationPlan || undefined });
+        setGeneratedBookId(book.id);
+        setNotice({ title: "定制副本已生成", copy: "后端已创建独立定制绘本，原普通绘本不会被覆盖。" });
+      }
       if (source?.id) {
         setGenerationJobs(await listStorybookGenerationJobs(workspace.id, source.id));
       }
-      setNotice({ title: "定制副本已生成", copy: "后端已创建独立定制绘本，原普通绘本不会被覆盖。" });
       setStep(4);
     } catch (err) {
       setNotice({ title: "生成失败", copy: err instanceof Error ? err.message : "请稍后重试" });
     } finally {
       setGenerating(false);
     }
+  };
+
+  const toggleBatchChild = (childId: string) => {
+    setCustomizationPlan(null);
+    setSelectedBatchChildIds((items) => items.includes(childId)
+      ? items.filter((id) => id !== childId)
+      : [...items, childId]);
   };
 
   const loadMoreChildren = async () => {
@@ -265,12 +296,14 @@ export function CustomizeStorybookPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">当前儿童</p>
-              <h2>{selected.nickname}</h2>
-              <p>{selected.ageGroup} · {selected.focus}</p>
+              <h2>{customMode === "batch" ? `已选择 ${selectedBatchChildIds.length} 个儿童` : selected.nickname}</h2>
+              <p>{customMode === "batch" ? "批量模式会为每个儿童创建独立副本。" : `${selected.ageGroup} · ${selected.focus}`}</p>
             </div>
             <div className="inline-actions">
-              <Link className="button secondary" to={`/app/${workspace.id}/children/${selected.id}`}>回到儿童档案</Link>
-              <Badge tone={selected.completeness > 80 ? "good" : "warn"}>完整度 {selected.completeness}%</Badge>
+              {customMode === "single" && <Link className="button secondary" to={`/app/${workspace.id}/children/${selected.id}`}>回到儿童档案</Link>}
+              <Badge tone={customMode === "batch" ? selectedBatchChildIds.length > 0 ? "good" : "warn" : selected.completeness > 80 ? "good" : "warn"}>
+                {customMode === "batch" ? `${selectedBatchChildIds.length} 个儿童` : `完整度 ${selected.completeness}%`}
+              </Badge>
             </div>
           </div>
         </Card>
@@ -325,16 +358,35 @@ export function CustomizeStorybookPage() {
             ) : (
               <div className="review-block">
                 <div className="privacy-callout">
-                  选择孩子后，系统会带入称呼、年龄段、兴趣、性格和关注点，生成单独的定制副本。标准定制会改写关键页面，快速定制只替换标题和重点元素。
+                  选择孩子后，系统会带入称呼、年龄段、兴趣、性格和关注点，生成独立定制副本。批量生成会为每个儿童各创建一本副本，适合全班快速交付。
+                </div>
+                <div className="filter-row" role="group" aria-label="定制模式">
+                  <button type="button" className={`filter ${customMode === "single" ? "active" : ""}`} onClick={() => setCustomMode("single")}>单个儿童</button>
+                  <button type="button" className={`filter ${customMode === "batch" ? "active" : ""}`} onClick={() => setCustomMode("batch")}>批量生成</button>
+                  {customMode === "batch" && <Badge tone={selectedBatchChildIds.length ? "good" : "warn"}>已选 {selectedBatchChildIds.length}</Badge>}
                 </div>
                 <div className="selection-grid">
                   {childList.map((child) => {
-                    const active = selected?.id === child.id;
+                    const active = customMode === "batch" ? selectedBatchChildIds.includes(child.id) : selected?.id === child.id;
                     return (
-                      <button key={child.id} type="button" className={`select-card ${active ? "active" : ""}`} onClick={() => { setSelectedChildId(child.id); setCustomizationPlan(null); }}>
+                      <button
+                        key={child.id}
+                        type="button"
+                        className={`select-card ${active ? "active" : ""}`}
+                        onClick={() => {
+                          if (customMode === "batch") {
+                            toggleBatchChild(child.id);
+                            return;
+                          }
+                          setSelectedChildId(child.id);
+                          setCustomizationPlan(null);
+                        }}
+                      >
                         <strong>{child.nickname}</strong>
                         <span>{child.ageGroup} · {child.interests.join("、")}</span>
-                        <Badge tone={child.completeness > 80 ? "good" : "warn"}>{active ? "已选择 · " : ""}完整度 {child.completeness}%</Badge>
+                        <Badge tone={child.completeness > 80 ? "good" : "warn"}>
+                          {active ? customMode === "batch" ? "已加入 · " : "已选择 · " : ""}完整度 {child.completeness}%
+                        </Badge>
                       </button>
                     );
                   })}
@@ -347,14 +399,20 @@ export function CustomizeStorybookPage() {
               </div>
             )
           )}
-          {step === 1 && selected && <ReviewBlock title="档案检查" items={[`称呼：${selected.nickname}`, `年龄段：${selected.ageGroup}`, `可用个性化元素：${selected.interests.join("、")}`, `关注点：${selected.focus}`]} />}
+          {step === 1 && (customMode === "batch"
+            ? <ReviewBlock title="档案检查" items={[`批量儿童：${selectedBatchChildren.length} 个`, `平均完整度：${averageCompleteness(selectedBatchChildren)}%`, `本次模式：每个儿童生成独立副本`, ...selectedBatchChildren.slice(0, 6).map((child) => `${child.nickname}：${child.ageGroup} · ${child.focus}`)]} />
+            : selected && <ReviewBlock title="档案检查" items={[`称呼：${selected.nickname}`, `年龄段：${selected.ageGroup}`, `可用个性化元素：${selected.interests.join("、")}`, `关注点：${selected.focus}`]} />
+          )}
           {step === 2 && (
             <div className="selection-grid">
               <button type="button" className={`select-card ${intensity === "quick" ? "active" : ""}`} onClick={() => { setIntensity("quick"); setCustomizationPlan(null); }}><strong>快速定制</strong><span>替换称呼、标题和关键道具，适合批量交付。</span><Badge tone={intensity === "quick" ? "good" : "neutral"}>{intensity === "quick" ? "已选择" : "可选择"}</Badge></button>
               <button type="button" className={`select-card ${intensity === "standard" ? "active" : ""}`} onClick={() => { setIntensity("standard"); setCustomizationPlan(null); }}><strong>标准定制</strong><span>改写关键页面并重绘关键插图，适合单个孩子。</span><Badge tone={intensity === "standard" ? "good" : "neutral"}>{intensity === "standard" ? "已选择" : "可选择"}</Badge></button>
             </div>
           )}
-          {step === 3 && selected && <ReviewBlock title="定制方案" output={customizationPlan} items={customizationPlanItems(customizationPlan, selected, intensity)} />}
+          {step === 3 && (customMode === "batch"
+            ? <ReviewBlock title="定制方案" output={customizationPlan} items={batchCustomizationPlanItems(customizationPlan, selectedBatchChildren, intensity)} />
+            : selected && <ReviewBlock title="定制方案" output={customizationPlan} items={customizationPlanItems(customizationPlan, selected, intensity)} />
+          )}
           {shouldUseApi && (
             <Card>
               <div className="section-head">
@@ -388,8 +446,8 @@ export function CustomizeStorybookPage() {
           {step === 4 && (
             <div className="preview-complete">
               <Badge tone="good">副本已创建</Badge>
-              <h2>定制绘本已进入编辑状态</h2>
-              <p>你可以继续编辑页面正文和插图描述，再导出 PDF 或分享给家长。</p>
+              <h2>{customMode === "batch" ? "批量定制绘本已进入编辑状态" : "定制绘本已进入编辑状态"}</h2>
+              <p>{customMode === "batch" ? "系统已为选中的儿童分别创建独立副本，你可以从第一本开始检查和导出。" : "你可以继续编辑页面正文和插图描述，再导出 PDF 或分享给家长。"}</p>
               {generatedTarget ? (
                 <Link className="button primary" to={`/app/${workspace.id}/storybooks/${generatedTarget}`}>查看生成结果</Link>
               ) : (
@@ -401,8 +459,8 @@ export function CustomizeStorybookPage() {
             <button className="button secondary" disabled={step === 0} title={step === 0 ? "当前已经是第一步" : undefined} onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</button>
             <button
               className="button primary"
-              disabled={step === steps.length - 1 || (step === 0 && childList.length === 0) || generatingPlan || generating}
-              title={step === 0 && childList.length === 0 ? "请先新增儿童资料" : step === steps.length - 1 ? "副本已生成，请查看结果" : undefined}
+              disabled={step === steps.length - 1 || (step === 0 && (!canContinueSelection || childList.length === 0)) || generatingPlan || generating}
+              title={step === 0 && childList.length === 0 ? "请先新增儿童资料" : step === 0 && !canContinueSelection ? "请至少选择一个儿童" : step === steps.length - 1 ? "副本已生成，请查看结果" : undefined}
               onClick={() => {
                 if (step === 2) {
                   createCustomizationPlan();
@@ -484,6 +542,42 @@ function customizationPlanItems(output: unknown, child: ChildProfile, intensity:
     `定制强度：${customization.intensity === "quick" ? "快速定制" : "标准定制"}`,
     customization.strategy ? `定制策略：${customization.strategy}` : null,
     ...(customization.rewrite_points || []).map((point) => `${point.scope || "内容"}：${point.action || "按孩子资料调整"}`),
+    customization.risk_checks?.length ? `隐私检查：${customization.risk_checks.join("、")}` : null,
+  ].filter(Boolean) as string[];
+}
+
+function averageCompleteness(children: ChildProfile[]) {
+  if (children.length === 0) return 0;
+  const total = children.reduce((sum, child) => sum + child.completeness, 0);
+  return Math.round(total / children.length);
+}
+
+function batchCustomizationPlanItems(output: unknown, batchChildren: ChildProfile[], intensity: "quick" | "standard") {
+  const value = output as {
+    customization?: {
+      intensity?: string;
+      strategy?: string;
+      rewrite_points?: { scope?: string; action?: string }[];
+      risk_checks?: string[];
+    };
+  } | undefined;
+  const customization = value?.customization;
+  if (!customization) {
+    return [
+      `本次儿童：${batchChildren.length} 个`,
+      `平均资料完整度：${averageCompleteness(batchChildren)}%`,
+      `定制强度：${intensity === "standard" ? "标准定制" : "快速定制"}`,
+      "生成方式：每个儿童一本独立副本，源普通绘本不被覆盖",
+      intensity === "standard" ? "批量改写关键页面，并为每个儿童保留独立插图重绘空间" : "批量替换称呼、标题和关键道具，适合快速交付",
+      ...batchChildren.slice(0, 4).map((child) => `${child.nickname}：${child.interests.slice(0, 2).join("、") || "暂无兴趣标签"} · ${child.focus}`),
+    ];
+  }
+
+  return [
+    `本次儿童：${batchChildren.length} 个`,
+    `定制强度：${customization.intensity === "quick" ? "快速定制" : "标准定制"}`,
+    customization.strategy ? `批量策略：${customization.strategy}` : null,
+    ...(customization.rewrite_points || []).map((point) => `${point.scope || "内容"}：${point.action || "按儿童资料分别调整"}`),
     customization.risk_checks?.length ? `隐私检查：${customization.risk_checks.join("、")}` : null,
   ].filter(Boolean) as string[];
 }

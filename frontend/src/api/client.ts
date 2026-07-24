@@ -149,6 +149,13 @@ type ApiStorybook = {
   roles: ApiStorybookRole[];
 };
 
+type ApiDeriveCustomBatchResponse = {
+  source_storybook_id: string;
+  requested_count: number;
+  created_count: number;
+  storybooks: ApiStorybook[];
+};
+
 type ApiExportJob = {
   id: string;
   storybook_id: string;
@@ -1490,6 +1497,30 @@ export async function deriveCustomStorybook(
     }),
   });
   return mapStorybook(response);
+}
+
+export async function deriveCustomStorybooksBatch(
+  workspaceId: string,
+  storybookId: string,
+  payload: { childIds: string[]; intensity: "quick" | "standard"; customizationPlan?: unknown },
+) {
+  const response = await request<ApiDeriveCustomBatchResponse>(
+    `/api/workspaces/${workspaceId}/storybooks/${storybookId}/derive-custom-batch`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        child_ids: payload.childIds,
+        intensity: payload.intensity,
+        customization_plan: payload.customizationPlan,
+      }),
+    },
+  );
+  return {
+    sourceStorybookId: response.source_storybook_id,
+    requestedCount: response.requested_count,
+    createdCount: response.created_count,
+    storybooks: response.storybooks.map(mapStorybook),
+  };
 }
 
 export async function listMarketplaceTemplatesPage(
