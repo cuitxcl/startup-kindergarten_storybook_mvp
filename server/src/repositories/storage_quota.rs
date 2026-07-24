@@ -41,13 +41,12 @@ pub async fn ensure_workspace_storage_available(
     additional_bytes: u64,
 ) -> Result<(), DbErr> {
     let summary = workspace_storage_quota(db, workspace_id).await?;
-    let projected = summary.used_bytes.saturating_add(additional_bytes);
-    if projected > summary.quota_bytes {
-        return Err(DbErr::Custom(format!(
-            "storage_quota_exceeded: 存储空间不足，当前已用 {} bytes，新增 {} bytes，限额 {} bytes",
-            summary.used_bytes, additional_bytes, summary.quota_bytes
-        )));
-    }
+    ensure_projected_quota_available(
+        "存储空间不足",
+        summary.used_bytes,
+        additional_bytes,
+        summary.quota_bytes,
+    )?;
 
     if summary.workspace_type == "personal" {
         let user_id = personal_workspace_owner_user_id(db, workspace_id).await?;
@@ -157,14 +156,27 @@ async fn ensure_user_storage_available(
     additional_bytes: u64,
 ) -> Result<(), DbErr> {
     let summary = user_storage_quota(db, user_id).await?;
-    let projected = summary.used_bytes.saturating_add(additional_bytes);
-    if projected <= summary.quota_bytes {
+    ensure_projected_quota_available(
+        "用户存储空间不足",
+        summary.used_bytes,
+        additional_bytes,
+        summary.quota_bytes,
+    )
+}
+
+fn ensure_projected_quota_available(
+    label: &str,
+    used_bytes: u64,
+    additional_bytes: u64,
+    quota_bytes: u64,
+) -> Result<(), DbErr> {
+    let projected = used_bytes.saturating_add(additional_bytes);
+    if projected <= quota_bytes {
         return Ok(());
     }
 
     Err(DbErr::Custom(format!(
-        "storage_quota_exceeded: 用户存储空间不足，当前已用 {} bytes，新增 {} bytes，限额 {} bytes",
-        summary.used_bytes, additional_bytes, summary.quota_bytes
+        "storage_quota_exceeded: {label}，当前已用 {used_bytes} bytes，新增 {additional_bytes} bytes，限额 {quota_bytes} bytes"
     )))
 }
 
@@ -218,4 +230,36 @@ async fn workspace_export_urls(
         .filter_map(|row| row.try_get::<String>("", "file_url").ok())
         .filter(|url| url.starts_with("/exports/"))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projected_quota_allows_writes_within_limit() {
+        ensure_projected_quota_available("用户存储空间不足", 100, 20, 120)
+            .expect("write exactly at the limit should be allowed");
+    }
+
+    #[test]
+    fn projected_quota_rejects_user_total_over_limit() {
+        let err = ensure_projected_quota_available("用户存储空间不足", 120, 1, 120)
+            .expect_err("projected user quota should be rejected");
+
+        let message = err.to_string();
+        assert!(message.contains("storage_quota_exceeded"));
+        assert!(message.contains("用户存储空间不足"));
+        assert!(message.contains("当前已用 120 bytes"));
+        assert!(message.contains("新增 1 bytes"));
+        assert!(message.contains("限额 120 bytes"));
+    }
+
+    #[test]
+    fn projected_quota_uses_saturating_add() {
+        let err = ensure_projected_quota_available("存储空间不足", u64::MAX, 1, u64::MAX - 1)
+            .expect_err("saturated projected quota should still be rejected");
+
+        assert!(err.to_string().contains("storage_quota_exceeded"));
+    }
 }
