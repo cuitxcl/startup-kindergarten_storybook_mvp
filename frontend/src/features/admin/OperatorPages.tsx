@@ -23,6 +23,14 @@ import type { MarketplaceSubmission, MarketplaceTemplate } from "../../types/dom
 import { generationJobTypeLabel, submissionStatusLabel } from "../../utils/labels";
 
 const OPERATOR_PAGE_SIZE = 12;
+const GENERATION_COST_JOB_TYPES = [
+  "storybook_plan",
+  "storybook_roles",
+  "storybook_pages",
+  "customization_plan",
+  "storybook_role_reference_image",
+  "storybook_page_image",
+];
 
 export function OperatorMarketplacePage() {
   const [notice, setNotice] = useState<string | null>(null);
@@ -394,11 +402,9 @@ export function OperatorMarketplacePage() {
             任务类型
             <select value={costFilters.jobType} onChange={(event) => setCostFilters((current) => ({ ...current, jobType: event.target.value }))}>
               <option value="">全部</option>
-              <option value="storybook_plan">故事方案</option>
-              <option value="storybook_roles">角色设定</option>
-              <option value="storybook_pages">分页图文</option>
-              <option value="customization_plan">定制方案</option>
-              <option value="storybook_page_image">单页插图</option>
+              {GENERATION_COST_JOB_TYPES.map((jobType) => (
+                <option key={jobType} value={jobType}>{formatGenerationJobType(jobType)}</option>
+              ))}
             </select>
           </label>
           <label>
