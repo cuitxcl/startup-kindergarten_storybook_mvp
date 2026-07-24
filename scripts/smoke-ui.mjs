@@ -315,6 +315,7 @@ async function main() {
   await clickByText("生成参考图");
   await waitForText("角色参考图已生成");
   await waitForText("参考图已写回角色");
+  await waitForReferenceImageLoaded();
   await clickByText("复制副本");
   await waitForText(`${plainTitle} 副本`);
   await waitForText("普通绘本详情");
@@ -883,6 +884,13 @@ async function waitForEnabledButton(text) {
   await waitUntil(
     () => evaluate(`Boolean([...document.querySelectorAll('button')].find((item) => !item.disabled && item.innerText.includes(${JSON.stringify(text)})))`),
     `enabled button not found: ${text}`,
+  );
+}
+
+async function waitForReferenceImageLoaded() {
+  await waitUntil(
+    () => evaluate(`Boolean(document.querySelector('.reference-preview img')?.complete && document.querySelector('.reference-preview img')?.naturalWidth > 0)`),
+    "role reference image did not load",
   );
 }
 

@@ -2,7 +2,6 @@ import { ArrowRight, CheckCircle2, Copy, Download, Pencil, Send } from "lucide-r
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
-  apiResourceUrl,
   cancelGenerationJob,
   createPageImageTask,
   createRoleReferenceImageTask,
@@ -82,6 +81,8 @@ export function StorybookDetailPage() {
   }>({ name: "", roleType: "teacher", appearance: "", storyFunction: "", needsConsistency: true, referenceImagePrompt: "" });
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleImageGenerating, setRoleImageGenerating] = useState(false);
+  const [roleReferencePreviewUrl, setRoleReferencePreviewUrl] = useState("");
+  const [roleReferencePreviewError, setRoleReferencePreviewError] = useState("");
   const selectedPage = book?.pages.find((page) => page.id === selectedPageId) || book?.pages[0];
   const selectedRole = book?.roles.find((role) => role.id === selectedRoleId) || book?.roles[0];
   const deliveryBlockers = book ? [
@@ -236,6 +237,46 @@ export function StorybookDetailPage() {
       if (revokedUrl) window.URL.revokeObjectURL(revokedUrl);
     };
   }, [currentPageImage?.imageUrl, currentPageImageJob?.id, workspace.id]);
+
+  useEffect(() => {
+    if (!selectedRole?.referenceImageUrl) {
+      setRoleReferencePreviewUrl("");
+      setRoleReferencePreviewError("");
+      return;
+    }
+    if (!shouldUseApi) {
+      setRoleReferencePreviewUrl(selectedRole.referenceImageUrl);
+      setRoleReferencePreviewError("");
+      return;
+    }
+    const referenceJobId = generationJobIdFromImageUrl(selectedRole.referenceImageUrl);
+    if (!referenceJobId) {
+      setRoleReferencePreviewUrl("");
+      setRoleReferencePreviewError("角色参考图地址缺少生成任务编号");
+      return;
+    }
+
+    let revokedUrl = "";
+    let active = true;
+    setRoleReferencePreviewUrl("");
+    setRoleReferencePreviewError("");
+    downloadGenerationImageFile(workspace.id, referenceJobId)
+      .then((file) => {
+        if (!active) return;
+        revokedUrl = window.URL.createObjectURL(file);
+        setRoleReferencePreviewUrl(revokedUrl);
+      })
+      .catch((err) => {
+        if (active) {
+          setRoleReferencePreviewUrl("");
+          setRoleReferencePreviewError(err instanceof Error ? err.message : "角色参考图读取失败");
+        }
+      });
+    return () => {
+      active = false;
+      if (revokedUrl) window.URL.revokeObjectURL(revokedUrl);
+    };
+  }, [selectedRole?.id, selectedRole?.referenceImageUrl, workspace.id]);
 
   async function savePage() {
     if (!selectedPage || !storybookId) return;
@@ -748,7 +789,13 @@ export function StorybookDetailPage() {
               <div className="form-stack">
                 <div className="reference-preview">
                   {selectedRole.referenceImageUrl ? (
-                    <img src={apiResourceUrl(selectedRole.referenceImageUrl)} alt={`${selectedRole.name} 的角色参考图`} />
+                    roleReferencePreviewUrl ? (
+                      <img src={roleReferencePreviewUrl} alt={`${selectedRole.name} 的角色参考图`} />
+                    ) : roleReferencePreviewError ? (
+                      <div className="reference-empty">参考图读取失败：{roleReferencePreviewError}</div>
+                    ) : (
+                      <div className="reference-empty">正在读取角色参考图</div>
+                    )
                   ) : (
                     <div className="reference-empty">待生成角色参考图</div>
                   )}
@@ -1073,6 +1120,10 @@ function latestPageImageJob(jobs: GenerationJob[], pageId?: string) {
 
 function generationJobTimestamp(job: GenerationJob) {
   return new Date(job.finishedAt || job.createdAt).getTime();
+}
+
+function generationJobIdFromImageUrl(url: string) {
+  return url.match(/\/generation-jobs\/([^/]+)\/image/)?.[1];
 }
 
 const generationJobTypeLabel: Record<string, string> = {
