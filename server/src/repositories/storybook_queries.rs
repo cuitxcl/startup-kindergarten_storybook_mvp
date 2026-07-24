@@ -195,7 +195,7 @@ async fn storybooks_from_rows(
             teaching_goal: row.try_get("", "teaching_goal")?,
             cover_tone: row.try_get("", "cover_tone")?,
             pages: pages_for(db, id).await?,
-            roles: roles_for(db, id).await?,
+            roles: roles_for(db, row.try_get("", "workspace_id")?, id).await?,
         });
     }
     Ok(books)
@@ -234,17 +234,38 @@ async fn pages_for(
 
 async fn roles_for(
     db: &DatabaseConnection,
+    workspace_id: Uuid,
     storybook_id: Uuid,
 ) -> Result<Vec<StorybookRole>, DbErr> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency,
-                   reference_image_url, reference_image_prompt, coalesce(reference_status, 'not_started') as reference_status
-            from storybook_roles
-            where storybook_id = $1
-            order by role_type, name
+            select
+              r.id,
+              r.name,
+              r.role_type,
+              r.appearance,
+              coalesce(r.story_function, '') as story_function,
+              r.needs_consistency,
+              r.reference_image_url,
+              r.reference_image_prompt,
+              coalesce(r.reference_status, 'not_started') as reference_status,
+              ref_job.id as reference_generation_job_id
+            from storybook_roles r
+            left join lateral (
+              select g.id
+              from generation_jobs g
+              where g.storybook_id = r.storybook_id
+                and g.job_type = 'storybook_role_reference_image'
+                and g.status = 'succeeded'
+                and g.input_json->>'role_id' = r.id::text
+                and g.output_json #>> '{image,image_url}' = r.reference_image_url
+              order by g.finished_at desc nulls last, g.created_at desc
+              limit 1
+            ) ref_job on true
+            where r.storybook_id = $1
+            order by r.role_type, r.name
             "#,
             [storybook_id.into()],
         ))
@@ -258,10 +279,27 @@ async fn roles_for(
                 appearance: row.try_get("", "appearance")?,
                 story_function: row.try_get("", "story_function")?,
                 needs_consistency: row.try_get("", "needs_consistency")?,
-                reference_image_url: row.try_get("", "reference_image_url")?,
+                reference_image_url: role_reference_image_url(
+                    workspace_id,
+                    row.try_get("", "reference_image_url")?,
+                    row.try_get("", "reference_generation_job_id")?,
+                ),
                 reference_image_prompt: row.try_get("", "reference_image_prompt")?,
                 reference_status: row.try_get("", "reference_status")?,
             })
         })
         .collect()
+}
+
+fn role_reference_image_url(
+    workspace_id: Uuid,
+    stored_url: Option<String>,
+    generation_job_id: Option<Uuid>,
+) -> Option<String> {
+    match (stored_url, generation_job_id) {
+        (Some(_), Some(job_id)) => Some(format!(
+            "/api/workspaces/{workspace_id}/generation-jobs/{job_id}/image"
+        )),
+        (stored_url, _) => stored_url,
+    }
 }

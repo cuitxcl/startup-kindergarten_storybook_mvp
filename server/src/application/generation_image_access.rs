@@ -58,7 +58,7 @@ pub fn public_generated_image_file(file_name: &str) -> Result<(String, Vec<u8>),
 }
 
 fn read_generation_image_file(job: &GenerationJob) -> Result<(String, Vec<u8>), ApiError> {
-    if job.status != "succeeded" || job.job_type != "storybook_page_image" {
+    if job.status != "succeeded" || !is_downloadable_image_job(&job.job_type) {
         return Err(ApiError::not_found("generated_image"));
     }
     let Some(file_name) = generation_image_file_name(job) else {
@@ -74,7 +74,7 @@ pub fn with_generation_image_download_url(
     workspace_id: Uuid,
 ) -> GenerationJob {
     if job.status == "succeeded"
-        && job.job_type == "storybook_page_image"
+        && is_downloadable_image_job(&job.job_type)
         && let Some(output) = job.output_json.as_mut()
         && let Some(image) = output
             .get_mut("image")
@@ -91,6 +91,13 @@ pub fn with_generation_image_download_url(
 
 fn generation_image_download_url(workspace_id: Uuid, job_id: Uuid) -> String {
     format!("/api/workspaces/{workspace_id}/generation-jobs/{job_id}/image")
+}
+
+fn is_downloadable_image_job(job_type: &str) -> bool {
+    matches!(
+        job_type,
+        "storybook_page_image" | "storybook_role_reference_image"
+    )
 }
 
 fn generation_image_file_name(job: &GenerationJob) -> Option<String> {

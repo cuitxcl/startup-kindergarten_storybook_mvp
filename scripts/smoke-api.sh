@@ -33,6 +33,8 @@ export_file_url=""
 public_export_file_url=""
 image_job_id=""
 image_file_url=""
+role_reference_job_id=""
+role_reference_file_url=""
 plan_job_id=""
 roles_job_id=""
 pages_job_id=""
@@ -249,10 +251,9 @@ where resource_id in (
    or (action = 'generation_job.recovered' and workspace_id = nullif('$SCHOOL_WS', '')::uuid and metadata_json->>'limit' = '5')
    or actor_user_id = nullif('$registered_user_id', '')::uuid
    or workspace_id = nullif('$registered_workspace_id', '')::uuid;
-delete from generation_jobs where id = nullif('$image_job_id', '')::uuid;
 delete from generation_jobs where id in (
   select value::uuid from jsonb_array_elements_text(
-    jsonb_build_array('$plan_job_id', '$roles_job_id', '$pages_job_id', '$teacher_plan_job_id', '$applied_roles_job_id', '$applied_pages_job_id', '$customization_plan_job_id', '$retry_job_id', '$scoped_recover_job_id', '$foreign_recover_job_id')
+    jsonb_build_array('$plan_job_id', '$roles_job_id', '$pages_job_id', '$teacher_plan_job_id', '$applied_roles_job_id', '$applied_pages_job_id', '$role_reference_job_id', '$image_job_id', '$customization_plan_job_id', '$retry_job_id', '$scoped_recover_job_id', '$foreign_recover_job_id')
   ) as value where value <> ''
 );
 delete from export_jobs where id in (
@@ -321,6 +322,9 @@ SQL
   fi
   if [[ -n "$image_file_url" ]]; then
     rm -f "tmp/generated-images/mock-${image_job_id}.png"
+  fi
+  if [[ -n "$role_reference_file_url" ]]; then
+    rm -f "tmp/generated-images/mock-${role_reference_job_id}.png"
   fi
 }
 
@@ -609,6 +613,13 @@ api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"title":" Smoke 第 1 页 ","body":" 孩子们一起练习等待。 ","illustration_prompt":" 明亮教室，老师和孩子围坐在地毯上 "}' >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/roles/$role_id" '{"name":" Smoke老师形象 ","role_type":" teacher ","appearance":" 温和、稳定、会蹲下来和孩子说话 ","story_function":" 帮助孩子理解等待和表达 ","needs_consistency":true}' | json_get "if(p.data.name!=='Smoke老师形象' || p.data.role_type!=='teacher') process.exit(1); console.log('role=' + p.data.name);" >/dev/null
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const page=p.data.pages.find((item)=>item.id==='$page_id'); if(!page || page.title!=='Smoke 第 1 页' || page.body!=='孩子们一起练习等待。' || page.illustration_prompt!=='明亮教室，老师和孩子围坐在地毯上') process.exit(1); const role=p.data.roles.find((item)=>item.id==='$role_id'); if(!role || role.name!=='Smoke老师形象' || role.appearance!=='温和、稳定、会蹲下来和孩子说话') process.exit(1); console.log('role_saved=' + role.name);" >/dev/null
+role_reference_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/roles/$role_id/reference-image-tasks" '{"prompt":"Smoke老师形象，温和、稳定、儿童绘本角色参考图"}')
+role_reference_job_id=$(echo "$role_reference_job_json" | json_get "if(p.data.status!=='queued' || p.data.output_json!==null || p.data.job_type!=='storybook_role_reference_image') process.exit(1); console.log(p.data.id)")
+wait_for_job_status "$role_reference_job_id" succeeded
+role_reference_job_detail_json=$(api GET "/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id")
+role_reference_file_url=$(echo "$role_reference_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id/image'; const url=p.data.output_json?.image?.image_url; if(p.data.status!=='succeeded' || p.data.output_json?.image?.role_id!=='$role_id' || p.data.output_json?.image?.target_type!=='role' || url !== expected) process.exit(1); console.log(url);")
+expect_png_download "$role_reference_file_url" role_reference_image auth
+api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const role=p.data.roles.find((item)=>item.id==='$role_id'); if(!role || role.reference_status!=='ready' || role.reference_image_url!=='$role_reference_file_url') process.exit(1); console.log('role_reference_image=' + role.reference_status);" >/dev/null
 duplicated_storybook_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/duplicate")
 duplicated_storybook_id=$(echo "$duplicated_storybook_json" | json_get "if(p.data.status!=='draft' || p.data.visibility!=='private' || p.data.source!=='duplicate' || p.data.source_title !== '$renamed_plain_title' || !p.data.title.includes('副本')) process.exit(1); const page=p.data.pages.find((item)=>item.title==='Smoke 第 1 页' && item.body==='孩子们一起练习等待。'); const role=p.data.roles.find((item)=>item.name==='Smoke老师形象' && item.appearance==='温和、稳定、会蹲下来和孩子说话'); if(!page || !role) process.exit(1); console.log(p.data.id)")
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$duplicated_storybook_id" | json_get "if(p.data.id!=='$duplicated_storybook_id' || p.data.status!=='draft' || p.data.visibility!=='private' || p.data.source_title !== '$renamed_plain_title' || p.data.pages[0].id==='$page_id') process.exit(1); console.log('storybook_duplicated=' + p.data.title);"
@@ -633,7 +644,7 @@ customization_plan_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" 
 customization_plan_job_id=$(echo "$customization_plan_json" | json_get "if(p.data.job_type!=='customization_plan' || p.data.storybook_id!=='$created_plain_id' || p.data.status!=='queued' || p.data.output_json!==null) process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$customization_plan_job_id" succeeded
 api GET "/api/operator/generation-costs?workspace_id=$SCHOOL_WS&status=succeeded&limit=100&offset=0" | json_get "
-const expected = ['$plan_job_id', '$roles_job_id', '$pages_job_id', '$image_job_id', '$customization_plan_job_id'];
+const expected = ['$plan_job_id', '$roles_job_id', '$pages_job_id', '$role_reference_job_id', '$image_job_id', '$customization_plan_job_id'];
 const ids = new Set(p.data.items.map((row)=>row.generation_job_id));
 if(!expected.every((id)=>ids.has(id))) process.exit(1);
 if(!p.meta || p.meta.total < expected.length) process.exit(1);
@@ -646,6 +657,11 @@ api GET "/api/operator/generation-costs?workspace_id=$SCHOOL_WS&provider=mock&jo
 const image = p.data.items.find((row)=>row.generation_job_id==='$image_job_id');
 if(!image || image.provider !== 'mock' || image.job_type !== 'storybook_page_image' || image.image_count !== 1) process.exit(1);
 console.log('operator_generation_cost_filter=' + image.id);
+" >/dev/null
+api GET "/api/operator/generation-costs?workspace_id=$SCHOOL_WS&provider=mock&job_type=storybook_role_reference_image&limit=20&offset=0" | json_get "
+const image = p.data.items.find((row)=>row.generation_job_id==='$role_reference_job_id');
+if(!image || image.provider !== 'mock' || image.job_type !== 'storybook_role_reference_image' || image.image_count !== 1) process.exit(1);
+console.log('operator_role_reference_cost_filter=' + image.id);
 " >/dev/null
 created_custom_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom" "{\"child_id\":\"$created_child_id\",\"intensity\":\"standard\"}")
 created_custom_id=$(echo "$created_custom_json" | json_get "const childName='$updated_child_name'; const hasChildTitle=p.data.title.includes(childName); const hasCustomPage=p.data.pages.some((page)=>page.title.includes(childName) && page.body.includes('定制改写') && page.body.includes('贴纸') && page.status==='needs_regeneration'); const hasCustomRole=p.data.roles.some((role)=>role.name.includes(childName) && role.role_type==='protagonist'); if(p.data.type!=='custom' || !hasChildTitle || !hasCustomPage || !hasCustomRole) process.exit(1); console.log(p.data.id)")
@@ -904,6 +920,8 @@ const marketCopied = p.data.find((row)=>row.action==='marketplace_template.copie
 if (!marketCopied || marketCopied.metadata_json?.template_id !== '$approved_template_id' || marketCopied.metadata_json?.source_type !== 'school_submission') process.exit(1);
 const imageGeneration = p.data.find((row)=>row.action==='generation_job.created' && row.resource_id==='$image_job_id');
 if (!imageGeneration || imageGeneration.metadata_json?.job_type !== 'storybook_page_image' || imageGeneration.metadata_json?.page_id !== '$page_id') process.exit(1);
+const roleReferenceGeneration = p.data.find((row)=>row.action==='generation_job.created' && row.resource_id==='$role_reference_job_id');
+if (!roleReferenceGeneration || roleReferenceGeneration.metadata_json?.job_type !== 'storybook_role_reference_image' || roleReferenceGeneration.metadata_json?.role_id !== '$role_id') process.exit(1);
 const retriedGeneration = p.data.find((row)=>row.action==='generation_job.retried' && row.resource_id==='$retry_job_id');
 if (!retriedGeneration || retriedGeneration.metadata_json?.job_type !== 'storybook_plan' || retriedGeneration.metadata_json?.status !== 'succeeded' || retriedGeneration.metadata_json?.attempt_count < 1) process.exit(1);
 const intakeConfirmed = p.data.find((row)=>row.action==='parent_intake.confirmed' && row.resource_id==='$intake_id');
@@ -1030,6 +1048,7 @@ and resource_id in (
   nullif('$pages_job_id', '')::uuid,
   nullif('$applied_roles_job_id', '')::uuid,
   nullif('$applied_pages_job_id', '')::uuid,
+  nullif('$role_reference_job_id', '')::uuid,
   nullif('$customization_plan_job_id', '')::uuid,
   nullif('$image_job_id', '')::uuid,
   nullif('$retry_job_id', '')::uuid,
