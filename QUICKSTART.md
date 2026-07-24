@@ -256,6 +256,14 @@ CHECK_SMART_RUN_FULL=true ./scripts/check-smart.sh
 ./scripts/check-smart.sh demo
 ```
 
+当前推荐交接口径是：
+
+```sh
+CHECK_SMART_RUN_FULL=true ./scripts/check-smart.sh auto
+```
+
+它会先跑 fast check，再跑完整 API smoke 和浏览器 UI smoke；UI smoke 已覆盖单儿童定制、批量选择 2 个儿童生成独立定制副本、导出、分享、园所投稿、市场复制、平台运营检查和生成队列恢复。Chrome headless 调试端口如果默认 `9333` 启动失败，会自动尝试备用端口，降低本机端口状态导致的误失败。
+
 也可以显式选择验证范围：
 
 ```sh
@@ -298,7 +306,7 @@ KEEP_DB=true ./scripts/smoke-api-temp-db.sh
 API_BASE_URL=http://127.0.0.1:8091 ./scripts/smoke-api.sh
 ```
 
-这个脚本会验证登录、空间、工作台、权限边界、儿童档案、普通绘本、插图任务、定制绘本、导出、分享、市场复制、成员、班级、投稿和家长资料提交，并在结束时清理临时数据。
+这个脚本会验证登录、空间、工作台、权限边界、儿童档案、普通绘本、插图任务、单儿童定制绘本、批量定制绘本、导出、分享、市场复制、成员、班级、投稿和家长资料提交，并在结束时清理临时数据。
 
 完整前后端演示闭环 smoke：
 
@@ -306,7 +314,7 @@ API_BASE_URL=http://127.0.0.1:8091 ./scripts/smoke-api.sh
 ./scripts/smoke-all.sh
 ```
 
-这个脚本会先对目标数据库执行 migration，再自动启动临时 Loco 后端和 API 模式 Vite 前端，然后依次运行 API smoke 与 UI smoke。UI smoke 会用系统 Chrome headless 检查登录、普通绘本创建、定制绘本生成、园所投稿、平台审核上架、市场复制复用、园所生成队列恢复和取消生成任务。默认端口为后端 `8111`、前端 `5178`，可通过 `API_PORT`、`FRONTEND_PORT` 覆盖。
+这个脚本会先对目标数据库执行 migration，再自动启动临时 Loco 后端和 API 模式 Vite 前端，然后依次运行 API smoke 与 UI smoke。UI smoke 会用系统 Chrome headless 检查登录、普通绘本创建、单儿童定制、批量定制、园所投稿、平台审核上架、市场复制复用、园所生成队列恢复和取消生成任务。默认端口为后端 `8111`、前端 `5178`，可通过 `API_PORT`、`FRONTEND_PORT` 覆盖；Chrome 调试端口可通过 `CDP_PORT` 覆盖，未指定时脚本会在默认端口不可用时自动尝试备用端口。
 
 如果希望用容器启动一套本地演示环境，可以使用 Compose 的 `app` profile。默认 `docker compose up -d postgres` 仍只启动数据库，不会构建应用镜像：
 
