@@ -100,7 +100,7 @@ async function main() {
   await waitForText("生成 provider 密钥");
   await waitForText("生成 provider 配置");
   await waitForText("真实生成能力");
-  await waitForText("生成预算上限");
+  await waitForText("生成预算");
   await waitForText("演示数据开关");
   await waitForText("当前生成 provider 状态");
   await waitForText("图片组件");

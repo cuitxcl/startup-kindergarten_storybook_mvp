@@ -7,6 +7,7 @@ use crate::{
     error::ApiError,
     models::{DashboardResponse, StorybookListQuery, Workspace, WorkspaceRole},
     services::generation_provider::{ConfiguredGenerationProvider, GenerationProviderSummary},
+    services::storage::WorkspaceStorageQuotaSummary,
 };
 
 pub async fn list(ctx: &AppContext, headers: &HeaderMap) -> Result<Vec<Workspace>, ApiError> {
@@ -139,4 +140,36 @@ pub async fn generation_provider(
 
     let provider = ConfiguredGenerationProvider::from_env();
     Ok(provider.summary())
+}
+
+pub async fn storage_quota(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+) -> Result<WorkspaceStorageQuotaSummary, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_workspace_db(ctx, headers, workspace_id).await?;
+        return crate::repositories::storage_quota::workspace_storage_quota(&ctx.db, workspace_id)
+            .await
+            .map_err(common::db_error);
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let state = ctx
+            .shared_store
+            .get::<crate::state::SharedState>()
+            .ok_or_else(|| ApiError::state_conflict("应用状态未初始化"))?;
+        let workspace = common::require_workspace(&state, headers, workspace_id)?;
+        Ok(crate::services::storage::workspace_storage_quota_summary(
+            workspace_id,
+            match workspace.workspace_type {
+                crate::models::WorkspaceType::School => "school",
+                crate::models::WorkspaceType::Platform => "platform",
+                crate::models::WorkspaceType::Personal => "personal",
+            },
+            0,
+        ))
+    }
 }

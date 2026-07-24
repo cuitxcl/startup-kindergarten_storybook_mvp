@@ -1,0 +1,227 @@
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
+use serde_json::Value as JsonValue;
+use uuid::Uuid;
+
+use crate::models::GenerationJob;
+
+pub async fn ensure_image_output_within_storage_quota(
+    db: &DatabaseConnection,
+    job: &GenerationJob,
+    output_json: &JsonValue,
+) -> Result<(), DbErr> {
+    let Some(image_url) = output_json
+        .get("image")
+        .and_then(|value| value.get("image_url"))
+        .and_then(|value| value.as_str())
+    else {
+        return Ok(());
+    };
+
+    match crate::repositories::storage_quota::ensure_workspace_storage_available_for_url(
+        db,
+        job.workspace_id,
+        image_url,
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = crate::services::storage::delete_file_by_url(image_url);
+            Err(err)
+        }
+    }
+}
+
+pub async fn apply_completed_generation(
+    db: &DatabaseConnection,
+    job: &GenerationJob,
+) -> Result<(), DbErr> {
+    if job.status != "succeeded" {
+        return Ok(());
+    }
+    let Some(storybook_id) = job.storybook_id else {
+        return Ok(());
+    };
+    let Some(output) = job.output_json.as_ref() else {
+        return Ok(());
+    };
+
+    match job.job_type.as_str() {
+        "storybook_roles" => replace_roles_from_generation(db, storybook_id, output).await,
+        "storybook_pages" => replace_pages_from_generation(db, storybook_id, output).await,
+        "storybook_role_reference_image" => {
+            apply_role_reference_image(db, storybook_id, job, output).await
+        }
+        _ => Ok(()),
+    }
+}
+
+async fn apply_role_reference_image(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    job: &GenerationJob,
+    output: &JsonValue,
+) -> Result<(), DbErr> {
+    let role_id = job
+        .input_json
+        .get("role_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| DbErr::Custom("角色参考图任务缺少 role_id，无法写回".to_string()))?;
+    let image_url = output
+        .get("image")
+        .and_then(|value| value.get("image_url"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| DbErr::Custom("角色参考图输出缺少 image_url".to_string()))?;
+    let prompt = output
+        .get("image")
+        .and_then(|value| value.get("prompt"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_roles
+        set reference_image_url = $3,
+            reference_image_prompt = $4,
+            reference_status = 'ready'
+        where storybook_id = $1 and id = $2
+        "#,
+        [
+            storybook_id.into(),
+            role_id.into(),
+            image_url.to_string().into(),
+            prompt.to_string().into(),
+        ],
+    ))
+    .await?;
+    touch_storybook(db, storybook_id).await
+}
+
+async fn replace_roles_from_generation(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    output: &JsonValue,
+) -> Result<(), DbErr> {
+    let Some(roles) = output.get("roles").and_then(|value| value.as_array()) else {
+        return Ok(());
+    };
+    if roles.is_empty() {
+        return Ok(());
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "delete from storybook_roles where storybook_id = $1",
+        [storybook_id.into()],
+    ))
+    .await?;
+
+    for role in roles {
+        let id = Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            insert into storybook_roles
+              (id, storybook_id, name, role_type, appearance, story_function, needs_consistency,
+               reference_image_url, reference_image_prompt, reference_status)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+            [
+                id.into(),
+                storybook_id.into(),
+                json_text(role, "name", "未命名角色").into(),
+                json_text(role, "role_type", "supporting").into(),
+                json_text(role, "appearance", "待确认外观").into(),
+                json_text(role, "story_function", "参与故事推进").into(),
+                role.get("needs_consistency")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(true)
+                    .into(),
+                json_optional_text(role, "reference_image_url").into(),
+                json_optional_text(role, "reference_image_prompt").into(),
+                json_text(role, "reference_status", "not_started").into(),
+            ],
+        ))
+        .await?;
+    }
+
+    touch_storybook(db, storybook_id).await
+}
+
+async fn replace_pages_from_generation(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    output: &JsonValue,
+) -> Result<(), DbErr> {
+    let Some(pages) = output.get("pages").and_then(|value| value.as_array()) else {
+        return Ok(());
+    };
+    if pages.is_empty() {
+        return Ok(());
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "delete from storybook_pages where storybook_id = $1",
+        [storybook_id.into()],
+    ))
+    .await?;
+
+    for (index, page) in pages.iter().enumerate() {
+        let id = Uuid::new_v4();
+        let page_number = page
+            .get("page_number")
+            .and_then(|value| value.as_i64())
+            .unwrap_or((index + 1) as i64)
+            .max(1) as i32;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            insert into storybook_pages
+              (id, storybook_id, page_number, title, body, illustration_prompt, status)
+            values ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+            [
+                id.into(),
+                storybook_id.into(),
+                page_number.into(),
+                json_text(page, "title", "未命名分页").into(),
+                json_text(page, "body", "待补充分页正文。").into(),
+                json_text(page, "illustration_prompt", "待补充插图描述。").into(),
+                json_text(page, "status", "draft").into(),
+            ],
+        ))
+        .await?;
+    }
+
+    touch_storybook(db, storybook_id).await
+}
+
+async fn touch_storybook(db: &DatabaseConnection, storybook_id: Uuid) -> Result<(), DbErr> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "update storybooks set updated_at = now() where id = $1",
+        [storybook_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+fn json_text(value: &JsonValue, key: &str, fallback: &str) -> String {
+    value
+        .get(key)
+        .and_then(|item| item.as_str())
+        .filter(|item| !item.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+fn json_optional_text(value: &JsonValue, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|item| item.as_str())
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+}

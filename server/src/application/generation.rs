@@ -2,7 +2,6 @@ use axum::http::HeaderMap;
 #[cfg(not(feature = "db"))]
 use chrono::Utc;
 use loco_rs::app::AppContext;
-use serde::Deserialize;
 use uuid::Uuid;
 
 #[cfg(feature = "db")]
@@ -20,13 +19,12 @@ use crate::{
     },
 };
 
-#[derive(Debug, Deserialize)]
-pub struct RecoverGenerationJobsRequest {
-    #[serde(default)]
-    pub age_minutes: Option<i64>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
+pub use crate::application::generation_image_access::{
+    generation_image_file, public_generated_image_file, with_generation_image_download_url,
+};
+pub use crate::application::generation_job_actions::{
+    RecoverGenerationJobsRequest, cancel_job, recover_jobs, retry_job,
+};
 
 pub async fn create_page_image_task(
     ctx: &AppContext,
@@ -428,219 +426,6 @@ pub async fn get_job(
     }
 }
 
-pub async fn retry_job(
-    ctx: &AppContext,
-    headers: &HeaderMap,
-    workspace_id: Uuid,
-    job_id: Uuid,
-) -> Result<GenerationJob, ApiError> {
-    #[cfg(feature = "db")]
-    {
-        common::require_editor_db(ctx, headers, workspace_id).await?;
-        let job =
-            crate::repositories::generation::retry_generation_job(&ctx.db, workspace_id, job_id)
-                .await
-                .map_err(common::db_error)?;
-        crate::repositories::audit::log(
-            &ctx.db,
-            Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
-            "generation_job.retried",
-            "generation_job",
-            Some(job.id),
-            json!({
-                "storybook_id": job.storybook_id,
-                "job_type": job.job_type,
-                "status": job.status,
-                "attempt_count": job.attempt_count,
-            }),
-        )
-        .await
-        .map_err(common::db_error)?;
-        return Ok(job);
-    }
-
-    #[cfg(not(feature = "db"))]
-    {
-        let state = shared_state(ctx)?;
-        common::require_editor(&state, headers, workspace_id)?;
-        Ok(mock_terminal_job(
-            workspace_id,
-            job_id,
-            "succeeded",
-            "生成任务已重试并完成，当前为 mock 结果",
-        ))
-    }
-}
-
-pub async fn cancel_job(
-    ctx: &AppContext,
-    headers: &HeaderMap,
-    workspace_id: Uuid,
-    job_id: Uuid,
-) -> Result<GenerationJob, ApiError> {
-    #[cfg(feature = "db")]
-    {
-        common::require_editor_db(ctx, headers, workspace_id).await?;
-        let job =
-            crate::repositories::generation::cancel_generation_job(&ctx.db, workspace_id, job_id)
-                .await
-                .map_err(generation_error)?;
-        crate::repositories::audit::log(
-            &ctx.db,
-            Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
-            "generation_job.canceled",
-            "generation_job",
-            Some(job.id),
-            json!({
-                "storybook_id": job.storybook_id,
-                "job_type": job.job_type,
-                "status": job.status,
-            }),
-        )
-        .await
-        .map_err(common::db_error)?;
-        return Ok(job);
-    }
-
-    #[cfg(not(feature = "db"))]
-    {
-        let state = shared_state(ctx)?;
-        common::require_editor(&state, headers, workspace_id)?;
-        Ok(mock_terminal_job(
-            workspace_id,
-            job_id,
-            "canceled",
-            "生成任务已取消",
-        ))
-    }
-}
-
-pub async fn recover_jobs(
-    ctx: &AppContext,
-    headers: &HeaderMap,
-    workspace_id: Uuid,
-    payload: RecoverGenerationJobsRequest,
-) -> Result<serde_json::Value, ApiError> {
-    #[cfg(feature = "db")]
-    {
-        common::require_admin_db(ctx, headers, workspace_id).await?;
-        let processed = crate::repositories::generation::process_generation_backlog_for_workspace(
-            &ctx.db,
-            workspace_id,
-            payload.age_minutes.unwrap_or(15),
-            payload.limit.unwrap_or(10),
-        )
-        .await
-        .map_err(common::db_error)?;
-        crate::repositories::audit::log(
-            &ctx.db,
-            Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
-            "generation_job.recovered",
-            "generation_job",
-            None,
-            json!({
-                "processed": processed,
-                "age_minutes": payload.age_minutes.unwrap_or(15),
-                "limit": payload.limit.unwrap_or(10),
-            }),
-        )
-        .await
-        .map_err(common::db_error)?;
-        return Ok(serde_json::json!({
-            "status": "ok",
-            "processed": processed,
-            "message": "生成队列已恢复"
-        }));
-    }
-
-    #[cfg(not(feature = "db"))]
-    {
-        let state = shared_state(ctx)?;
-        common::require_admin(&state, headers, workspace_id)?;
-        Ok(serde_json::json!({
-            "status": "ok",
-            "processed": 0,
-            "message": "当前为 mock 恢复结果"
-        }))
-    }
-}
-
-pub async fn generation_image_file(
-    ctx: &AppContext,
-    headers: &HeaderMap,
-    workspace_id: Uuid,
-    job_id: Uuid,
-) -> Result<(String, Vec<u8>), ApiError> {
-    #[cfg(feature = "db")]
-    {
-        common::require_workspace_db(ctx, headers, workspace_id).await?;
-        let job = crate::repositories::generation::find_job(&ctx.db, workspace_id, job_id)
-            .await
-            .map_err(common::db_error)?;
-        return read_generation_image_file(&job);
-    }
-
-    #[cfg(not(feature = "db"))]
-    {
-        let state = shared_state(ctx)?;
-        common::require_workspace(&state, headers, workspace_id)?;
-        let job = GenerationJob {
-            id: job_id,
-            workspace_id,
-            storybook_id: None,
-            job_type: "storybook_page_image".to_string(),
-            status: "succeeded".to_string(),
-            input_json: serde_json::json!({}),
-            output_json: Some(serde_json::json!({
-                "image": {
-                    "image_url": format!("/generated-images/mock-{job_id}.png")
-                }
-            })),
-            attempt_count: 1,
-            last_error: None,
-            next_run_at: None,
-            locked_by: None,
-            locked_at: None,
-            created_at: Utc::now(),
-            finished_at: Some(Utc::now()),
-        };
-        read_generation_image_file(&job)
-    }
-}
-
-pub fn public_generated_image_file(file_name: &str) -> Result<(String, Vec<u8>), ApiError> {
-    let safe_name = file_name.trim();
-    if !valid_generated_image_file_name(safe_name) {
-        return Err(ApiError::not_found("generated_image"));
-    }
-    Err(ApiError::not_found("generated_image"))
-}
-
-fn read_generation_image_file(job: &GenerationJob) -> Result<(String, Vec<u8>), ApiError> {
-    if job.status != "succeeded" || job.job_type != "storybook_page_image" {
-        return Err(ApiError::not_found("generated_image"));
-    }
-    let Some(file_name) = generation_image_file_name(job) else {
-        return Err(ApiError::not_found("generated_image"));
-    };
-    let bytes = crate::services::storage::read_generated_image(&file_name)
-        .map_err(|_| ApiError::not_found("generated_image"))?;
-    Ok((file_name, bytes))
-}
-
-#[cfg(feature = "db")]
-fn generation_error(err: sea_orm::DbErr) -> ApiError {
-    match err {
-        sea_orm::DbErr::Custom(message) if message == "generation_job_not_cancelable" => {
-            ApiError::state_conflict("只有排队中或失败待重试的生成任务可以取消")
-        }
-        other => common::db_error(other),
-    }
-}
-
 #[cfg(feature = "db")]
 fn redact_generation_job_input(mut job: GenerationJob) -> GenerationJob {
     job.input_json = json!({
@@ -648,48 +433,6 @@ fn redact_generation_job_input(mut job: GenerationJob) -> GenerationJob {
         "reason": "limited_workspace_role"
     });
     job
-}
-
-fn with_generation_image_download_url(mut job: GenerationJob, workspace_id: Uuid) -> GenerationJob {
-    if job.status == "succeeded"
-        && job.job_type == "storybook_page_image"
-        && let Some(output) = job.output_json.as_mut()
-        && let Some(image) = output
-            .get_mut("image")
-            .and_then(|value| value.as_object_mut())
-        && image.get("image_url").is_some()
-    {
-        image.insert(
-            "image_url".to_string(),
-            serde_json::json!(generation_image_download_url(workspace_id, job.id)),
-        );
-    }
-    job
-}
-
-fn generation_image_download_url(workspace_id: Uuid, job_id: Uuid) -> String {
-    format!("/api/workspaces/{workspace_id}/generation-jobs/{job_id}/image")
-}
-
-fn generation_image_file_name(job: &GenerationJob) -> Option<String> {
-    let url = job
-        .output_json
-        .as_ref()?
-        .get("image")?
-        .get("image_url")?
-        .as_str()?;
-    let file_name = url.rsplit('/').next()?;
-    valid_generated_image_file_name(file_name).then(|| file_name.to_string())
-}
-
-fn valid_generated_image_file_name(file_name: &str) -> bool {
-    let Some(name) = file_name.strip_suffix(".png") else {
-        return false;
-    };
-    let Some((provider, id)) = name.split_once('-') else {
-        return false;
-    };
-    matches!(provider, "mock" | "seedream") && Uuid::parse_str(id).is_ok()
 }
 
 #[cfg(not(feature = "db"))]
@@ -713,52 +456,4 @@ fn find_storybook(
         .find(|item| item.workspace_id == workspace_id && item.id == storybook_id)
         .cloned()
         .ok_or_else(|| ApiError::not_found("storybook"))
-}
-
-#[cfg(not(feature = "db"))]
-fn mock_terminal_job(
-    workspace_id: Uuid,
-    job_id: Uuid,
-    status: &str,
-    message: &str,
-) -> GenerationJob {
-    GenerationJob {
-        id: job_id,
-        workspace_id,
-        storybook_id: None,
-        job_type: "storybook_plan".to_string(),
-        status: status.to_string(),
-        input_json: serde_json::json!({}),
-        output_json: Some(serde_json::json!({
-            "schema_version": "generation.mock.v1",
-            "provider": "mock",
-            "mode": "storybook_plan",
-            "message": message
-        })),
-        attempt_count: if status == "canceled" { 0 } else { 1 },
-        last_error: None,
-        next_run_at: None,
-        locked_by: None,
-        locked_at: None,
-        created_at: Utc::now(),
-        finished_at: Some(Utc::now()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generated_image_file_name_requires_provider_and_uuid_png() {
-        let id = Uuid::new_v4();
-        assert!(valid_generated_image_file_name(&format!("mock-{id}.png")));
-        assert!(valid_generated_image_file_name(&format!(
-            "seedream-{id}.png"
-        )));
-        assert!(!valid_generated_image_file_name(&format!("other-{id}.png")));
-        assert!(!valid_generated_image_file_name("mock-page-1.png"));
-        assert!(!valid_generated_image_file_name("../mock-secret.png"));
-        assert!(!valid_generated_image_file_name(&format!("mock-{id}.jpg")));
-    }
 }

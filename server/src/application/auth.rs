@@ -6,6 +6,7 @@ use crate::{
     domains::common,
     error::ApiError,
     models::{LoginRequest, LoginResponse, RegisterRequest, WorkspaceInvitationDetail},
+    services::storage::UserStorageQuotaSummary,
 };
 
 #[cfg(not(feature = "db"))]
@@ -105,6 +106,31 @@ pub async fn current_session(
             user: state.current_user.clone(),
             workspaces: state.workspaces.clone(),
         })
+    }
+}
+
+pub async fn storage_quota(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+) -> Result<UserStorageQuotaSummary, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        let user_id = common::actor_user_id(headers)?;
+        return crate::repositories::storage_quota::user_storage_quota(&ctx.db, user_id)
+            .await
+            .map_err(common::db_error);
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let state = shared_state(ctx)?;
+        common::require_login(&state, headers)?;
+        let state = state.read().expect("state lock poisoned");
+        Ok(crate::services::storage::user_storage_quota_summary(
+            state.current_user.id,
+            0,
+            1,
+        ))
     }
 }
 

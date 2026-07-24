@@ -11,10 +11,18 @@ const EXPORTS_DIR_ENV: &str = "KINDLEAF_EXPORTS_DIR";
 const GENERATED_IMAGES_DIR_ENV: &str = "KINDLEAF_GENERATED_IMAGES_DIR";
 const EXPORT_MAX_BYTES_ENV: &str = "KINDLEAF_EXPORT_MAX_BYTES";
 const GENERATED_IMAGE_MAX_BYTES_ENV: &str = "KINDLEAF_GENERATED_IMAGE_MAX_BYTES";
+const WORKSPACE_STORAGE_QUOTA_BYTES_ENV: &str = "KINDLEAF_WORKSPACE_STORAGE_QUOTA_BYTES";
+const USER_STORAGE_QUOTA_BYTES_ENV: &str = "KINDLEAF_USER_STORAGE_QUOTA_BYTES";
+const PERSONAL_STORAGE_QUOTA_BYTES_ENV: &str = "KINDLEAF_PERSONAL_STORAGE_QUOTA_BYTES";
+const SCHOOL_STORAGE_QUOTA_BYTES_ENV: &str = "KINDLEAF_SCHOOL_STORAGE_QUOTA_BYTES";
+const STORAGE_QUOTA_WARNING_PERCENT_ENV: &str = "KINDLEAF_STORAGE_QUOTA_WARNING_PERCENT";
 const DEFAULT_EXPORT_MAX_BYTES: usize = 50 * 1024 * 1024;
 const DEFAULT_GENERATED_IMAGE_MAX_BYTES: usize = 15 * 1024 * 1024;
+const DEFAULT_PERSONAL_STORAGE_QUOTA_BYTES: u64 = 200 * 1024 * 1024;
+const DEFAULT_SCHOOL_STORAGE_QUOTA_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+const DEFAULT_STORAGE_QUOTA_WARNING_PERCENT: f64 = 80.0;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StorageSummary {
     pub backend: String,
     pub exports_dir: String,
@@ -25,6 +33,36 @@ pub struct StorageSummary {
     pub size_limit_enabled: bool,
     pub download_strategy: String,
     pub public_direct_access: bool,
+    pub user_storage_quota_bytes: u64,
+    pub personal_storage_quota_bytes: u64,
+    pub school_storage_quota_bytes: u64,
+    pub storage_quota_warning_percent: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WorkspaceStorageQuotaSummary {
+    pub workspace_id: Uuid,
+    pub workspace_type: String,
+    pub quota_bytes: u64,
+    pub used_bytes: u64,
+    pub remaining_bytes: u64,
+    pub used_percent: f64,
+    pub warning_percent: f64,
+    pub warning: bool,
+    pub exceeded: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UserStorageQuotaSummary {
+    pub user_id: Uuid,
+    pub quota_bytes: u64,
+    pub used_bytes: u64,
+    pub remaining_bytes: u64,
+    pub used_percent: f64,
+    pub warning_percent: f64,
+    pub warning: bool,
+    pub exceeded: bool,
+    pub personal_workspace_count: u64,
 }
 
 pub fn storage_summary() -> StorageSummary {
@@ -40,6 +78,10 @@ pub fn storage_summary() -> StorageSummary {
         size_limit_enabled: export_max_bytes > 0 || generated_image_max_bytes > 0,
         download_strategy: "authenticated_api".to_string(),
         public_direct_access: false,
+        user_storage_quota_bytes: user_storage_quota_bytes(),
+        personal_storage_quota_bytes: storage_quota_bytes_for_workspace_type("personal"),
+        school_storage_quota_bytes: storage_quota_bytes_for_workspace_type("school"),
+        storage_quota_warning_percent: storage_quota_warning_percent(),
     }
 }
 
@@ -68,6 +110,116 @@ pub fn save_generated_image(file_name: &str, bytes: &[u8]) -> Result<String, Str
     validate_size(bytes, generated_image_max_bytes(), "图片")?;
     save_local_file(generated_images_dir(), file_name, bytes, "图片")
         .map(|_| format!("/generated-images/{file_name}"))
+}
+
+pub fn file_size_for_url(file_url: &str) -> Result<u64, String> {
+    let file_name = file_url
+        .rsplit('/')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "文件 URL 缺少文件名".to_string())?;
+    let path = if file_url.starts_with("/exports/") {
+        validate_export_file_name(file_name)?;
+        local_export_path(file_name)
+    } else if file_url.starts_with("/generated-images/") {
+        validate_generated_image_file_name(file_name)?;
+        local_generated_image_path_unchecked(file_name)
+    } else {
+        return Err("不支持的本地存储 URL".to_string());
+    };
+    fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .map_err(|err| format!("读取文件大小失败：{err}"))
+}
+
+pub fn delete_file_by_url(file_url: &str) -> Result<(), String> {
+    let file_name = file_url
+        .rsplit('/')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "文件 URL 缺少文件名".to_string())?;
+    let path = if file_url.starts_with("/exports/") {
+        validate_export_file_name(file_name)?;
+        local_export_path(file_name)
+    } else if file_url.starts_with("/generated-images/") {
+        validate_generated_image_file_name(file_name)?;
+        local_generated_image_path_unchecked(file_name)
+    } else {
+        return Err("不支持的本地存储 URL".to_string());
+    };
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("删除文件失败：{err}")),
+    }
+}
+
+pub fn storage_quota_bytes_for_workspace_type(workspace_type: &str) -> u64 {
+    if let Some(value) = configured_quota_bytes(env::var(WORKSPACE_STORAGE_QUOTA_BYTES_ENV).ok()) {
+        return value;
+    }
+    match workspace_type.trim() {
+        "school" => configured_quota_bytes(env::var(SCHOOL_STORAGE_QUOTA_BYTES_ENV).ok())
+            .unwrap_or(DEFAULT_SCHOOL_STORAGE_QUOTA_BYTES),
+        _ => configured_quota_bytes(env::var(PERSONAL_STORAGE_QUOTA_BYTES_ENV).ok())
+            .unwrap_or(DEFAULT_PERSONAL_STORAGE_QUOTA_BYTES),
+    }
+}
+
+pub fn user_storage_quota_bytes() -> u64 {
+    configured_quota_bytes(env::var(USER_STORAGE_QUOTA_BYTES_ENV).ok())
+        .unwrap_or_else(|| storage_quota_bytes_for_workspace_type("personal"))
+}
+
+pub fn storage_quota_warning_percent() -> f64 {
+    env::var(STORAGE_QUOTA_WARNING_PERCENT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| *value > 0.0 && *value <= 100.0)
+        .unwrap_or(DEFAULT_STORAGE_QUOTA_WARNING_PERCENT)
+}
+
+pub fn workspace_storage_quota_summary(
+    workspace_id: Uuid,
+    workspace_type: &str,
+    used_bytes: u64,
+) -> WorkspaceStorageQuotaSummary {
+    let quota_bytes = storage_quota_bytes_for_workspace_type(workspace_type);
+    workspace_storage_quota_summary_with_limits(
+        workspace_id,
+        workspace_type,
+        used_bytes,
+        quota_bytes,
+        storage_quota_warning_percent(),
+    )
+}
+
+pub fn user_storage_quota_summary(
+    user_id: Uuid,
+    used_bytes: u64,
+    personal_workspace_count: u64,
+) -> UserStorageQuotaSummary {
+    let quota_bytes = user_storage_quota_bytes();
+    let warning_percent = storage_quota_warning_percent();
+    let remaining_bytes = quota_bytes.saturating_sub(used_bytes);
+    let used_percent = if quota_bytes == 0 {
+        0.0
+    } else {
+        (used_bytes as f64 / quota_bytes as f64) * 100.0
+    };
+    UserStorageQuotaSummary {
+        user_id,
+        quota_bytes,
+        used_bytes,
+        remaining_bytes,
+        used_percent,
+        warning_percent,
+        warning: used_percent >= warning_percent,
+        exceeded: used_bytes >= quota_bytes,
+        personal_workspace_count,
+    }
 }
 
 pub fn read_generated_image(file_name: &str) -> Result<Vec<u8>, String> {
@@ -131,6 +283,40 @@ fn configured_max_bytes(value: Option<&str>, default_value: usize) -> usize {
     value
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(default_value)
+}
+
+fn configured_quota_bytes(value: Option<String>) -> Option<u64> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn workspace_storage_quota_summary_with_limits(
+    workspace_id: Uuid,
+    workspace_type: &str,
+    used_bytes: u64,
+    quota_bytes: u64,
+    warning_percent: f64,
+) -> WorkspaceStorageQuotaSummary {
+    let remaining_bytes = quota_bytes.saturating_sub(used_bytes);
+    let used_percent = if quota_bytes == 0 {
+        0.0
+    } else {
+        (used_bytes as f64 / quota_bytes as f64) * 100.0
+    };
+    WorkspaceStorageQuotaSummary {
+        workspace_id,
+        workspace_type: workspace_type.to_string(),
+        quota_bytes,
+        used_bytes,
+        remaining_bytes,
+        used_percent,
+        warning_percent,
+        warning: used_percent >= warning_percent,
+        exceeded: used_bytes >= quota_bytes,
+    }
 }
 
 fn save_local_file(dir: PathBuf, file_name: &str, bytes: &[u8], label: &str) -> Result<(), String> {
@@ -296,6 +482,46 @@ mod tests {
             summary.size_limit_enabled,
             summary.export_max_bytes > 0 || summary.generated_image_max_bytes > 0
         );
+        assert!(summary.user_storage_quota_bytes > 0);
+        assert!(summary.personal_storage_quota_bytes > 0);
+        assert!(summary.school_storage_quota_bytes > summary.personal_storage_quota_bytes);
+        assert!(summary.storage_quota_warning_percent > 0.0);
+    }
+
+    #[test]
+    fn workspace_storage_quota_summary_reports_usage_state() {
+        let workspace_id = Uuid::new_v4();
+        let summary =
+            workspace_storage_quota_summary_with_limits(workspace_id, "personal", 85, 100, 80.0);
+
+        assert_eq!(summary.workspace_id, workspace_id);
+        assert_eq!(summary.quota_bytes, 100);
+        assert_eq!(summary.used_bytes, 85);
+        assert_eq!(summary.remaining_bytes, 15);
+        assert!(summary.warning);
+        assert!(!summary.exceeded);
+    }
+
+    #[test]
+    fn workspace_storage_quota_summary_marks_exceeded_at_limit() {
+        let summary =
+            workspace_storage_quota_summary_with_limits(Uuid::new_v4(), "school", 100, 100, 80.0);
+
+        assert_eq!(summary.remaining_bytes, 0);
+        assert!(summary.warning);
+        assert!(summary.exceeded);
+    }
+
+    #[test]
+    fn user_storage_quota_summary_reports_personal_usage_state() {
+        let user_id = Uuid::new_v4();
+        let summary = user_storage_quota_summary(user_id, 10, 1);
+
+        assert_eq!(summary.user_id, user_id);
+        assert_eq!(summary.used_bytes, 10);
+        assert_eq!(summary.personal_workspace_count, 1);
+        assert!(summary.quota_bytes > summary.used_bytes);
+        assert!(!summary.exceeded);
     }
 
     #[test]

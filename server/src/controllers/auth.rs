@@ -11,6 +11,7 @@ use crate::{
     application,
     error::ApiError,
     models::{Envelope, LoginRequest, LoginResponse, RegisterRequest, WorkspaceInvitationDetail},
+    services::storage::UserStorageQuotaSummary,
 };
 
 pub fn routes() -> Routes {
@@ -18,6 +19,7 @@ pub fn routes() -> Routes {
         .add("/api/auth/login", post(login))
         .add("/api/auth/register", post(register))
         .add("/api/auth/me", get(me))
+        .add("/api/auth/storage-quota", get(get_storage_quota))
         .add("/api/invitations/{token}", get(get_invitation))
         .add("/api/invitations/{token}/accept", post(accept_invitation))
 }
@@ -44,6 +46,14 @@ async fn me(
 ) -> Result<Json<Envelope<LoginResponse>>, ApiError> {
     let response = application::auth::current_session(&ctx, &headers).await?;
     Ok(Json(Envelope::new(response)))
+}
+
+async fn get_storage_quota(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+) -> Result<Json<Envelope<UserStorageQuotaSummary>>, ApiError> {
+    let quota = application::auth::storage_quota(&ctx, &headers).await?;
+    Ok(Json(Envelope::new(quota)))
 }
 
 async fn get_invitation(
@@ -78,6 +88,7 @@ mod tests {
         assert!(uris.contains(&"/api/auth/login"));
         assert!(uris.contains(&"/api/auth/register"));
         assert!(uris.contains(&"/api/auth/me"));
+        assert!(uris.contains(&"/api/auth/storage-quota"));
         assert!(uris.contains(&"/api/invitations/{token}"));
         assert!(uris.contains(&"/api/invitations/{token}/accept"));
     }

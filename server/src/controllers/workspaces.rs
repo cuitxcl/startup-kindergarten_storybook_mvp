@@ -11,7 +11,9 @@ use crate::{
     application,
     error::ApiError,
     models::{DashboardResponse, Envelope, Workspace},
-    services::generation_provider::GenerationProviderSummary,
+    services::{
+        generation_provider::GenerationProviderSummary, storage::WorkspaceStorageQuotaSummary,
+    },
 };
 
 pub fn routes() -> Routes {
@@ -21,6 +23,10 @@ pub fn routes() -> Routes {
         .add(
             "/api/workspaces/{workspace_id}/generation-provider",
             get(get_workspace_generation_provider),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storage-quota",
+            get(get_workspace_storage_quota),
         )
 }
 
@@ -51,6 +57,15 @@ async fn get_workspace_generation_provider(
     Ok(Json(Envelope::new(provider)))
 }
 
+async fn get_workspace_storage_quota(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<Uuid>,
+) -> Result<Json<Envelope<WorkspaceStorageQuotaSummary>>, ApiError> {
+    let quota = application::workspaces::storage_quota(&ctx, &headers, workspace_id).await?;
+    Ok(Json(Envelope::new(quota)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,5 +82,6 @@ mod tests {
         assert!(uris.contains(&"/api/workspaces"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/dashboard"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/generation-provider"));
+        assert!(uris.contains(&"/api/workspaces/{workspace_id}/storage-quota"));
     }
 }

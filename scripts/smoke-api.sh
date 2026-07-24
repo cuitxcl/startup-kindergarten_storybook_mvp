@@ -388,7 +388,24 @@ if(image.configured !== false || image.ready !== false || !image.required_config
 if(!image.model || !image.endpoint?.includes('/api/v3/images/generations')) process.exit(1);
 console.log('registered_generation_provider=' + p.data.provider + '/' + image.provider);
 "
+api GET "/api/workspaces/$registered_workspace_id/storage-quota" | json_get "
+if(p.data.workspace_id !== '$registered_workspace_id') process.exit(1);
+if(p.data.workspace_type !== 'personal') process.exit(1);
+if(p.data.quota_bytes !== 209715200) process.exit(1);
+if(p.data.used_bytes !== 0 || p.data.remaining_bytes !== p.data.quota_bytes) process.exit(1);
+if(p.data.warning !== false || p.data.exceeded !== false) process.exit(1);
+console.log('registered_storage_quota=' + p.data.used_bytes + '/' + p.data.quota_bytes);
+"
+api GET "/api/auth/storage-quota" | json_get "
+if(p.data.user_id !== '$registered_user_id') process.exit(1);
+if(p.data.quota_bytes !== 209715200) process.exit(1);
+if(p.data.used_bytes !== 0 || p.data.remaining_bytes !== p.data.quota_bytes) process.exit(1);
+if(p.data.personal_workspace_count < 1) process.exit(1);
+if(p.data.warning !== false || p.data.exceeded !== false) process.exit(1);
+console.log('registered_user_storage_quota=' + p.data.used_bytes + '/' + p.data.quota_bytes);
+"
 expect_error 403 forbidden - GET "/api/workspaces/$SCHOOL_WS/dashboard"
+expect_error 403 forbidden - GET "/api/workspaces/$SCHOOL_WS/storage-quota"
 expect_error 403 forbidden - POST "/api/workspaces/$SCHOOL_WS/children" auth '{"nickname":"Smoke跨空间儿童","age_group":"4-5 岁","interests":["积木"],"traits":["好奇"],"focus":"不应创建"}'
 expect_error 403 forbidden - POST "/api/workspaces/$SCHOOL_WS/storybooks" auth '{"title":"Smoke跨空间绘本","age_group":"4-5 岁","use_scene":"不应创建","teaching_goal":"不应创建"}'
 AUTH_HEADER="$demo_auth_header"
@@ -411,6 +428,10 @@ if(p.data.filename_validation !== true) process.exit(1);
 if(p.data.size_limit_enabled !== true) process.exit(1);
 if(p.data.download_strategy !== 'authenticated_api') process.exit(1);
 if(p.data.public_direct_access !== false) process.exit(1);
+if(p.data.user_storage_quota_bytes !== 209715200) process.exit(1);
+if(p.data.personal_storage_quota_bytes !== 209715200) process.exit(1);
+if(p.data.school_storage_quota_bytes !== 5368709120) process.exit(1);
+if(p.data.storage_quota_warning_percent !== 80) process.exit(1);
 console.log('operator_storage=' + p.data.exports_dir + '/' + p.data.export_max_bytes);
 "
 api GET "/api/operator/readiness" | json_get "
@@ -430,6 +451,14 @@ registered_storybook_id=$(echo "$registered_storybook_json" | json_get "if(p.dat
 
 echo "3. dashboard"
 api GET "/api/workspaces/$SCHOOL_WS/dashboard" | json_get "console.log(p.data.workspace.name + ' / storybooks=' + p.data.storybooks.length);"
+api GET "/api/workspaces/$SCHOOL_WS/storage-quota" | json_get "
+if(p.data.workspace_id !== '$SCHOOL_WS') process.exit(1);
+if(p.data.workspace_type !== 'school') process.exit(1);
+if(p.data.quota_bytes !== 5368709120) process.exit(1);
+if(p.data.warning_percent !== 80) process.exit(1);
+if(typeof p.data.used_percent !== 'number') process.exit(1);
+console.log('school_storage_quota_before=' + p.data.used_bytes + '/' + p.data.quota_bytes);
+"
 
 echo "4. permission boundaries"
 expect_error 401 unauthorized - GET "/api/auth/me" noauth
@@ -641,6 +670,12 @@ api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports?limit=1
 export_detail_json=$(api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports/$export_job_id")
 export_file_url=$(echo "$export_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports/$export_job_id/download'; if(p.data.id!=='$export_job_id' || p.data.status!=='succeeded' || p.data.file_url !== expected) process.exit(1); console.log(p.data.file_url);")
 echo "$export_detail_json" | json_get "console.log('export=' + p.data.status);"
+api GET "/api/workspaces/$SCHOOL_WS/storage-quota" | json_get "
+if(p.data.workspace_id !== '$SCHOOL_WS') process.exit(1);
+if(p.data.used_bytes <= 0) process.exit(1);
+if(p.data.remaining_bytes >= p.data.quota_bytes) process.exit(1);
+console.log('school_storage_quota_after_export=' + p.data.used_bytes + '/' + p.data.quota_bytes);
+"
 expect_pdf_download "$export_file_url" export auth "Smoke" "/Subtype /Image"
 expect_error 401 unauthorized - GET "$export_file_url" noauth
 AUTH_HEADER="Authorization: Bearer $registered_token"

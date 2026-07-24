@@ -12,7 +12,17 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import { dashboard, listGenerationJobsPage, type DashboardData, type GenerationJob, shouldUseApi } from "../../api/client";
+import {
+  dashboard,
+  getUserStorageQuota,
+  getWorkspaceStorageQuota,
+  listGenerationJobsPage,
+  type DashboardData,
+  type GenerationJob,
+  type UserStorageQuota,
+  type WorkspaceStorageQuota,
+  shouldUseApi,
+} from "../../api/client";
 import { Badge, Card, EmptyState, PageHeader, statusTone } from "../../components/ui";
 import { children, storybooks, submissions } from "../../data/mock";
 import type { ChildProfile, MarketplaceSubmission, Storybook, Workspace } from "../../types/domain";
@@ -32,6 +42,36 @@ type DashboardMetric = {
   copy: string;
   tone?: "neutral" | "good" | "warn" | "danger" | "info";
 };
+
+function defaultStorageQuota(workspace: Workspace): WorkspaceStorageQuota {
+  const quotaBytes = workspace.type === "school" ? 5_368_709_120 : 209_715_200;
+  return {
+    workspaceId: workspace.id,
+    workspaceType: workspace.type,
+    quotaBytes,
+    usedBytes: 0,
+    remainingBytes: quotaBytes,
+    usedPercent: 0,
+    warningPercent: 80,
+    warning: false,
+    exceeded: false,
+  };
+}
+
+function defaultUserStorageQuota(): UserStorageQuota {
+  const quotaBytes = 209_715_200;
+  return {
+    userId: "mock-user",
+    quotaBytes,
+    usedBytes: 0,
+    remainingBytes: quotaBytes,
+    usedPercent: 0,
+    warningPercent: 80,
+    warning: false,
+    exceeded: false,
+    personalWorkspaceCount: 1,
+  };
+}
 
 const generationJobTypeLabel: Record<string, string> = {
   storybook_plan: "故事方案",
@@ -279,10 +319,37 @@ function dashboardCopy(workspace: Workspace) {
   return "从普通绘本开始，继续编辑、导出或基于孩子资料生成定制绘本。";
 }
 
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let amount = value;
+  let unitIndex = 0;
+  while (amount >= 1024 && unitIndex < units.length - 1) {
+    amount /= 1024;
+    unitIndex += 1;
+  }
+  const digits = amount >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${amount.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function quotaTone(quota: WorkspaceStorageQuota): "neutral" | "good" | "warn" | "danger" | "info" {
+  if (quota.exceeded) return "danger";
+  if (quota.warning) return "warn";
+  return "good";
+}
+
+function quotaCopy(quota: WorkspaceStorageQuota) {
+  if (quota.exceeded) return "当前空间已超过存储限额，新的图片生成和 PDF 导出会被阻止。";
+  if (quota.warning) return "当前空间接近存储上限，建议清理不再使用的导出和插图。";
+  return "当前空间容量充足，可以继续生成插图和导出 PDF。";
+}
+
 export function DashboardPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const [remoteData, setRemoteData] = useState<DashboardData | null>(null);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
+  const [storageQuota, setStorageQuota] = useState<WorkspaceStorageQuota>(() => defaultStorageQuota(workspace));
+  const [userStorageQuota, setUserStorageQuota] = useState<UserStorageQuota>(() => defaultUserStorageQuota());
   const [loading, setLoading] = useState(shouldUseApi);
   const [error, setError] = useState("");
   const books = shouldUseApi ? remoteData?.storybooks ?? [] : storybooks.filter((item) => item.workspaceId === workspace.id);
@@ -301,18 +368,28 @@ export function DashboardPage() {
     setLoading(true);
     setRemoteData(null);
     setGenerationJobs([]);
+    setStorageQuota(defaultStorageQuota(workspace));
+    setUserStorageQuota(defaultUserStorageQuota());
     setError("");
-    Promise.all([dashboard(workspace.id), listGenerationJobsPage(workspace.id, { limit: 12, offset: 0 })])
-      .then(([data, jobsPage]) => {
+    Promise.all([
+      dashboard(workspace.id),
+      listGenerationJobsPage(workspace.id, { limit: 12, offset: 0 }),
+      getWorkspaceStorageQuota(workspace.id),
+      getUserStorageQuota(),
+    ])
+      .then(([data, jobsPage, quota, userQuota]) => {
         if (!mounted) return;
         setRemoteData(data);
         setGenerationJobs(jobsPage.data);
+        setStorageQuota(quota);
+        setUserStorageQuota(userQuota);
         setError("");
       })
       .catch((err) => {
         if (!mounted) return;
         setRemoteData(null);
         setGenerationJobs([]);
+        setStorageQuota(defaultStorageQuota(workspace));
         setError(err instanceof Error ? err.message : "无法读取工作台数据");
       })
       .finally(() => {
@@ -321,7 +398,7 @@ export function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [workspace.id]);
+  }, [workspace.id, workspace.type]);
 
   if (loading) {
     return <div className="page-stack"><EmptyState title="正在读取工作台" copy="正在从后端加载当前空间的数据。" /></div>;
@@ -377,6 +454,25 @@ export function DashboardPage() {
           <ArrowRight size={16} />
         </Link>
       </section>
+
+      <Card className="storage-quota-card">
+        <div>
+          <p className="eyebrow">Storage</p>
+          <h2>当前空间容量</h2>
+          <p>{quotaCopy(storageQuota)}</p>
+        </div>
+        <div className="storage-quota-meter">
+          <div className="storage-quota-meta">
+            <strong>{formatBytes(storageQuota.usedBytes)} / {formatBytes(storageQuota.quotaBytes)}</strong>
+            <Badge tone={quotaTone(storageQuota)}>{Math.round(storageQuota.usedPercent)}%</Badge>
+          </div>
+          <div className="quota-track" aria-label="当前空间存储使用比例">
+            <span style={{ width: `${Math.min(100, Math.max(0, storageQuota.usedPercent))}%` }} />
+          </div>
+          <small>剩余 {formatBytes(storageQuota.remainingBytes)} · 预警线 {Math.round(storageQuota.warningPercent)}%</small>
+          <small>我的容量 {formatBytes(userStorageQuota.usedBytes)} / {formatBytes(userStorageQuota.quotaBytes)} · 个人空间 {userStorageQuota.personalWorkspaceCount} 个</small>
+        </div>
+      </Card>
 
       <section className="dashboard-main-grid">
         <Card className="task-panel">

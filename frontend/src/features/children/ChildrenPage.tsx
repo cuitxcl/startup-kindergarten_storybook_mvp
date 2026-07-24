@@ -511,7 +511,7 @@ export function ChildrenPage() {
             <div className="table-list">
               {rows.map((child) => (
                 <Link className="table-row" to={child.id} key={child.id}>
-                  <div><strong>{child.nickname}</strong><span>{child.classroom || "个人空间"} · {child.ageGroup}</span></div>
+                  <div><strong>{child.nickname}</strong><span>{child.classroom || "未分班"} · {child.ageGroup}</span></div>
                   <span>{child.interests.join("、")}</span>
                   <span>{child.focus}</span>
                   <Badge tone={child.completeness > 80 ? "good" : "warn"}>完整度 {child.completeness}%</Badge>

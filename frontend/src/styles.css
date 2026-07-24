@@ -268,6 +268,15 @@ textarea { resize: vertical; line-height: 1.55; }
   font-weight: 900;
 }
 .dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); gap: 14px; align-items: start; }
+.storage-quota-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 420px); gap: 18px; align-items: center; }
+.storage-quota-card h2 { margin: 4px 0 6px; }
+.storage-quota-card p { margin: 0; color: var(--muted); line-height: 1.6; }
+.storage-quota-meter { display: grid; gap: 8px; }
+.storage-quota-meta { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.storage-quota-meta strong { font-size: 18px; }
+.quota-track { height: 10px; border-radius: 999px; overflow: hidden; background: var(--brand-soft); border: 1px solid var(--line); }
+.quota-track span { display: block; height: 100%; border-radius: inherit; background: var(--action); transition: width 180ms ease; }
+.storage-quota-meter small { color: var(--muted); font-weight: 800; }
 .task-panel, .quick-panel { display: grid; gap: 14px; }
 .task-list { display: grid; gap: 10px; }
 .task-row {
@@ -784,7 +793,7 @@ button.compact-row.active {
   .sidebar { position: static; height: auto; grid-template-rows: auto; }
   .nav-list { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .sidebar-note { display: none; }
-  .detail-layout, .two-column, .dashboard-main-grid, .wizard-shell { grid-template-columns: 1fr; }
+  .detail-layout, .two-column, .dashboard-main-grid, .storage-quota-card, .wizard-shell { grid-template-columns: 1fr; }
   .preview-panel { order: -1; }
   .wizard-side-nav { position: static; }
   .storybook-grid, .metric-grid, .action-grid, .admin-overview-grid, .creation-launch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

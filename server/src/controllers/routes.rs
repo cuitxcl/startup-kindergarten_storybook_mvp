@@ -37,6 +37,7 @@ mod tests {
 
         assert!(uris.contains(&"/api/health"));
         assert!(uris.contains(&"/api/auth/me"));
+        assert!(uris.contains(&"/api/auth/storage-quota"));
         assert!(uris.contains(&"/api/workspaces"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/children"));
         assert!(uris.contains(&"/api/marketplace/templates"));

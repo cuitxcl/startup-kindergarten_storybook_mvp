@@ -284,6 +284,34 @@ type ApiStorageStatus = {
   size_limit_enabled: boolean;
   download_strategy: string;
   public_direct_access: boolean;
+  user_storage_quota_bytes: number;
+  personal_storage_quota_bytes: number;
+  school_storage_quota_bytes: number;
+  storage_quota_warning_percent: number;
+};
+
+type ApiUserStorageQuota = {
+  user_id: string;
+  quota_bytes: number;
+  used_bytes: number;
+  remaining_bytes: number;
+  used_percent: number;
+  warning_percent: number;
+  warning: boolean;
+  exceeded: boolean;
+  personal_workspace_count: number;
+};
+
+type ApiWorkspaceStorageQuota = {
+  workspace_id: string;
+  workspace_type: Workspace["type"];
+  quota_bytes: number;
+  used_bytes: number;
+  remaining_bytes: number;
+  used_percent: number;
+  warning_percent: number;
+  warning: boolean;
+  exceeded: boolean;
 };
 
 type ApiReadinessCheck = {
@@ -427,6 +455,34 @@ export type StorageStatus = {
   sizeLimitEnabled: boolean;
   downloadStrategy: string;
   publicDirectAccess: boolean;
+  userStorageQuotaBytes: number;
+  personalStorageQuotaBytes: number;
+  schoolStorageQuotaBytes: number;
+  storageQuotaWarningPercent: number;
+};
+
+export type UserStorageQuota = {
+  userId: string;
+  quotaBytes: number;
+  usedBytes: number;
+  remainingBytes: number;
+  usedPercent: number;
+  warningPercent: number;
+  warning: boolean;
+  exceeded: boolean;
+  personalWorkspaceCount: number;
+};
+
+export type WorkspaceStorageQuota = {
+  workspaceId: string;
+  workspaceType: Workspace["type"];
+  quotaBytes: number;
+  usedBytes: number;
+  remainingBytes: number;
+  usedPercent: number;
+  warningPercent: number;
+  warning: boolean;
+  exceeded: boolean;
 };
 
 export type ReadinessCheck = {
@@ -659,6 +715,36 @@ export async function dashboard(workspaceId: string): Promise<DashboardData> {
     storybooks: response.storybooks.map(mapStorybook),
     children: response.children.map(mapChild),
     submissions: response.submissions.map(mapSubmission),
+  };
+}
+
+export async function getUserStorageQuota(): Promise<UserStorageQuota> {
+  const response = await request<ApiUserStorageQuota>("/api/auth/storage-quota");
+  return {
+    userId: response.user_id,
+    quotaBytes: response.quota_bytes,
+    usedBytes: response.used_bytes,
+    remainingBytes: response.remaining_bytes,
+    usedPercent: response.used_percent,
+    warningPercent: response.warning_percent,
+    warning: response.warning,
+    exceeded: response.exceeded,
+    personalWorkspaceCount: response.personal_workspace_count,
+  };
+}
+
+export async function getWorkspaceStorageQuota(workspaceId: string): Promise<WorkspaceStorageQuota> {
+  const response = await request<ApiWorkspaceStorageQuota>(`/api/workspaces/${workspaceId}/storage-quota`);
+  return {
+    workspaceId: response.workspace_id,
+    workspaceType: response.workspace_type,
+    quotaBytes: response.quota_bytes,
+    usedBytes: response.used_bytes,
+    remainingBytes: response.remaining_bytes,
+    usedPercent: response.used_percent,
+    warningPercent: response.warning_percent,
+    warning: response.warning,
+    exceeded: response.exceeded,
   };
 }
 
@@ -1869,6 +1955,10 @@ function mapStorageStatus(storage: ApiStorageStatus): StorageStatus {
     sizeLimitEnabled: storage.size_limit_enabled,
     downloadStrategy: storage.download_strategy,
     publicDirectAccess: storage.public_direct_access,
+    userStorageQuotaBytes: storage.user_storage_quota_bytes,
+    personalStorageQuotaBytes: storage.personal_storage_quota_bytes,
+    schoolStorageQuotaBytes: storage.school_storage_quota_bytes,
+    storageQuotaWarningPercent: storage.storage_quota_warning_percent,
   };
 }
 

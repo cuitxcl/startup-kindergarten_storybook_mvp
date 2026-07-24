@@ -60,6 +60,10 @@ export function OperatorMarketplacePage() {
         sizeLimitEnabled: true,
         downloadStrategy: "authenticated_api",
         publicDirectAccess: false,
+        userStorageQuotaBytes: 209_715_200,
+        personalStorageQuotaBytes: 209_715_200,
+        schoolStorageQuotaBytes: 5_368_709_120,
+        storageQuotaWarningPercent: 80,
       },
   );
   const [storageLoading, setStorageLoading] = useState(shouldUseApi);
@@ -345,6 +349,9 @@ export function OperatorMarketplacePage() {
             <div><span>下载策略</span><strong>{downloadStrategyLabel(storage.downloadStrategy)}</strong></div>
             <div><span>PDF 上限</span><strong>{formatBytes(storage.exportMaxBytes)}</strong></div>
             <div><span>插图上限</span><strong>{formatBytes(storage.generatedImageMaxBytes)}</strong></div>
+            <div><span>个人空间限额</span><strong>{formatBytes(storage.personalStorageQuotaBytes)}</strong></div>
+            <div><span>园所空间限额</span><strong>{formatBytes(storage.schoolStorageQuotaBytes)}</strong></div>
+            <div><span>容量预警线</span><strong>{formatBudgetPercent(storage.storageQuotaWarningPercent)}</strong></div>
             <div><span>文件名校验</span><strong>{storage.filenameValidation ? "已启用" : "未启用"}</strong></div>
             <div><span>大小限制</span><strong>{storage.sizeLimitEnabled ? "已启用" : "未启用"}</strong></div>
             <div><span>公共直链</span><strong>{storage.publicDirectAccess ? "允许" : "已关闭"}</strong></div>
