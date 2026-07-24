@@ -349,6 +349,7 @@ export function OperatorMarketplacePage() {
             <div><span>下载策略</span><strong>{downloadStrategyLabel(storage.downloadStrategy)}</strong></div>
             <div><span>PDF 上限</span><strong>{formatBytes(storage.exportMaxBytes)}</strong></div>
             <div><span>插图上限</span><strong>{formatBytes(storage.generatedImageMaxBytes)}</strong></div>
+            <div><span>用户个人限额</span><strong>{formatBytes(storage.userStorageQuotaBytes)}</strong></div>
             <div><span>个人空间限额</span><strong>{formatBytes(storage.personalStorageQuotaBytes)}</strong></div>
             <div><span>园所空间限额</span><strong>{formatBytes(storage.schoolStorageQuotaBytes)}</strong></div>
             <div><span>容量预警线</span><strong>{formatBudgetPercent(storage.storageQuotaWarningPercent)}</strong></div>
