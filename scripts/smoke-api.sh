@@ -502,9 +502,9 @@ console.log('teacher_generation_provider=' + p.data.provider + '/' + image.provi
   teacher_child_json=$(api POST "/api/workspaces/$TEACHER_WS/children" "{\"nickname\":\"Smoke老师授权班级儿童$(date +%s)\",\"age_group\":\"4-5 岁\",\"classroom\":\"中一班\",\"interests\":[\"积木\"],\"traits\":[\"好奇\"],\"focus\":\"验证班级授权\"}")
   teacher_child_id=$(echo "$teacher_child_json" | json_get "if(p.data.classroom!=='中一班') process.exit(1); console.log(p.data.id)")
   teacher_plan_job_json=$(api POST "/api/workspaces/$TEACHER_WS/generation-jobs" '{"job_type":"storybook_plan","input_json":{"theme":"老师任务输入脱敏验证","private_note":"不应在老师查询响应中原样返回"}}')
-  teacher_plan_job_id=$(echo "$teacher_plan_job_json" | json_get "if(p.data.job_type!=='storybook_plan') process.exit(1); console.log(p.data.id)")
-  api GET "/api/workspaces/$TEACHER_WS/generation-jobs/$teacher_plan_job_id" | json_get "if(p.data.input_json?.redacted!==true || p.data.input_json?.reason!=='limited_workspace_role') process.exit(1); console.log('teacher_generation_job_redacted=' + p.data.id);"
-  api GET "/api/workspaces/$TEACHER_WS/generation-jobs?limit=20&offset=0" | json_get "const row=p.data.find((item)=>item.id==='$teacher_plan_job_id'); if(!row || row.input_json?.redacted!==true) process.exit(1); console.log('teacher_generation_job_list_redacted=' + row.id);"
+  teacher_plan_job_id=$(echo "$teacher_plan_job_json" | json_get "if('created_by' in p.data) process.exit(1); if(p.data.job_type!=='storybook_plan') process.exit(1); console.log(p.data.id)")
+  api GET "/api/workspaces/$TEACHER_WS/generation-jobs/$teacher_plan_job_id" | json_get "if('created_by' in p.data) process.exit(1); if(p.data.input_json?.redacted!==true || p.data.input_json?.reason!=='limited_workspace_role') process.exit(1); console.log('teacher_generation_job_redacted=' + p.data.id);"
+  api GET "/api/workspaces/$TEACHER_WS/generation-jobs?limit=20&offset=0" | json_get "const row=p.data.find((item)=>item.id==='$teacher_plan_job_id'); if(!row || 'created_by' in row || row.input_json?.redacted!==true) process.exit(1); console.log('teacher_generation_job_list_redacted=' + row.id);"
   echo "permission boundaries ok"
 fi
 
@@ -572,7 +572,7 @@ api GET "/api/workspaces/$SCHOOL_WS/generation-jobs/$scoped_recover_job_id" | js
 AUTH_HEADER="Authorization: Bearer $registered_token"
 api GET "/api/workspaces/$registered_workspace_id/generation-jobs/$foreign_recover_job_id" | json_get "if(p.data.status!=='running' || p.data.locked_by !== 'stale-worker') process.exit(1); console.log('recover_foreign_untouched=' + p.data.status);" >/dev/null
 AUTH_HEADER="$demo_auth_header"
-api GET "/api/workspaces/$SCHOOL_WS/generation-jobs" | json_get "const expected=['$plan_job_id','$roles_job_id','$pages_job_id','$retry_job_id']; const ids=new Set(p.data.map((row)=>row.id)); if(!expected.every((id)=>ids.has(id))) process.exit(1); if(!p.data.every((row)=>row.workspace_id==='$SCHOOL_WS')) process.exit(1); console.log('generation_jobs=' + p.data.length);" >/dev/null
+api GET "/api/workspaces/$SCHOOL_WS/generation-jobs" | json_get "const expected=['$plan_job_id','$roles_job_id','$pages_job_id','$retry_job_id']; const ids=new Set(p.data.map((row)=>row.id)); if(!expected.every((id)=>ids.has(id))) process.exit(1); if(!p.data.every((row)=>row.workspace_id==='$SCHOOL_WS' && !('created_by' in row))) process.exit(1); console.log('generation_jobs=' + p.data.length);" >/dev/null
 api GET "/api/workspaces/$SCHOOL_WS/generation-jobs?limit=1&offset=0" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.offset!==0 || p.data.length!==1 || p.meta.total < 4 || p.meta.has_more!==true) process.exit(1); console.log('generation_job_page=' + p.data.length + '/' + p.meta.total);" >/dev/null
 api GET "/api/workspaces/$SCHOOL_WS/generation-jobs?limit=1&offset=999" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.total < 4 || p.data.length!==0 || p.meta.has_more!==false) process.exit(1); console.log('generation_job_page_empty=' + p.meta.offset + '/' + p.meta.total);" >/dev/null
 expect_error 401 unauthorized - GET "/api/workspaces/$SCHOOL_WS/generation-jobs" noauth
@@ -628,7 +628,7 @@ role_reference_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$creat
 role_reference_job_id=$(echo "$role_reference_job_json" | json_get "if(p.data.status!=='queued' || p.data.output_json!==null || p.data.job_type!=='storybook_role_reference_image') process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$role_reference_job_id" succeeded
 role_reference_job_detail_json=$(api GET "/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id")
-role_reference_file_url=$(echo "$role_reference_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id/image'; const url=p.data.output_json?.image?.image_url; if(p.data.status!=='succeeded' || p.data.output_json?.image?.role_id!=='$role_id' || p.data.output_json?.image?.target_type!=='role' || url !== expected) process.exit(1); console.log(url);")
+role_reference_file_url=$(echo "$role_reference_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id/image'; const url=p.data.output_json?.image?.image_url; if('created_by' in p.data) process.exit(1); if(p.data.status!=='succeeded' || p.data.output_json?.image?.role_id!=='$role_id' || p.data.output_json?.image?.target_type!=='role' || url !== expected) process.exit(1); console.log(url);")
 expect_png_download "$role_reference_file_url" role_reference_image auth
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const role=p.data.roles.find((item)=>item.id==='$role_id'); if(!role || role.reference_status!=='ready' || role.reference_image_url!=='$role_reference_file_url') process.exit(1); console.log('role_reference_image=' + role.reference_status);" >/dev/null
 duplicated_storybook_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/duplicate")
@@ -638,7 +638,7 @@ image_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_
 image_job_id=$(echo "$image_job_json" | json_get "if(p.data.status!=='queued' || p.data.output_json!==null) process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$image_job_id" succeeded
 image_job_detail_json=$(api GET "/api/workspaces/$SCHOOL_WS/generation-jobs/$image_job_id")
-image_file_url=$(echo "$image_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$image_job_id/image'; const url=p.data.output_json?.image?.image_url; if(p.data.status!=='succeeded' || url !== expected) process.exit(1); console.log(url);")
+image_file_url=$(echo "$image_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$image_job_id/image'; const url=p.data.output_json?.image?.image_url; if('created_by' in p.data) process.exit(1); if(p.data.status!=='succeeded' || url !== expected) process.exit(1); console.log(url);")
 expect_png_download "$image_file_url" generated_image auth
 expect_error 401 unauthorized - GET "$image_file_url" noauth
 AUTH_HEADER="Authorization: Bearer $registered_token"
@@ -704,7 +704,7 @@ wait_for_export_status "$created_plain_id" "$export_job_id" succeeded
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports" | json_get "if(!p.data.some((row)=>row.id==='$export_job_id' && row.status==='succeeded' && row.file_url)) process.exit(1); console.log('exports=' + p.data.length);"
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports?limit=1&offset=0" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.offset!==0 || p.data.length!==1 || p.meta.total < 1 || !p.data.some((row)=>row.id==='$export_job_id')) process.exit(1); console.log('export_page=' + p.data.length + '/' + p.meta.total);"
 export_detail_json=$(api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports/$export_job_id")
-export_file_url=$(echo "$export_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports/$export_job_id/download'; if(p.data.id!=='$export_job_id' || p.data.status!=='succeeded' || p.data.file_url !== expected) process.exit(1); console.log(p.data.file_url);")
+export_file_url=$(echo "$export_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports/$export_job_id/download'; if('created_by' in p.data) process.exit(1); if(p.data.id!=='$export_job_id' || p.data.status!=='succeeded' || p.data.file_url !== expected) process.exit(1); console.log(p.data.file_url);")
 echo "$export_detail_json" | json_get "console.log('export=' + p.data.status);"
 api GET "/api/workspaces/$SCHOOL_WS/storage-quota" | json_get "
 if(p.data.workspace_id !== '$SCHOOL_WS') process.exit(1);
@@ -746,7 +746,7 @@ public_export_json=$(curl -fsS -X POST "$BASE/api/share-links/$share_token/expor
 public_export_id=$(echo "$public_export_json" | json_get "if(!['queued','running','succeeded'].includes(p.data.status)) process.exit(1); console.log(p.data.id)")
 wait_for_public_export_status "$share_token" "$public_export_id" succeeded
 public_export_detail_json=$(curl -fsS "$BASE/api/share-links/$share_token/exports/$public_export_id")
-public_export_file_url=$(echo "$public_export_detail_json" | json_get "const expected='/api/share-links/$share_token/exports/$public_export_id/download'; if(p.data.id!=='$public_export_id' || p.data.status!=='succeeded' || p.data.file_url !== expected) process.exit(1); console.log(p.data.file_url);")
+public_export_file_url=$(echo "$public_export_detail_json" | json_get "const expected='/api/share-links/$share_token/exports/$public_export_id/download'; if('created_by' in p.data) process.exit(1); if(p.data.id!=='$public_export_id' || p.data.status!=='succeeded' || p.data.file_url !== expected) process.exit(1); console.log(p.data.file_url);")
 echo "$public_export_detail_json" | json_get "console.log('public_export=' + p.data.status);"
 expect_pdf_download "$public_export_file_url" public_export public "Smoke" "/Subtype /Image"
 expect_error 404 not_found - GET "/exports/$public_export_id.pdf" public
