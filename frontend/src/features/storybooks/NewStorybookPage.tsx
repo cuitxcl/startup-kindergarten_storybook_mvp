@@ -4,7 +4,11 @@ import { createGenerationJob, createStorybook, getGenerationJob, getWorkspaceGen
 import { Badge, Card, Notice, PageHeader, WizardSideNav } from "../../components/ui";
 import { storybooks } from "../../data/mock";
 import type { Workspace } from "../../types/domain";
-import { generationPrivacyAuditSummary } from "../../utils/labels";
+import {
+  generationJobStatusLabel,
+  generationJobTypeLabel,
+  generationPrivacyAuditSummary,
+} from "../../utils/labels";
 
 const steps = ["需求", "绘本方案", "角色道具", "分页编辑", "预览导出"];
 
@@ -256,12 +260,8 @@ export function NewStorybookPage() {
 }
 
 function generationStatusLabel(status: string) {
-  return {
-    queued: "已加入队列",
-    running: "正在生成",
-    succeeded: "已完成",
-    failed: "失败",
-  }[status] || `状态：${status}`;
+  if (status === "queued") return "已加入队列";
+  return generationJobStatusLabel[status] || `状态：${status}`;
 }
 
 function generationErrorMessage(job: GenerationJob) {
@@ -397,11 +397,6 @@ function ReviewBlock({
 }
 
 function generationModeLabel(mode: string) {
-  return {
-    storybook_plan: "故事方案",
-    storybook_roles: "角色与道具",
-    storybook_pages: "分页图文",
-    customization_plan: "定制方案",
-    "等待任务": "等待任务",
-  }[mode] || mode;
+  if (mode === "等待任务") return "等待任务";
+  return generationJobTypeLabel[mode] || mode;
 }

@@ -19,7 +19,12 @@ import {
 import { Badge, Card, EmptyState, Notice, PageHeader, WizardSideNav, statusTone } from "../../components/ui";
 import { children, storybooks } from "../../data/mock";
 import type { ChildProfile, Storybook, Workspace } from "../../types/domain";
-import { generationJobNextAction, generationPrivacyAuditSummary } from "../../utils/labels";
+import {
+  generationJobNextAction,
+  generationJobStatusLabel,
+  generationJobTypeLabel,
+  generationPrivacyAuditSummary,
+} from "../../utils/labels";
 
 const steps = ["选择孩子", "档案检查", "定制强度", "定制方案", "生成副本"];
 const CHILD_PAGE_SIZE = 12;
@@ -439,7 +444,7 @@ export function CustomizeStorybookPage() {
                   {generationJobs.slice(0, 4).map((job) => (
                     <div key={job.id} className="compact-row static">
                       <div>
-                        <strong>{job.jobType === "customization_plan" ? "定制方案" : job.jobType}</strong>
+                        <strong>{generationModeLabel(job.jobType)}</strong>
                         <span>{job.status === "failed" ? generationErrorMessage(job) : job.status === "running" ? "任务正在生成中。" : "已完成或已排队。"}</span>
                         <small>{generationJobNextAction(job)}</small>
                         <small>任务 {job.id.slice(0, 8)} · {job.finishedAt || job.createdAt}</small>
@@ -494,12 +499,7 @@ function generationErrorMessage(job: GenerationJob) {
 }
 
 function generationStatusLabel(status: string) {
-  return {
-    queued: "排队中",
-    running: "正在生成",
-    succeeded: "已完成",
-    failed: "生成失败",
-  }[status] || `状态：${status}`;
+  return generationJobStatusLabel[status] || `状态：${status}`;
 }
 
 function providerStatusTitle(provider: GenerationProviderStatus) {
@@ -622,11 +622,6 @@ function ReviewBlock({ title, items, output }: { title: string; items: string[];
 }
 
 function generationModeLabel(mode: string) {
-  return {
-    storybook_plan: "故事方案",
-    storybook_roles: "角色与道具",
-    storybook_pages: "分页图文",
-    customization_plan: "定制方案",
-    "等待任务": "等待任务",
-  }[mode] || mode;
+  if (mode === "等待任务") return "等待任务";
+  return generationJobTypeLabel[mode] || mode;
 }
