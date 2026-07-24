@@ -310,6 +310,11 @@ async function main() {
   const sharedBookTitle = await currentStorybookTitle();
   const plainBookId = await currentStorybookId();
   console.log(`plain=${plainBookId}`);
+  await waitForText("先确认角色参考图");
+  await waitForText("生成参考图");
+  await clickByText("生成参考图");
+  await waitForText("角色参考图已生成");
+  await waitForText("参考图已写回角色");
   await clickByText("复制副本");
   await waitForText(`${plainTitle} 副本`);
   await waitForText("普通绘本详情");
