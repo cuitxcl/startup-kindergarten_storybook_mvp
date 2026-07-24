@@ -18,10 +18,14 @@ created_child_id=""
 archived_child_id=""
 teacher_child_id=""
 confirmed_intake_child_id=""
+batch_child_id=""
+batch_child_two_id=""
 created_plain_id=""
 risky_storybook_id=""
 duplicated_storybook_id=""
 created_custom_id=""
+created_batch_custom_id=""
+created_batch_custom_two_id=""
 copied_book_id=""
 approved_copied_book_id=""
 share_link_id=""
@@ -509,6 +513,10 @@ created_child_id=$(echo "$created_child_json" | json_get "if(p.data.nickname!=='
 api GET "/api/workspaces/$SCHOOL_WS/children?limit=1&offset=0" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.offset!==0 || p.data.length!==1 || p.meta.total < 2 || p.meta.has_more!==true) process.exit(1); console.log('children_page=' + p.data.length + '/' + p.meta.total);"
 updated_child_name="Smoke更新儿童$intake_stamp"
 api PATCH "/api/workspaces/$SCHOOL_WS/children/$created_child_id" "{\"nickname\":\" $updated_child_name \",\"interests\":[\"积木\",\" 贴纸 \",\"贴纸\",\"\"],\"traits\":[\"好奇\",\"需要鼓励\",\"需要鼓励\"],\"focus\":\"等待、表达和收拾玩具\"}" | json_get "if(p.data.nickname!=='$updated_child_name' || p.data.interests.join('|') !== '积木|贴纸' || p.data.traits.join('|') !== '好奇|需要鼓励' || p.data.focus!=='等待、表达和收拾玩具' || p.data.completeness!==100) process.exit(1); console.log('child_updated=' + p.data.nickname + ':' + p.data.completeness);"
+batch_child_json=$(api POST "/api/workspaces/$SCHOOL_WS/children" "{\"nickname\":\"Smoke批量儿童A$intake_stamp\",\"age_group\":\"4-5 岁\",\"classroom\":\"小一班\",\"interests\":[\"小车\"],\"traits\":[\"主动\"],\"focus\":\"轮流和等待\"}")
+batch_child_id=$(echo "$batch_child_json" | json_get "if(p.data.status!=='active' || p.data.completeness < 80) process.exit(1); console.log(p.data.id)")
+batch_child_two_json=$(api POST "/api/workspaces/$SCHOOL_WS/children" "{\"nickname\":\"Smoke批量儿童B$intake_stamp\",\"age_group\":\"4-5 岁\",\"classroom\":\"小一班\",\"interests\":[\"画画\"],\"traits\":[\"安静\"],\"focus\":\"表达需求\"}")
+batch_child_two_id=$(echo "$batch_child_two_json" | json_get "if(p.data.status!=='active' || p.data.completeness < 80) process.exit(1); console.log(p.data.id)")
 archived_child_json=$(api POST "/api/workspaces/$SCHOOL_WS/children" "{\"nickname\":\"Smoke归档儿童$intake_stamp\",\"age_group\":\"4-5 岁\",\"classroom\":\"小一班\",\"interests\":[\"积木\"],\"traits\":[\"好奇\"],\"focus\":\"离园归档验证\"}")
 archived_child_id=$(echo "$archived_child_json" | json_get "if(p.data.status!=='active') process.exit(1); console.log(p.data.id)")
 api POST "/api/workspaces/$SCHOOL_WS/children/$archived_child_id/archive" | json_get "if(p.data.id!=='$archived_child_id' || p.data.status!=='archived') process.exit(1); console.log('child_archived=' + p.data.nickname);"
@@ -576,6 +584,7 @@ expect_error 403 forbidden - GET "/api/workspaces/$SCHOOL_WS/storybooks/$created
 expect_error 403 forbidden - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"visibility":"workspace"}'
 expect_error 403 forbidden - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/duplicate"
 expect_error 403 forbidden - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom" auth "{\"child_id\":\"$created_child_id\",\"intensity\":\"standard\"}"
+expect_error 403 forbidden - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" auth "{\"child_ids\":[\"$batch_child_id\"],\"intensity\":\"quick\"}"
 AUTH_HEADER="$demo_auth_header"
 echo "storybook_cross_workspace_forbidden=ok"
 expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports"
@@ -666,6 +675,13 @@ console.log('operator_role_reference_cost_filter=' + image.id);
 created_custom_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom" "{\"child_id\":\"$created_child_id\",\"intensity\":\"standard\"}")
 created_custom_id=$(echo "$created_custom_json" | json_get "const childName='$updated_child_name'; const hasChildTitle=p.data.title.includes(childName); const hasCustomPage=p.data.pages.some((page)=>page.title.includes(childName) && page.body.includes('定制改写') && page.body.includes('贴纸') && page.status==='needs_regeneration'); const hasCustomRole=p.data.roles.some((role)=>role.name.includes(childName) && role.role_type==='protagonist'); if(p.data.type!=='custom' || !hasChildTitle || !hasCustomPage || !hasCustomRole) process.exit(1); console.log(p.data.id)")
 echo "custom=$created_custom_id"
+expect_error 400 validation_error child_ids POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" auth '{"child_ids":[],"intensity":"quick"}'
+expect_error 400 validation_error child_ids POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" auth "{\"child_ids\":[\"$batch_child_id\",\"$batch_child_id\"],\"intensity\":\"quick\"}"
+batch_custom_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" "{\"child_ids\":[\"$batch_child_id\",\"$batch_child_two_id\"],\"intensity\":\"quick\",\"customization_plan\":{\"strategy\":\"快速替换称呼和关键道具\"}}")
+created_batch_custom_id=$(echo "$batch_custom_json" | json_get "if(p.data.source_storybook_id!=='$created_plain_id' || p.data.requested_count!==2 || p.data.created_count!==2 || p.data.storybooks.length!==2) process.exit(1); const first=p.data.storybooks.find((book)=>book.target_child_id==='$batch_child_id'); if(!first || first.type!=='custom' || !first.title.includes('Smoke批量儿童A$intake_stamp')) process.exit(1); console.log(first.id)")
+created_batch_custom_two_id=$(echo "$batch_custom_json" | json_get "const second=p.data.storybooks.find((book)=>book.target_child_id==='$batch_child_two_id'); if(!second || second.type!=='custom' || !second.title.includes('Smoke批量儿童B$intake_stamp')) process.exit(1); console.log(second.id)")
+echo "custom_batch=2/$created_batch_custom_id/$created_batch_custom_two_id"
+api GET "/api/workspaces/$SCHOOL_WS/storybooks?type=custom&target_child_id=$batch_child_id&limit=1&offset=0" | json_get "if(!p.meta || p.meta.total!==1 || p.data.length!==1 || p.data[0].id!=='$created_batch_custom_id') process.exit(1); console.log('batch_child_storybook_page=' + p.data.length + '/' + p.meta.total);"
 api GET "/api/workspaces/$SCHOOL_WS/storybooks?limit=1&offset=0" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.offset!==0 || p.data.length!==1 || p.meta.total < 2 || p.meta.has_more!==true) process.exit(1); console.log('storybook_page=' + p.data.length + '/' + p.meta.total);"
 api GET "/api/workspaces/$SCHOOL_WS/storybooks?type=custom&target_child_id=$created_child_id&limit=1&offset=0" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.offset!==0 || p.data.length!==1 || p.data[0].id!=='$created_custom_id' || p.data[0].target_child_id!=='$created_child_id') process.exit(1); console.log('child_storybook_page=' + p.data.length + '/' + p.meta.total);"
 api GET "/api/workspaces/$SCHOOL_WS/storybooks?type=plain&q=$encoded_renamed_plain_title&limit=5&offset=0" | json_get "if(!p.meta || p.meta.limit!==5 || p.meta.offset!==0 || p.meta.total < 1 || !p.data.some((row)=>row.id==='$created_plain_id')) process.exit(1); console.log('storybook_search=' + p.data.length + '/' + p.meta.total);"
