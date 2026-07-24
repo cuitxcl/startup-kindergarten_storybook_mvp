@@ -214,7 +214,7 @@ sudo chown -R <kindleaf-runtime-user>:<kindleaf-runtime-group> /var/lib/kindleaf
 
 如果采用 DeepSeek + Seedream 组合模式，可以把 `KINDLEAF_GENERATION_PROVIDER` 显式留空，并同时配置 `DEEPSEEK_API_KEY` 与 `SEEDREAM_API_KEY` 或 `ARK_API_KEY`；trial readiness 会显示 `auto-composite`。
 
-2026-07-21 最近一次本地 readiness 结果：脚本已能从 `.env` 读取本地 DeepSeek key；DeepSeek/Seedream endpoint、Docker/PostgreSQL、测试端口、storage 写入、文件大小上限和文件名安全规则均 OK；DeepSeek endpoint path 已支持通过 `DEEPSEEK_ENDPOINT_PATH` 覆盖；真实 provider 总入口已能自动运行真实 DeepSeek 文本 smoke，并在缺少 Seedream/ARK key 时跳过真实图片和组合 smoke；真实 DeepSeek 文本 smoke 已通过故事方案、角色、分页、定制方案、写回、成本账本和敏感输入脱敏审计验收；真实 Seedream 图片 smoke 已验证缺 key 时会在 readiness 阶段退出，不会误调用模型，补齐 key 后会同时验 PNG 下载、下载权限和成本账本；真实组合 provider 试运行仍需要补齐 `SEEDREAM_API_KEY` 或 `ARK_API_KEY`。
+2026-07-24 最近一次本地 readiness 结果：脚本已能从 `.env` 读取本地 DeepSeek key；当前 DeepSeek 配置为 `https://api.deepseek.com`、`/chat/completions`、`deepseek-v4-flash`，Seedream 配置为方舟地址 `https://ark.cn-beijing.volces.com`、`/api/v3/images/generations`、`doubao-seedream-5-0-lite`；Docker/PostgreSQL、测试端口、storage 写入、文件大小上限和文件名安全规则均 OK；真实 provider 总入口已能自动运行真实 DeepSeek 文本 smoke，并在缺少 Seedream/ARK key 时跳过真实图片和组合 smoke；真实 DeepSeek 文本 smoke 已通过故事方案、角色、分页、定制方案、写回、成本账本和敏感输入脱敏审计验收；真实 Seedream 图片 smoke 已验证缺 key 时会在 readiness 阶段退出，不会误调用模型，补齐 key 后会同时验 PNG 下载、下载权限和成本账本；真实组合 provider 试运行仍需要补齐 `SEEDREAM_API_KEY` 或 `ARK_API_KEY`。
 
 常用验证：
 
