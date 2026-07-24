@@ -74,6 +74,7 @@ const findings = [];
 
 for (const file of collectFiles(sourceDir)) {
   const source = readFileSync(file, "utf8");
+  const fileUsesApiMode = /\bshouldUseApi\b/.test(source);
   for (const check of checks) {
     for (const match of source.matchAll(check.pattern)) {
       const line = lineNumber(source, match.index ?? 0);
@@ -82,9 +83,11 @@ for (const file of collectFiles(sourceDir)) {
         file: relative(rootDir, file),
         line,
         text: match[0],
-        guard: check.label === "demo token" || check.label === "fixed mock route id" || check.label === "mock feedback copy"
-          ? nearbyApiGuard(source, line)
-          : undefined,
+        guard: check.label === "data/mock import"
+          ? (fileUsesApiMode ? "file-api-mode-guarded" : "unguarded")
+          : check.label === "demo token" || check.label === "fixed mock route id" || check.label === "mock feedback copy"
+            ? nearbyApiGuard(source, line)
+            : undefined,
         sourceLine: lineAt(source, line),
       });
     }
@@ -124,6 +127,9 @@ const allowedFixedIdFiles = new Set([
 ]);
 
 const strictFailures = findings.filter((finding) => {
+  if (finding.label === "data/mock import") {
+    return finding.guard === "unguarded";
+  }
   if (finding.label === "demo token") {
     return finding.guard === "unguarded";
   }
@@ -138,11 +144,11 @@ const strictFailures = findings.filter((finding) => {
 
 if (strict) {
   if (strictFailures.length > 0) {
-    console.error(`\nstrict failed: ${strictFailures.length} unguarded demo token, fixed mock id, or mock feedback usage(s)`);
+    console.error(`\nstrict failed: ${strictFailures.length} unguarded data/mock import, demo token, fixed mock id, or mock feedback usage(s)`);
     for (const failure of strictFailures) {
       console.error(`- ${failure.file}:${failure.line} ${failure.text}`);
     }
     process.exit(1);
   }
-  console.log("\nstrict ok: no unguarded demo-token, fixed mock id outside allowed prototype files, or mock feedback");
+  console.log("\nstrict ok: no unguarded data/mock import, demo-token, fixed mock id outside allowed prototype files, or mock feedback");
 }
