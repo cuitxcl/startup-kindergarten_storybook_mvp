@@ -26,7 +26,13 @@ import {
 import { Badge, Card, EmptyState, PageHeader, statusTone } from "../../components/ui";
 import { children, storybooks, submissions } from "../../data/mock";
 import type { ChildProfile, MarketplaceSubmission, Storybook, Workspace } from "../../types/domain";
-import { generationJobNextAction, storybookNextAction, storybookStatusLabel } from "../../utils/labels";
+import {
+  generationJobNextAction,
+  generationJobStatusLabel,
+  generationJobTypeLabel,
+  storybookNextAction,
+  storybookStatusLabel,
+} from "../../utils/labels";
 
 type DashboardTask = {
   title: string;
@@ -72,22 +78,6 @@ function defaultUserStorageQuota(): UserStorageQuota {
     personalWorkspaceCount: 1,
   };
 }
-
-const generationJobTypeLabel: Record<string, string> = {
-  storybook_plan: "故事方案",
-  storybook_roles: "角色与道具",
-  storybook_pages: "分页图文",
-  storybook_page_image: "插图生成",
-  customization_plan: "定制方案",
-};
-
-const generationJobStatusLabel: Record<string, string> = {
-  queued: "排队中",
-  running: "正在生成",
-  succeeded: "已完成",
-  failed: "生成失败",
-  canceled: "已取消",
-};
 
 function generationJobTitle(job: GenerationJob) {
   return generationJobTypeLabel[job.jobType] || job.jobType;

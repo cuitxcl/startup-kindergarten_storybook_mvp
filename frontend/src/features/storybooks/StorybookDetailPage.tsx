@@ -29,7 +29,15 @@ import {
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
 import { storybooks } from "../../data/mock";
 import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
-import { generationJobNextAction, generationPrivacyAuditSummary, pageStatusLabel, storybookNextAction, storybookSourceLabel } from "../../utils/labels";
+import {
+  generationJobNextAction,
+  generationJobStatusLabel,
+  generationJobTypeLabel,
+  generationPrivacyAuditSummary,
+  pageStatusLabel,
+  storybookNextAction,
+  storybookSourceLabel,
+} from "../../utils/labels";
 
 export function StorybookDetailPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
@@ -1125,23 +1133,6 @@ function generationJobTimestamp(job: GenerationJob) {
 function generationJobIdFromImageUrl(url: string) {
   return url.match(/\/generation-jobs\/([^/]+)\/image/)?.[1];
 }
-
-const generationJobTypeLabel: Record<string, string> = {
-  storybook_plan: "故事方案",
-  storybook_roles: "角色与道具",
-  storybook_pages: "分页图文",
-  storybook_role_reference_image: "角色参考图",
-  storybook_page_image: "插图生成",
-  customization_plan: "定制方案",
-};
-
-const generationJobStatusLabel: Record<string, string> = {
-  queued: "排队中",
-  running: "正在生成",
-  succeeded: "已完成",
-  failed: "生成失败",
-  canceled: "已取消",
-};
 
 function generationJobTitle(job: GenerationJob) {
   return generationJobTypeLabel[job.jobType] || job.jobType;
