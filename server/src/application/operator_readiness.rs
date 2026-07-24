@@ -285,6 +285,7 @@ const REQUIRED_READINESS_TABLES: &[&str] = &[
 ];
 
 const REQUIRED_READINESS_COLUMNS: &[(&str, &str)] = &[
+    ("generation_jobs", "created_by"),
     ("generation_jobs", "attempt_count"),
     ("generation_jobs", "last_error"),
     ("generation_jobs", "next_run_at"),
@@ -296,6 +297,7 @@ const REQUIRED_READINESS_COLUMNS: &[(&str, &str)] = &[
     ("parent_intake_links", "classroom_id"),
     ("share_links", "access_count"),
     ("share_links", "last_accessed_at"),
+    ("export_jobs", "created_by"),
     ("export_jobs", "last_error"),
 ];
 
@@ -847,10 +849,12 @@ mod tests {
         assert!(missing_readiness_columns(&all_columns).is_empty());
 
         let missing = missing_readiness_columns(&[
+            ("generation_jobs".to_string(), "created_by".to_string()),
             ("generation_jobs".to_string(), "attempt_count".to_string()),
             ("generation_jobs".to_string(), "last_error".to_string()),
         ]);
         assert!(missing.contains(&"export_jobs.last_error".to_string()));
+        assert!(missing.contains(&"export_jobs.created_by".to_string()));
         assert!(missing.contains(&"generation_cost_logs.estimated_cost_micros".to_string()));
     }
 
