@@ -118,6 +118,10 @@ async function main() {
   await waitForText("权限 API 下载");
   await waitForText("PDF 上限");
   await waitForText("50 MB");
+  await waitForText("用户个人限额");
+  await waitForText("个人空间限额");
+  await waitForText("园所空间限额");
+  await waitForText("容量预警线");
   await waitForText("文件名校验");
   await waitForText("已启用");
   await waitForText("公共直链");
