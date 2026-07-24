@@ -11,7 +11,7 @@ const DB_CONTAINER = process.env.DB_CONTAINER || "kindleaf-postgres";
 const DB_NAME = process.env.DB_NAME || "kindleaf_development";
 const API_TOKEN = process.env.API_TOKEN || "dev-token";
 const CHROME_PATH = process.env.CHROME_EXECUTABLE_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const CDP_PORT = Number(process.env.CDP_PORT || 9333);
+const REQUESTED_CDP_PORT = process.env.CDP_PORT ? Number(process.env.CDP_PORT) : null;
 
 const stamp = Date.now();
 const plainTitle = `UI Smoke 普通绘本 ${stamp}`;
@@ -29,6 +29,7 @@ const revokedTeacherEmail = `ui-smoke-revoke-${stamp}@example.com`;
 let chrome;
 let userDataDir;
 let cdp;
+let cdpPort = REQUESTED_CDP_PORT || 9333;
 let schoolWorkspaceId = "school-1";
 let teacherWorkspaceId = "school-2";
 let personalWorkspaceId = "personal-1";
@@ -665,23 +666,42 @@ function sqlValue(sql) {
 }
 
 async function startChrome() {
+  const candidatePorts = REQUESTED_CDP_PORT ? [REQUESTED_CDP_PORT] : [9333, 9444, 9555, 9666];
+  const failures = [];
+  for (const port of candidatePorts) {
+    try {
+      await startChromeOnPort(port);
+      cdpPort = port;
+      if (port !== candidatePorts[0]) {
+        console.log(`Chrome remote debugging started on fallback port ${port}`);
+      }
+      return;
+    } catch (err) {
+      failures.push(`${port}: ${err instanceof Error ? err.message : String(err)}`);
+      await stopChromeProcess();
+    }
+  }
+  throw new Error(`Chrome remote debugging did not start. Tried ${failures.join("; ")}`);
+}
+
+async function startChromeOnPort(port) {
   userDataDir = mkdtempSync(join(tmpdir(), "kindleaf-ui-smoke-"));
   chrome = spawn(CHROME_PATH, [
     "--headless=new",
-    `--remote-debugging-port=${CDP_PORT}`,
+    `--remote-debugging-port=${port}`,
     `--user-data-dir=${userDataDir}`,
     "--disable-gpu",
     "--no-first-run",
     "about:blank",
   ], { stdio: "ignore" });
   await waitUntil(async () => {
-    const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`).catch(() => null);
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`).catch(() => null);
     return Boolean(response?.ok);
-  }, "Chrome remote debugging did not start");
+  }, `Chrome remote debugging did not start on ${port}`);
 }
 
 async function openTab(url) {
-  const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(url)}`, { method: "PUT" });
+  const response = await fetch(`http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent(url)}`, { method: "PUT" });
   if (!response.ok) {
     throw new Error(`failed to create Chrome tab: ${response.status}`);
   }
@@ -1049,12 +1069,19 @@ delete from users where id in (select id from ui_users);
 async function shutdown() {
   if (cdp) {
     cdp.close();
+    cdp = null;
   }
+  await stopChromeProcess();
+}
+
+async function stopChromeProcess() {
   if (chrome && !chrome.killed) {
     chrome.kill("SIGTERM");
   }
+  chrome = null;
   if (userDataDir) {
     rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    userDataDir = null;
   }
 }
 
