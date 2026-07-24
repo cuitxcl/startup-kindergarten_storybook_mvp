@@ -182,6 +182,11 @@ fn seedream_summary_reports_image_ready_only() {
             .supports_image
             .contains(&"storybook_page_image".to_string())
     );
+    assert!(
+        summary
+            .supports_image
+            .contains(&"storybook_role_reference_image".to_string())
+    );
     let image = summary
         .components
         .iter()
@@ -227,6 +232,11 @@ fn composite_summary_reports_text_and_image_ready() {
         summary
             .supports_image
             .contains(&"storybook_page_image".to_string())
+    );
+    assert!(
+        summary
+            .supports_image
+            .contains(&"storybook_role_reference_image".to_string())
     );
     assert!(
         summary
