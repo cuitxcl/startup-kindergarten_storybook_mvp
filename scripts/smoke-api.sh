@@ -67,6 +67,7 @@ revoked_intake_link_token=""
 expired_intake_link_id=""
 expired_intake_link_token=""
 registered_user_id=""
+demo_user_id=""
 registered_email=""
 registered_workspace_id=""
 registered_storybook_id=""
@@ -355,6 +356,7 @@ const operator = p.data.workspaces.find((item)=>item.type==='platform' && item.r
 if(!personal || !school || !operator) process.exit(1);
 console.log(p.data.user.display_name + ' / ' + p.data.workspaces.length + ' workspaces');
 "
+demo_user_id=$(echo "$auth_me_json" | json_get "console.log(p.data.user.id)")
 PERSONAL_WS=$(echo "$auth_me_json" | json_get "const personal=p.data.workspaces.find((item)=>item.type==='personal'); if(!personal) process.exit(1); console.log(personal.id)")
 SCHOOL_ADMIN_WS=$(echo "$auth_me_json" | json_get "const school=p.data.workspaces.find((item)=>item.type==='school' && item.role==='school_admin'); if(school) console.log(school.id)")
 SCHOOL_TEACHER_WS=$(echo "$auth_me_json" | json_get "const school=p.data.workspaces.find((item)=>item.type==='school' && item.role==='school_teacher'); if(school) console.log(school.id)")
@@ -709,6 +711,12 @@ if(p.data.workspace_id !== '$SCHOOL_WS') process.exit(1);
 if(p.data.used_bytes <= 0) process.exit(1);
 if(p.data.remaining_bytes >= p.data.quota_bytes) process.exit(1);
 console.log('school_storage_quota_after_export=' + p.data.used_bytes + '/' + p.data.quota_bytes);
+"
+api GET "/api/auth/storage-quota" | json_get "
+if(p.data.user_id !== '$demo_user_id') process.exit(1);
+if(p.data.used_bytes <= 0) process.exit(1);
+if(p.data.remaining_bytes >= p.data.quota_bytes) process.exit(1);
+console.log('demo_user_storage_quota_after_school_export=' + p.data.used_bytes + '/' + p.data.quota_bytes);
 "
 expect_pdf_download "$export_file_url" export auth "Smoke" "/Subtype /Image"
 expect_error 401 unauthorized - GET "$export_file_url" noauth

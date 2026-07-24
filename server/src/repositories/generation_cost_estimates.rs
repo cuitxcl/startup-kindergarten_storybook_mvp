@@ -166,6 +166,7 @@ mod tests {
             id: Uuid::new_v4(),
             workspace_id: Uuid::new_v4(),
             storybook_id: Some(Uuid::new_v4()),
+            created_by: None,
             job_type: job_type.to_string(),
             status: status.to_string(),
             input_json,

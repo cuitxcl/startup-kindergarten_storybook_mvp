@@ -37,28 +37,32 @@ pub async fn create_export(
             .await
             .map_err(common::db_error)?;
         ensure_storybook_deliverable(&book)?;
-        let job =
-            match crate::repositories::delivery::create_export(&ctx.db, workspace_id, storybook_id)
-                .await
+        let job = match crate::repositories::delivery::create_export(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+            actor_id,
+        )
+        .await
+        {
+            Ok(job) => job,
+            Err(sea_orm::DbErr::Custom(message))
+                if delivery_privacy_risk_labels(&message).is_some() =>
             {
-                Ok(job) => job,
-                Err(sea_orm::DbErr::Custom(message))
-                    if delivery_privacy_risk_labels(&message).is_some() =>
-                {
-                    let risks = delivery_privacy_risk_labels(&message).unwrap_or_default();
-                    log_delivery_privacy_blocked(
-                        &ctx.db,
-                        Some(workspace_id),
-                        Some(actor_id),
-                        storybook_id,
-                        "export",
-                        risks,
-                    )
-                    .await?;
-                    return Err(delivery_error(sea_orm::DbErr::Custom(message)));
-                }
-                Err(err) => return Err(delivery_error(err)),
-            };
+                let risks = delivery_privacy_risk_labels(&message).unwrap_or_default();
+                log_delivery_privacy_blocked(
+                    &ctx.db,
+                    Some(workspace_id),
+                    Some(actor_id),
+                    storybook_id,
+                    "export",
+                    risks,
+                )
+                .await?;
+                return Err(delivery_error(sea_orm::DbErr::Custom(message)));
+            }
+            Err(err) => return Err(delivery_error(err)),
+        };
         enqueue_export_job(ctx, job.id)
             .await
             .map_err(|err| ApiError::state_conflict(format!("导出任务入队失败：{err}")))?;

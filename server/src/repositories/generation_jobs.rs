@@ -9,6 +9,7 @@ pub async fn enqueue_job(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Option<Uuid>,
+    created_by: Uuid,
     job_type: &str,
     input_json: JsonValue,
 ) -> Result<GenerationJob, DbErr> {
@@ -18,16 +19,17 @@ pub async fn enqueue_job(
             DbBackend::Postgres,
             r#"
             insert into generation_jobs
-              (id, workspace_id, storybook_id, job_type, status, input_json, created_at)
-            values ($1, $2, $3, $4, 'queued', $5, now())
+              (id, workspace_id, storybook_id, created_by, job_type, status, input_json, created_at)
+            values ($1, $2, $3, $4, $5, 'queued', $6, now())
             returning
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             "#,
             [
                 id.into(),
                 workspace_id.into(),
                 storybook_id.into(),
+                created_by.into(),
                 job_type.into(),
                 input_json.into(),
             ],
@@ -58,7 +60,7 @@ pub async fn move_to_running(
             finished_at = null
         where id = $1 and status = $2
         returning
-          id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+          id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
           attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
         "#,
             [job_id.into(), from_status.into(), worker_id.into()],
@@ -88,7 +90,7 @@ pub async fn complete_running_job(
                 finished_at = now()
             where id = $1 and status = 'running'
             returning
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             "#,
             [job_id.into(), output_json.into()],
@@ -120,7 +122,7 @@ pub async fn fail_running_job(
                 finished_at = now()
             where id = $1 and status = 'running'
             returning
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             "#,
             [
@@ -161,7 +163,7 @@ pub async fn cancel_job(
               and id = $2
               and status in ('queued', 'failed')
             returning
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             "#,
             [workspace_id.into(), job_id.into(), output_json.into()],
@@ -227,7 +229,7 @@ pub async fn claim_next_ready_job_scoped(
                 limit 1
             )
             returning
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             "#,
             [worker_id.into(), workspace_id.into()],
@@ -247,7 +249,7 @@ pub async fn find_job(
             DbBackend::Postgres,
             r#"
             select
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             from generation_jobs
             where workspace_id = $1 and id = $2
@@ -266,7 +268,7 @@ pub async fn find_any_job(db: &DatabaseConnection, job_id: Uuid) -> Result<Gener
             DbBackend::Postgres,
             r#"
             select
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             from generation_jobs
             where id = $1
@@ -309,7 +311,7 @@ pub async fn list_jobs_page(
             DbBackend::Postgres,
             r#"
             select
-              id, workspace_id, storybook_id, job_type, status, input_json, output_json,
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             from generation_jobs
             where workspace_id = $1
@@ -345,6 +347,7 @@ fn job_from_row(row: sea_orm::QueryResult) -> Result<GenerationJob, DbErr> {
         id: row.try_get("", "id")?,
         workspace_id: row.try_get("", "workspace_id")?,
         storybook_id: row.try_get("", "storybook_id")?,
+        created_by: row.try_get("", "created_by")?,
         job_type: row.try_get("", "job_type")?,
         status: row.try_get("", "status")?,
         input_json: row.try_get::<JsonValue>("", "input_json")?,

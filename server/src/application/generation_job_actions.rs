@@ -184,6 +184,7 @@ fn mock_terminal_job(
         id: job_id,
         workspace_id,
         storybook_id: None,
+        created_by: None,
         job_type: "storybook_plan".to_string(),
         status: status.to_string(),
         input_json: serde_json::json!({}),

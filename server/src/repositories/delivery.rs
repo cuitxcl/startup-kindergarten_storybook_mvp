@@ -107,6 +107,7 @@ pub(crate) fn export_from_row(row: sea_orm::QueryResult) -> Result<ExportJob, Db
     Ok(ExportJob {
         id: row.try_get("", "id")?,
         storybook_id: row.try_get("", "storybook_id")?,
+        created_by: row.try_get("", "created_by")?,
         status: row.try_get("", "status")?,
         file_url: row.try_get("", "file_url")?,
         last_error: row.try_get("", "last_error")?,

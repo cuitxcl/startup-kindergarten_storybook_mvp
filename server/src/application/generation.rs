@@ -37,9 +37,11 @@ pub async fn create_page_image_task(
     #[cfg(feature = "db")]
     {
         common::require_editor_db(ctx, headers, workspace_id).await?;
+        let actor_id = common::actor_user_id(headers)?;
         let queued = crate::repositories::generation::create_page_image_job_record(
             &ctx.db,
             workspace_id,
+            actor_id,
             storybook_id,
             page_id,
             payload,
@@ -52,7 +54,7 @@ pub async fn create_page_image_task(
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "generation_job.created",
             "generation_job",
             Some(queued.id),
@@ -115,6 +117,7 @@ pub async fn create_page_image_task(
             id: job_id,
             workspace_id,
             storybook_id: Some(storybook_id),
+            created_by: None,
             job_type: "storybook_page_image".to_string(),
             status: "succeeded".to_string(),
             input_json: serde_json::json!({
@@ -150,9 +153,11 @@ pub async fn create_role_reference_image_task(
     #[cfg(feature = "db")]
     {
         common::require_editor_db(ctx, headers, workspace_id).await?;
+        let actor_id = common::actor_user_id(headers)?;
         let queued = crate::repositories::generation::create_role_reference_image_job_record(
             &ctx.db,
             workspace_id,
+            actor_id,
             storybook_id,
             role_id,
             payload,
@@ -165,7 +170,7 @@ pub async fn create_role_reference_image_task(
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "generation_job.created",
             "generation_job",
             Some(queued.id),
@@ -226,6 +231,7 @@ pub async fn create_role_reference_image_task(
             id: job_id,
             workspace_id,
             storybook_id: Some(storybook_id),
+            created_by: None,
             job_type: "storybook_role_reference_image".to_string(),
             status: "succeeded".to_string(),
             input_json: serde_json::json!({
@@ -294,6 +300,7 @@ pub async fn create_job(
         let queued = crate::repositories::generation::create_generation_job_record(
             &ctx.db,
             workspace_id,
+            common::actor_user_id(headers)?,
             CreateGenerationJobRequest {
                 job_type,
                 storybook_id: payload.storybook_id,
@@ -332,6 +339,7 @@ pub async fn create_job(
             id: Uuid::new_v4(),
             workspace_id,
             storybook_id: payload.storybook_id,
+            created_by: None,
             job_type,
             status: "succeeded".to_string(),
             input_json: payload.input_json,
@@ -409,6 +417,7 @@ pub async fn get_job(
             id: job_id,
             workspace_id,
             storybook_id: None,
+            created_by: None,
             job_type: "storybook_page_image".to_string(),
             status: "succeeded".to_string(),
             input_json: serde_json::json!({}),

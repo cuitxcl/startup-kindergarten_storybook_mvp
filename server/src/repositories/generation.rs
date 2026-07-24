@@ -152,6 +152,7 @@ async fn process_generation_backlog_scoped(
 pub async fn create_generation_job_record(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    created_by: Uuid,
     payload: CreateGenerationJobRequest,
 ) -> Result<GenerationJob, DbErr> {
     ensure_generation_budget_available(db, Some(workspace_id)).await?;
@@ -176,6 +177,7 @@ pub async fn create_generation_job_record(
         db,
         workspace_id,
         payload.storybook_id,
+        created_by,
         job_type,
         payload.input_json,
     )
@@ -185,6 +187,7 @@ pub async fn create_generation_job_record(
 pub async fn create_page_image_job_record(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    created_by: Uuid,
     storybook_id: Uuid,
     page_id: Uuid,
     payload: CreateImageTaskRequest,
@@ -195,6 +198,7 @@ pub async fn create_page_image_job_record(
         db,
         workspace_id,
         Some(storybook_id),
+        created_by,
         "storybook_page_image",
         input_json,
     )
@@ -204,6 +208,7 @@ pub async fn create_page_image_job_record(
 pub async fn create_role_reference_image_job_record(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    created_by: Uuid,
     storybook_id: Uuid,
     role_id: Uuid,
     payload: CreateImageTaskRequest,
@@ -215,6 +220,7 @@ pub async fn create_role_reference_image_job_record(
         db,
         workspace_id,
         Some(storybook_id),
+        created_by,
         "storybook_role_reference_image",
         input_json,
     )

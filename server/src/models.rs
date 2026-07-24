@@ -264,6 +264,8 @@ pub struct CreateShareLinkRequest {
 pub struct ExportJob {
     pub id: Uuid,
     pub storybook_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<Uuid>,
     pub status: String,
     pub file_url: Option<String>,
     pub last_error: Option<String>,
@@ -276,6 +278,8 @@ pub struct GenerationJob {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub storybook_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<Uuid>,
     pub job_type: String,
     pub status: String,
     pub input_json: JsonValue,

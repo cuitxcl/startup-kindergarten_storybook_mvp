@@ -18,9 +18,10 @@ pub async fn create_export(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
+    created_by: Uuid,
 ) -> Result<ExportJob, DbErr> {
     ensure_storybook_in_workspace(db, workspace_id, storybook_id).await?;
-    enqueue_export(db, storybook_id).await
+    enqueue_export(db, storybook_id, Some(created_by)).await
 }
 
 pub async fn create_export_by_share_token(
@@ -28,7 +29,7 @@ pub async fn create_export_by_share_token(
     token: &str,
 ) -> Result<ExportJob, DbErr> {
     let storybook = storybook_by_share_token(db, token).await?;
-    enqueue_export(db, storybook.id).await
+    enqueue_export(db, storybook.id, None).await
 }
 
 pub async fn find_export_by_share_token(
@@ -41,7 +42,7 @@ pub async fn find_export_by_share_token(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, storybook_id, status, file_url, last_error, created_at, finished_at
+            select id, storybook_id, created_by, status, file_url, last_error, created_at, finished_at
             from export_jobs
             where id = $1 and storybook_id = $2
             limit 1
@@ -54,7 +55,11 @@ pub async fn find_export_by_share_token(
     export_from_row(row)
 }
 
-async fn enqueue_export(db: &DatabaseConnection, storybook_id: Uuid) -> Result<ExportJob, DbErr> {
+async fn enqueue_export(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    created_by: Option<Uuid>,
+) -> Result<ExportJob, DbErr> {
     ensure_storybook_delivery_privacy_clear(db, storybook_id).await?;
     let id = Uuid::new_v4();
     let row = db
@@ -62,11 +67,11 @@ async fn enqueue_export(db: &DatabaseConnection, storybook_id: Uuid) -> Result<E
             DbBackend::Postgres,
             r#"
             insert into export_jobs
-              (id, storybook_id, status, created_at)
-            values ($1, $2, 'queued', now())
-            returning id, storybook_id, status, file_url, last_error, created_at, finished_at
+              (id, storybook_id, created_by, status, created_at)
+            values ($1, $2, $3, 'queued', now())
+            returning id, storybook_id, created_by, status, file_url, last_error, created_at, finished_at
             "#,
-            [id.into(), storybook_id.into()],
+            [id.into(), storybook_id.into(), created_by.into()],
         ))
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("export_job".to_string()))?;
@@ -116,13 +121,35 @@ async fn write_export_file(
     let page_images = latest_storybook_page_image_paths(db, storybook_id).await?;
     let file_name = export_file_name(export_id);
     let pdf = encode_storybook_pdf_with_images(&storybook, &page_images);
-    crate::repositories::storage_quota::ensure_workspace_storage_available(
+    crate::repositories::storage_quota::ensure_workspace_storage_available_for_user(
         db,
         storybook.workspace_id,
+        export_created_by(db, export_id).await?,
         pdf.len() as u64,
     )
     .await?;
     storage::save_export_file(&file_name, &pdf).map_err(DbErr::Custom)
+}
+
+async fn export_created_by(
+    db: &DatabaseConnection,
+    export_id: Uuid,
+) -> Result<Option<Uuid>, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select created_by
+            from export_jobs
+            where id = $1
+            limit 1
+            "#,
+            [export_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("export_job".to_string()))?;
+
+    row.try_get("", "created_by")
 }
 
 async fn latest_storybook_page_image_paths(
@@ -208,7 +235,7 @@ async fn mark_export_succeeded(
                 last_error = null,
                 finished_at = now()
             where id = $1 and status = 'running'
-            returning id, storybook_id, status, file_url, last_error, created_at, finished_at
+            returning id, storybook_id, created_by, status, file_url, last_error, created_at, finished_at
             "#,
             [job_id.into(), file_url.into()],
         ))
@@ -233,7 +260,7 @@ async fn mark_export_failed(
                 last_error = $2,
                 finished_at = now()
             where id = $1 and status = 'running'
-            returning id, storybook_id, status, file_url, last_error, created_at, finished_at
+            returning id, storybook_id, created_by, status, file_url, last_error, created_at, finished_at
             "#,
             [job_id.into(), error.into()],
         ))
@@ -251,7 +278,7 @@ pub async fn execute_export_job(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, storybook_id, status, file_url, last_error, created_at, finished_at
+            select id, storybook_id, created_by, status, file_url, last_error, created_at, finished_at
             from export_jobs
             where id = $1
             limit 1
@@ -280,7 +307,7 @@ pub async fn find_export(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, storybook_id, status, file_url, last_error, created_at, finished_at
+            select id, storybook_id, created_by, status, file_url, last_error, created_at, finished_at
             from export_jobs
             where id = $1 and storybook_id = $2
             limit 1
@@ -306,7 +333,7 @@ pub async fn list_exports(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, storybook_id, status, file_url, last_error, created_at, finished_at
+            select id, storybook_id, created_by, status, file_url, last_error, created_at, finished_at
             from export_jobs
             where storybook_id = $1
             order by created_at desc

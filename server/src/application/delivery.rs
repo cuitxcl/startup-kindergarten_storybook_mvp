@@ -174,6 +174,7 @@ pub(crate) fn mock_workspace_export(
     ExportJob {
         id: export_id,
         storybook_id,
+        created_by: None,
         status: "succeeded".to_string(),
         file_url: Some(workspace_export_download_url(
             workspace_id,
@@ -191,6 +192,7 @@ pub(crate) fn mock_share_export(token: &str, storybook_id: Uuid, export_id: Uuid
     ExportJob {
         id: export_id,
         storybook_id,
+        created_by: None,
         status: "succeeded".to_string(),
         file_url: Some(share_export_download_url(token, export_id)),
         last_error: None,

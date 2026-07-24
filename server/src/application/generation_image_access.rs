@@ -29,6 +29,7 @@ pub async fn generation_image_file(
             id: job_id,
             workspace_id,
             storybook_id: None,
+            created_by: None,
             job_type: "storybook_page_image".to_string(),
             status: "succeeded".to_string(),
             input_json: serde_json::json!({}),

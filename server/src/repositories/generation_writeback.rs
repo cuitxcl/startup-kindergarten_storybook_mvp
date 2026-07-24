@@ -17,9 +17,10 @@ pub async fn ensure_image_output_within_storage_quota(
         return Ok(());
     };
 
-    match crate::repositories::storage_quota::ensure_workspace_storage_available_for_url(
+    match crate::repositories::storage_quota::ensure_workspace_storage_available_for_url_and_user(
         db,
         job.workspace_id,
+        job.created_by,
         image_url,
     )
     .await
