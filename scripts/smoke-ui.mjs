@@ -413,6 +413,7 @@ async function main() {
   await waitForText("生成定制绘本");
   await clickByText("批量生成");
   await waitForText("已选 0");
+  await waitForText("最多 30 个");
   await clickCardContaining("小雨");
   await waitForText("已选 1");
   await clickCardContaining(childName);

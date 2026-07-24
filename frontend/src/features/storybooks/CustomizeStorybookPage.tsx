@@ -23,6 +23,7 @@ import { generationJobNextAction, generationPrivacyAuditSummary } from "../../ut
 
 const steps = ["选择孩子", "档案检查", "定制强度", "定制方案", "生成副本"];
 const CHILD_PAGE_SIZE = 12;
+const MAX_BATCH_CUSTOM_CHILDREN = 30;
 
 export function CustomizeStorybookPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
@@ -52,7 +53,8 @@ export function CustomizeStorybookPage() {
   const selected = childList.find((child) => child.id === selectedChildId) || childList[0];
   const selectedBatchChildren = childList.filter((child) => selectedBatchChildIds.includes(child.id));
   const generatedTarget = shouldUseApi ? generatedBookId : storybooks.find((item) => item.workspaceId === workspace.id && item.type === "custom")?.id || source?.id;
-  const canContinueSelection = customMode === "batch" ? selectedBatchChildIds.length > 0 : Boolean(selected);
+  const batchSelectionAtLimit = selectedBatchChildIds.length >= MAX_BATCH_CUSTOM_CHILDREN;
+  const canContinueSelection = customMode === "batch" ? selectedBatchChildIds.length > 0 && selectedBatchChildIds.length <= MAX_BATCH_CUSTOM_CHILDREN : Boolean(selected);
   const primaryLabels = ["确认孩子", "确认档案", "生成定制方案", "生成定制副本", "已生成"];
   const nextStep = () => {
     setNotice(null);
@@ -254,7 +256,9 @@ export function CustomizeStorybookPage() {
     setCustomizationPlan(null);
     setSelectedBatchChildIds((items) => items.includes(childId)
       ? items.filter((id) => id !== childId)
-      : [...items, childId]);
+      : items.length >= MAX_BATCH_CUSTOM_CHILDREN
+        ? items
+        : [...items, childId]);
   };
 
   const loadMoreChildren = async () => {
@@ -364,15 +368,19 @@ export function CustomizeStorybookPage() {
                   <button type="button" className={`filter ${customMode === "single" ? "active" : ""}`} onClick={() => setCustomMode("single")}>单个儿童</button>
                   <button type="button" className={`filter ${customMode === "batch" ? "active" : ""}`} onClick={() => setCustomMode("batch")}>批量生成</button>
                   {customMode === "batch" && <Badge tone={selectedBatchChildIds.length ? "good" : "warn"}>已选 {selectedBatchChildIds.length}</Badge>}
+                  {customMode === "batch" && <Badge tone={batchSelectionAtLimit ? "warn" : "neutral"}>最多 {MAX_BATCH_CUSTOM_CHILDREN} 个</Badge>}
                 </div>
                 <div className="selection-grid">
                   {childList.map((child) => {
                     const active = customMode === "batch" ? selectedBatchChildIds.includes(child.id) : selected?.id === child.id;
+                    const disabled = customMode === "batch" && batchSelectionAtLimit && !active;
                     return (
                       <button
                         key={child.id}
                         type="button"
                         className={`select-card ${active ? "active" : ""}`}
+                        disabled={disabled}
+                        title={disabled ? `一次最多选择 ${MAX_BATCH_CUSTOM_CHILDREN} 个儿童` : undefined}
                         onClick={() => {
                           if (customMode === "batch") {
                             toggleBatchChild(child.id);
