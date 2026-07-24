@@ -264,7 +264,8 @@ pub struct CreateShareLinkRequest {
 pub struct ExportJob {
     pub id: Uuid,
     pub storybook_id: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
+    #[serde(skip)]
     pub created_by: Option<Uuid>,
     pub status: String,
     pub file_url: Option<String>,
@@ -278,7 +279,7 @@ pub struct GenerationJob {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub storybook_id: Option<Uuid>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub created_by: Option<Uuid>,
     pub job_type: String,
     pub status: String,
@@ -656,4 +657,51 @@ pub struct ConfirmParentIntakeRequest {
 pub struct ActionResponse {
     pub status: String,
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExportJob, GenerationJob};
+    use chrono::Utc;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    #[test]
+    fn internal_storage_owner_fields_are_not_serialized() {
+        let user_id = Uuid::new_v4();
+        let generation_job = GenerationJob {
+            id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            storybook_id: Some(Uuid::new_v4()),
+            created_by: Some(user_id),
+            job_type: "storybook_page_image".to_string(),
+            status: "succeeded".to_string(),
+            input_json: json!({"prompt": "safe prompt"}),
+            output_json: None,
+            attempt_count: 1,
+            last_error: None,
+            next_run_at: None,
+            locked_by: None,
+            locked_at: None,
+            created_at: Utc::now(),
+            finished_at: None,
+        };
+        let export_job = ExportJob {
+            id: Uuid::new_v4(),
+            storybook_id: Uuid::new_v4(),
+            created_by: Some(user_id),
+            status: "succeeded".to_string(),
+            file_url: Some("/api/example/download".to_string()),
+            last_error: None,
+            created_at: Utc::now(),
+            finished_at: None,
+        };
+
+        let generation_json =
+            serde_json::to_value(generation_job).expect("generation job should serialize");
+        let export_json = serde_json::to_value(export_job).expect("export job should serialize");
+
+        assert!(generation_json.get("created_by").is_none());
+        assert!(export_json.get("created_by").is_none());
+    }
 }
