@@ -397,6 +397,11 @@ type LoginResponse = {
   workspaces: ApiWorkspace[];
 };
 
+export type HealthStatus = {
+  status: "ok" | string;
+  service: string;
+};
+
 type DashboardResponse = {
   workspace: ApiWorkspace;
   storybooks: ApiStorybook[];
@@ -713,6 +718,15 @@ export async function currentSession() {
     user: mapUser(response.user),
     workspaces: response.workspaces.map(mapWorkspace),
   };
+}
+
+export async function health(): Promise<HealthStatus> {
+  return request<HealthStatus>("/api/health");
+}
+
+export async function listWorkspaces(): Promise<Workspace[]> {
+  const response = await request<ApiWorkspace[]>("/api/workspaces");
+  return response.map(mapWorkspace);
 }
 
 export async function dashboard(workspaceId: string): Promise<DashboardData> {
