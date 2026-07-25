@@ -172,7 +172,7 @@ run_auto() {
     wait_for_port_free 8081
   fi
 
-  if has_match '^server/src/services/generation_provider\.rs|^scripts/(fake-deepseek|fake-seedream-image|load-env|check-real-provider-readiness|smoke-generation-provider|smoke-generation-provider-failure|smoke-image-provider|smoke-composite-provider|smoke-providers|smoke-real-deepseek-text|smoke-real-seedream-image|smoke-real-composite-provider|smoke-real-providers)\.'; then
+  if has_match '^server/src/services/generation_(deepseek_provider|mock_provider|output_validator|privacy|provider|provider_config|provider_contract|provider_summary|seedream_provider)\.rs|^server/src/repositories/(generation|generation_image_tasks|generation_writeback)\.rs|^scripts/(fake-deepseek|fake-seedream-image|load-env|check-real-provider-readiness|smoke-generation-provider|smoke-generation-provider-failure|smoke-image-provider|smoke-composite-provider|smoke-providers|smoke-real-deepseek-text|smoke-real-seedream-image|smoke-real-composite-provider|smoke-real-providers)\.'; then
     echo
     echo "4. provider smoke"
     echo "Real provider scripts changed: running fake provider smoke for a quota-free safety gate."
