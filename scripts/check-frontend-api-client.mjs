@@ -19,45 +19,83 @@ function normalizeApiPath(value) {
     .replaceAll("}", "");
 }
 
-function readContractPaths() {
+function routeKey(method, apiPath) {
+  return `${method} ${apiPath}`;
+}
+
+function readContractRoutes() {
   const content = fs.readFileSync(contractPath, "utf8");
-  const paths = new Set();
+  const routes = new Set();
 
   for (const match of content.matchAll(
-    /\|\s*`(?:GET|POST|PATCH|DELETE)`\s*\|\s*`(\/api\/[^`]+)`\s*\|/g,
+    /\|\s*`(GET|POST|PATCH|DELETE)`\s*\|\s*`(\/api\/[^`]+)`\s*\|/g,
   )) {
-    paths.add(normalizeApiPath(match[1]));
+    routes.add(routeKey(match[1], normalizeApiPath(match[2])));
   }
 
-  return paths;
+  return routes;
 }
 
-function readClientPaths() {
+function findRequestCalls(content) {
+  const calls = [];
+  const requestCallPattern = /\brequest(?:Envelope|Blob)?(?:<[^>]+>)?\s*\(/g;
+  let match;
+
+  while ((match = requestCallPattern.exec(content)) !== null) {
+    const callStart = match.index + match[0].length;
+    let depth = 1;
+    let cursor = callStart;
+
+    for (; cursor < content.length && depth > 0; cursor += 1) {
+      if (content[cursor] === "(") {
+        depth += 1;
+      } else if (content[cursor] === ")") {
+        depth -= 1;
+      }
+    }
+
+    if (depth === 0) {
+      calls.push(content.slice(callStart, cursor - 1));
+    }
+
+    requestCallPattern.lastIndex = cursor;
+  }
+
+  return calls;
+}
+
+function readClientRoutes() {
   const content = fs.readFileSync(clientPath, "utf8");
-  const paths = new Set();
+  const routes = new Set();
 
-  for (const match of content.matchAll(/[`"](\/api\/[\s\S]*?)[`"](?:[,)}]|\s)/g)) {
-    const rawPath = match[1];
-    if (rawPath.includes("\n")) continue;
-    paths.add(normalizeApiPath(rawPath));
+  for (const callBody of findRequestCalls(content)) {
+    const pathMatch = callBody.match(/[`"](\/api\/[^`"\n]*)[`"]/) ?? callBody.match(/['](\/api\/[^'\n]*)[']/);
+    if (!pathMatch) continue;
+
+    const methodMatch = callBody.match(/\bmethod\s*:\s*["'](GET|POST|PATCH|DELETE)["']/);
+    const method = methodMatch?.[1] ?? "GET";
+
+    routes.add(routeKey(method, normalizeApiPath(pathMatch[1])));
   }
 
-  return paths;
+  return routes;
 }
 
-const contractPaths = readContractPaths();
-const clientPaths = readClientPaths();
-const unknownClientPaths = [...clientPaths]
-  .filter((route) => !contractPaths.has(route))
+const contractRoutes = readContractRoutes();
+const clientRoutes = readClientRoutes();
+const unknownClientRoutes = [...clientRoutes]
+  .filter((route) => !contractRoutes.has(route))
   .sort();
 
-if (unknownClientPaths.length > 0) {
-  console.error("Frontend API client calls path(s) not documented in API contract:");
-  for (const route of unknownClientPaths) {
+if (unknownClientRoutes.length > 0) {
+  console.error("Frontend API client method route(s) not documented in API contract:");
+  for (const route of unknownClientRoutes) {
     console.error(`  - ${route}`);
   }
   console.error(`\nUpdate ${path.relative(rootDir, contractPath)} or fix the client path in ${path.relative(rootDir, clientPath)}.`);
   process.exit(1);
 }
 
-console.log(`frontend api client ok: ${clientPaths.size} path(s) match API contract`);
+const clientPaths = new Set([...clientRoutes].map((route) => route.replace(/^[A-Z]+ /, "")));
+
+console.log(`frontend api client ok: ${clientRoutes.size} method route(s), ${clientPaths.size} path(s) match API contract`);
