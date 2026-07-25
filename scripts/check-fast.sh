@@ -37,6 +37,7 @@ bash -n \
 echo
 echo "2. node script syntax"
 node --check "$ROOT_DIR/scripts/check-api-contract.mjs"
+node --check "$ROOT_DIR/scripts/check-frontend-api-client.mjs"
 node --check "$ROOT_DIR/scripts/audit-frontend-mock-usage.mjs"
 node --check "$ROOT_DIR/scripts/fake-deepseek.mjs"
 node --check "$ROOT_DIR/scripts/fake-seedream-image.mjs"
@@ -46,6 +47,7 @@ node --check "$ROOT_DIR/scripts/validate-png.mjs"
 echo
 echo "3. API contract coverage"
 "$ROOT_DIR/scripts/check-api-contract.mjs"
+"$ROOT_DIR/scripts/check-frontend-api-client.mjs"
 
 echo
 echo "4. docker compose config"
