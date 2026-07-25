@@ -44,6 +44,9 @@ function readDocumentedApiPaths() {
 const controllerRoutes = readControllerRoutes();
 const documentedPaths = readDocumentedApiPaths();
 const missingRoutes = controllerRoutes.filter((route) => !documentedPaths.has(route));
+const staleDocumentedPaths = [...documentedPaths]
+  .filter((route) => !controllerRoutes.includes(route))
+  .sort();
 
 if (missingRoutes.length > 0) {
   console.error("API contract is missing controller route(s):");
@@ -54,4 +57,15 @@ if (missingRoutes.length > 0) {
   process.exit(1);
 }
 
-console.log(`api contract ok: ${controllerRoutes.length} controller route(s) covered`);
+if (staleDocumentedPaths.length > 0) {
+  console.error("API contract documents route(s) that are not registered by controllers:");
+  for (const route of staleDocumentedPaths) {
+    console.error(`  - ${route}`);
+  }
+  console.error(`\nRemove stale path(s) from ${path.relative(rootDir, contractPath)} or add the missing controller route.`);
+  process.exit(1);
+}
+
+console.log(
+  `api contract ok: ${controllerRoutes.length} controller route(s) covered, ${documentedPaths.size} documented path(s) current`,
+);
