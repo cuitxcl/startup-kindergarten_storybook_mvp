@@ -4,6 +4,7 @@ import http from "node:http";
 const port = Number(process.argv[2] || process.env.PORT || 18183);
 const mode = process.env.FAKE_SEEDREAM_MODE || "ok";
 const requireRedactedPrompt = process.env.FAKE_SEEDREAM_REQUIRE_REDACTED_PROMPT === "true";
+const requireValidPayload = process.env.FAKE_SEEDREAM_REQUIRE_VALID_PAYLOAD === "true";
 const transparentPngBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP4cGnfsxNbGCAUAEWMCcWN1afmAAAAAElFTkSuQmCC";
 
@@ -55,6 +56,14 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (requireValidPayload) {
+      const payloadError = validateSeedreamPayload(payload);
+      if (payloadError) {
+        jsonResponse(res, 400, payloadError);
+        return;
+      }
+    }
+
     if (mode === "http_500") {
       jsonResponse(res, 500, { error: "fake_seedream_failure", retryable: true });
       return;
@@ -83,6 +92,40 @@ function promptIsRedacted(prompt) {
     !prompt.includes("parent@example.com") &&
     !prompt.includes("家长电话")
   );
+}
+
+function validateSeedreamPayload(payload) {
+  if (typeof payload.model !== "string" || payload.model.trim() === "") {
+    return { error: "missing_model" };
+  }
+  if (typeof payload.prompt !== "string" || payload.prompt.trim() === "") {
+    return { error: "missing_prompt" };
+  }
+  if (typeof payload.size !== "string" || !/^\d+x\d+$/.test(payload.size)) {
+    return { error: "invalid_size", size: payload.size };
+  }
+  if (payload.response_format !== "b64_json") {
+    return { error: "invalid_response_format", response_format: payload.response_format };
+  }
+  if (payload.watermark !== false) {
+    return { error: "invalid_watermark", watermark: payload.watermark };
+  }
+  if (!["text_to_image", "reference_image", "edit_image"].includes(payload.image_mode)) {
+    return { error: "invalid_image_mode", image_mode: payload.image_mode };
+  }
+  if (payload.image !== undefined && !Array.isArray(payload.image)) {
+    return { error: "invalid_image_references" };
+  }
+  if (payload.reference_images !== undefined && !Array.isArray(payload.reference_images)) {
+    return { error: "invalid_reference_images" };
+  }
+  if (payload.strength !== undefined) {
+    const strength = Number(payload.strength);
+    if (!Number.isFinite(strength) || strength < 0 || strength > 1) {
+      return { error: "invalid_strength", strength: payload.strength };
+    }
+  }
+  return null;
 }
 
 server.listen(port, "127.0.0.1", () => {

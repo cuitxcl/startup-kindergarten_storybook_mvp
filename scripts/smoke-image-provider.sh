@@ -166,8 +166,10 @@ start_fake_seedream() {
   local mode="$1"
   local log_file="$2"
   local require_redacted="${3:-false}"
+  local require_valid_payload="${4:-true}"
   FAKE_SEEDREAM_MODE="$mode" \
     FAKE_SEEDREAM_REQUIRE_REDACTED_PROMPT="$require_redacted" \
+    FAKE_SEEDREAM_REQUIRE_VALID_PAYLOAD="$require_valid_payload" \
     node "$ROOT_DIR/scripts/fake-seedream-image.mjs" "$SEEDREAM_PORT" >"$log_file" 2>&1 &
   provider_pid="$!"
   wait_for_url "$SEEDREAM_BASE_URL/health" "fake Seedream image provider"
