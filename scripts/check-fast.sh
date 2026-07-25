@@ -36,6 +36,7 @@ bash -n \
 
 echo
 echo "2. node script syntax"
+node --check "$ROOT_DIR/scripts/check-api-contract.mjs"
 node --check "$ROOT_DIR/scripts/audit-frontend-mock-usage.mjs"
 node --check "$ROOT_DIR/scripts/fake-deepseek.mjs"
 node --check "$ROOT_DIR/scripts/fake-seedream-image.mjs"
@@ -43,7 +44,11 @@ node --check "$ROOT_DIR/scripts/smoke-ui.mjs"
 node --check "$ROOT_DIR/scripts/validate-png.mjs"
 
 echo
-echo "3. docker compose config"
+echo "3. API contract coverage"
+"$ROOT_DIR/scripts/check-api-contract.mjs"
+
+echo
+echo "4. docker compose config"
 if command -v docker >/dev/null 2>&1; then
   docker compose -f "$ROOT_DIR/docker-compose.yml" config >/tmp/kindleaf-fast-compose.yml
   docker compose -f "$ROOT_DIR/docker-compose.yml" --profile app config >/tmp/kindleaf-fast-compose-app.yml
@@ -53,20 +58,20 @@ else
 fi
 
 echo
-echo "4. frontend mock/API guard"
+echo "5. frontend mock/API guard"
 "$ROOT_DIR/scripts/audit-frontend-mock-usage.mjs" --strict >/tmp/kindleaf-fast-mock-audit.log
 tail -1 /tmp/kindleaf-fast-mock-audit.log
 
 echo
-echo "5. frontend API build"
+echo "6. frontend API build"
 npm --prefix "$ROOT_DIR/frontend" run build:api
 
 echo
-echo "6. backend format"
+echo "7. backend format"
 cargo fmt --manifest-path "$ROOT_DIR/server/Cargo.toml" --all -- --check
 
 echo
-echo "7. backend tests"
+echo "8. backend tests"
 cargo test --manifest-path "$ROOT_DIR/server/Cargo.toml" --features db --quiet
 
 echo

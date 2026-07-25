@@ -134,6 +134,12 @@ run_auto() {
   sed 's/^/  - /' <<<"$CHANGED"
   echo
 
+  if has_match '^docs/03-后端接口契约\.md$'; then
+    echo "API contract changed: checking controller route coverage."
+    "$ROOT_DIR/scripts/check-api-contract.mjs"
+    echo
+  fi
+
   if ! has_match '^(frontend/|server/|scripts/|docs/|docker-compose\.yml|QUICKSTART\.md|README\.md|\.env(\.trial)?\.example)'; then
     echo "No project files that affect the app were detected. Skipping checks."
     return
