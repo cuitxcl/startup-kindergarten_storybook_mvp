@@ -246,6 +246,7 @@ pub async fn create_public_export(ctx: &AppContext, token: String) -> Result<Exp
             crate::repositories::delivery::storybook_by_share_token(&ctx.db, &token)
                 .await
                 .map_err(delivery_error)?;
+        ensure_storybook_deliverable(&shared_storybook)?;
         let job = match crate::repositories::delivery::create_export_by_share_token(&ctx.db, &token)
             .await
         {

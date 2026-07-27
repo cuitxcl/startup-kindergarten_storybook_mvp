@@ -67,10 +67,12 @@ pub async fn duplicate(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
+    requested_title: Option<String>,
 ) -> Result<Storybook, DbErr> {
     let source =
         crate::repositories::storybook_queries::find(db, workspace_id, storybook_id).await?;
     let new_id = Uuid::new_v4();
+    let title = requested_title.unwrap_or_else(|| format!("{} 副本", source.title));
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
@@ -84,7 +86,7 @@ pub async fn duplicate(
             storybook_type_name(&source.storybook_type).into(),
             storybook_id.into(),
             source.target_child_id.into(),
-            format!("{} 副本", source.title).into(),
+            title.into(),
             source.age_group.into(),
             source.use_scene.into(),
             source.teaching_goal.into(),

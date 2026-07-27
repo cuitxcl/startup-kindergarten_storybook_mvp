@@ -274,8 +274,12 @@ fn storybook(
         use_scene: use_scene.to_string(),
         teaching_goal: teaching_goal.to_string(),
         cover_tone: "温暖、明亮、生活化".to_string(),
+        teacher_review_status: "pending".to_string(),
+        teacher_reviewed_by: None,
+        teacher_reviewed_at: None,
         pages: seed_pages(),
         roles: seed_roles(),
+        quality: Default::default(),
     }
 }
 

@@ -10,4 +10,6 @@ pub mod generation_provider_summary;
 mod generation_provider_tests;
 pub mod generation_seedream_provider;
 pub mod pdf;
+pub mod pdf_images;
 pub mod storage;
+pub mod storage_quota_summary;

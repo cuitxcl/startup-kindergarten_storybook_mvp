@@ -9,7 +9,7 @@ use crate::services::{
     generation_provider_config::{env_non_empty, env_u64, first_non_empty_env, truncate},
     generation_provider_contract::{
         AiGenerationProvider, GenerationProviderComponent, GenerationProviderError,
-        GenerationRequest, ImageGenerationRequest,
+        GenerationRequest, ImageGenerationRequest, ImageReference,
     },
     storage,
 };
@@ -23,6 +23,7 @@ pub struct SeedreamImageProvider {
     pub(crate) endpoint_path: String,
     pub(crate) model: String,
     pub(crate) size: String,
+    pub(crate) output_format: String,
     pub(crate) timeout_seconds: u64,
 }
 
@@ -40,9 +41,10 @@ impl SeedreamImageProvider {
             ),
             model: first_non_empty_env(
                 &["SEEDREAM_IMAGE_MODEL", "ARK_IMAGE_MODEL"],
-                "doubao-seedream-5-0-lite",
+                "doubao-seedream-5-0-260128",
             ),
-            size: first_non_empty_env(&["SEEDREAM_IMAGE_SIZE"], "1024x1024"),
+            size: first_non_empty_env(&["SEEDREAM_IMAGE_SIZE"], "1920x1920"),
+            output_format: first_non_empty_env(&["SEEDREAM_OUTPUT_FORMAT"], "png"),
             timeout_seconds: env_u64("SEEDREAM_TIMEOUT_SECONDS", 120),
         }
     }
@@ -111,17 +113,17 @@ impl AiGenerationProvider for SeedreamImageProvider {
             "prompt": sanitized_prompt,
             "size": self.size,
             "response_format": "b64_json",
+            "output_format": self.output_format,
             "watermark": false,
             "image_mode": request.image_mode.as_str(),
         });
         if !request.reference_images.is_empty() {
-            payload["image"] = json!(
-                request
-                    .reference_images
-                    .iter()
-                    .map(|item| item.url.clone())
-                    .collect::<Vec<_>>()
-            );
+            let reference_image_inputs = request
+                .reference_images
+                .iter()
+                .map(seedream_reference_image_input)
+                .collect::<Result<Vec<_>, _>>()?;
+            payload["image"] = json!(reference_image_inputs);
             payload["reference_images"] = json!(request.reference_images);
         }
         if let Some(edit_instruction) = request
@@ -238,6 +240,21 @@ pub(crate) fn extract_image_base64(item: &JsonValue) -> Option<&str> {
 
 pub(crate) fn extract_image_url(item: &JsonValue) -> Option<&str> {
     item["url"].as_str().or_else(|| item["image_url"].as_str())
+}
+
+pub(crate) fn seedream_reference_image_input(
+    reference: &ImageReference,
+) -> Result<String, GenerationProviderError> {
+    let url = reference.url.trim();
+    if let Some(file_name) = url.strip_prefix("/generated-images/") {
+        let bytes =
+            storage::read_generated_image(file_name).map_err(GenerationProviderError::new)?;
+        return Ok(format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(bytes)
+        ));
+    }
+    Ok(url.to_string())
 }
 
 pub(crate) fn format_seedream_endpoint(base_url: &str, endpoint_path: &str) -> String {

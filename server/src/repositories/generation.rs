@@ -173,15 +173,64 @@ pub async fn create_generation_job_record(
         ensure_child_in_workspace(db, workspace_id, child_id).await?;
     }
 
+    let input_json =
+        enriched_generation_input(db, job_type, payload.storybook_id, payload.input_json).await?;
+
     crate::repositories::generation_jobs::enqueue_job(
         db,
         workspace_id,
         payload.storybook_id,
         created_by,
         job_type,
-        payload.input_json,
+        input_json,
     )
     .await
+}
+
+async fn enriched_generation_input(
+    db: &DatabaseConnection,
+    job_type: &str,
+    storybook_id: Option<Uuid>,
+    mut input_json: JsonValue,
+) -> Result<JsonValue, DbErr> {
+    if job_type == "storybook_pages" && input_json.get("confirmed_roles").is_none() {
+        if let Some(storybook_id) = storybook_id {
+            let confirmed_roles = confirmed_roles_for_storybook(db, storybook_id).await?;
+            if !confirmed_roles.is_empty() {
+                input_json["confirmed_roles"] = json!(confirmed_roles);
+            }
+        }
+    }
+    Ok(input_json)
+}
+
+async fn confirmed_roles_for_storybook(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<Vec<JsonValue>, DbErr> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select name, role_type, appearance, coalesce(story_function, '') as story_function
+            from storybook_roles
+            where storybook_id = $1
+            order by name asc, id asc
+            "#,
+            [storybook_id.into()],
+        ))
+        .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(json!({
+                "name": row.try_get::<String>("", "name")?,
+                "role_type": row.try_get::<String>("", "role_type")?,
+                "appearance": row.try_get::<String>("", "appearance")?,
+                "story_function": row.try_get::<String>("", "story_function")?,
+            }))
+        })
+        .collect()
 }
 
 pub async fn create_page_image_job_record(

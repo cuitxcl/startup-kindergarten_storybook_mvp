@@ -7,7 +7,8 @@ use crate::models::{
     UpdateRoleRequest, UpdateStorybookRequest,
 };
 use crate::repositories::storybook_rules::{
-    ensure_deliverable_ready, ensure_status_transition, storybook_status_name, visibility_name,
+    ensure_deliverable_ready, ensure_status_transition, ensure_teacher_review_ready,
+    storybook_status_name, visibility_name,
 };
 
 pub async fn seed_demo_storybooks(db: &DatabaseConnection) -> Result<(), DbErr> {
@@ -137,6 +138,7 @@ pub async fn update(
     workspace_id: Uuid,
     storybook_id: Uuid,
     payload: UpdateStorybookRequest,
+    actor_user_id: Uuid,
 ) -> Result<Storybook, DbErr> {
     let mut book = find(db, workspace_id, storybook_id).await?;
     if let Some(value) = payload.title {
@@ -151,6 +153,18 @@ pub async fn update(
     }
     if let Some(value) = payload.visibility {
         book.visibility = value;
+    }
+    let teacher_review_status_changed = payload.teacher_review_status.is_some();
+    if let Some(value) = payload.teacher_review_status {
+        book.teacher_review_status = value;
+        if book.teacher_review_status == "confirmed" {
+            ensure_teacher_review_ready(&book)?;
+            book.teacher_reviewed_by = Some(actor_user_id);
+            book.teacher_reviewed_at = Some("now".to_string());
+        } else {
+            book.teacher_reviewed_by = None;
+            book.teacher_reviewed_at = None;
+        }
     }
     if let Some(value) = payload.age_group {
         book.age_group = value;
@@ -175,6 +189,9 @@ pub async fn update(
             use_scene = $7,
             teaching_goal = $8,
             cover_tone = $9,
+            teacher_review_status = case when $12::boolean then $10::text else teacher_review_status end,
+            teacher_reviewed_by = case when $12::boolean then case when $10::text = 'confirmed' then $11::uuid else null end else teacher_reviewed_by end,
+            teacher_reviewed_at = case when $12::boolean then case when $10::text = 'confirmed' then now() else null end else teacher_reviewed_at end,
             updated_at = now()
         where workspace_id = $1 and id = $2
         "#,
@@ -188,6 +205,9 @@ pub async fn update(
             book.use_scene.clone().into(),
             book.teaching_goal.clone().into(),
             book.cover_tone.clone().into(),
+            book.teacher_review_status.clone().into(),
+            actor_user_id.into(),
+            teacher_review_status_changed.into(),
         ],
     ))
     .await?;
@@ -198,8 +218,15 @@ pub async fn duplicate(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
+    requested_title: Option<String>,
 ) -> Result<Storybook, DbErr> {
-    crate::repositories::storybook_factory::duplicate(db, workspace_id, storybook_id).await
+    crate::repositories::storybook_factory::duplicate(
+        db,
+        workspace_id,
+        storybook_id,
+        requested_title,
+    )
+    .await
 }
 
 pub async fn update_page(

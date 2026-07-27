@@ -39,6 +39,8 @@ pub mod intakes;
 #[cfg(feature = "db")]
 pub mod market;
 #[cfg(feature = "db")]
+pub mod market_submission_helpers;
+#[cfg(feature = "db")]
 pub mod market_submissions;
 #[cfg(feature = "db")]
 pub mod market_templates;

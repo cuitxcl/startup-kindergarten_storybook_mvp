@@ -177,7 +177,14 @@ async fn touch_storybook(
 ) -> Result<(), DbErr> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "update storybooks set updated_at = now() where workspace_id = $1 and id = $2",
+        r#"
+        update storybooks
+        set updated_at = now(),
+            teacher_review_status = 'pending',
+            teacher_reviewed_by = null,
+            teacher_reviewed_at = null
+        where workspace_id = $1 and id = $2
+        "#,
         [workspace_id.into(), storybook_id.into()],
     ))
     .await?;

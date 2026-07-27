@@ -82,12 +82,14 @@ export function WizardSideNav({
   steps,
   active,
   onSelect,
+  maxUnlockedStep = active,
 }: {
   title: string;
   copy: string;
   steps: string[];
   active: number;
   onSelect: (step: number) => void;
+  maxUnlockedStep?: number;
 }) {
   return (
     <aside className="wizard-side-nav" aria-label={title}>
@@ -97,11 +99,15 @@ export function WizardSideNav({
         <p>{copy}</p>
       </div>
       <ol>
-        {steps.map((step, index) => (
+        {steps.map((step, index) => {
+          const locked = index > maxUnlockedStep;
+          return (
           <li key={step}>
             <button
               type="button"
-              className={index === active ? "active" : index < active ? "done" : ""}
+              className={locked ? "locked" : index === active ? "active" : index < active ? "done" : ""}
+              disabled={locked}
+              title={locked ? "请先完成前一步" : undefined}
               onClick={() => onSelect(index)}
               aria-current={index === active ? "step" : undefined}
             >
@@ -109,7 +115,8 @@ export function WizardSideNav({
               <strong>{step}</strong>
             </button>
           </li>
-        ))}
+          );
+        })}
       </ol>
     </aside>
   );

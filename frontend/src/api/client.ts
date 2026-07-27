@@ -129,6 +129,30 @@ type ApiStorybookRole = {
   reference_status?: StorybookRole["referenceStatus"];
 };
 
+type ApiStorybookQualityStatus = "passed" | "needs_review" | "blocked";
+
+type ApiStorybookQualityCheck = {
+  key: string;
+  label: string;
+  status: ApiStorybookQualityStatus;
+  message: string;
+};
+
+type ApiStorybookPageQuality = {
+  page_id: string;
+  page_number: number;
+  status: ApiStorybookQualityStatus;
+  issues: string[];
+  suggestions: string[];
+};
+
+type ApiStorybookQualityReport = {
+  status: ApiStorybookQualityStatus;
+  summary: string;
+  checks: ApiStorybookQualityCheck[];
+  pages: ApiStorybookPageQuality[];
+};
+
 type ApiStorybook = {
   id: string;
   workspace_id: string;
@@ -145,8 +169,12 @@ type ApiStorybook = {
   use_scene: string;
   teaching_goal: string;
   cover_tone: string;
+  teacher_review_status?: Storybook["teacherReviewStatus"];
+  teacher_reviewed_by?: string | null;
+  teacher_reviewed_at?: string | null;
   pages: ApiStorybookPage[];
   roles: ApiStorybookRole[];
+  quality?: ApiStorybookQualityReport;
 };
 
 type ApiDeriveCustomBatchResponse = {
@@ -937,6 +965,7 @@ export async function updateStorybook(
     title?: string;
     status?: Storybook["status"];
     visibility?: Storybook["visibility"];
+    teacherReviewStatus?: Storybook["teacherReviewStatus"];
     ageGroup?: string;
     useScene?: string;
     teachingGoal?: string;
@@ -949,6 +978,7 @@ export async function updateStorybook(
       title: payload.title,
       status: payload.status,
       visibility: payload.visibility,
+      teacher_review_status: payload.teacherReviewStatus,
       age_group: payload.ageGroup,
       use_scene: payload.useScene,
       teaching_goal: payload.teachingGoal,
@@ -958,9 +988,10 @@ export async function updateStorybook(
   return mapStorybook(response);
 }
 
-export async function duplicateStorybook(workspaceId: string, storybookId: string) {
+export async function duplicateStorybook(workspaceId: string, storybookId: string, payload?: { title?: string }) {
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}/duplicate`, {
     method: "POST",
+    body: payload ? JSON.stringify({ title: payload.title }) : undefined,
   });
   return mapStorybook(response);
 }
@@ -1818,8 +1849,32 @@ function mapStorybook(book: ApiStorybook): Storybook {
     useScene: book.use_scene,
     teachingGoal: book.teaching_goal,
     coverTone: book.cover_tone,
+    teacherReviewStatus: book.teacher_review_status || "pending",
+    teacherReviewedBy: book.teacher_reviewed_by || undefined,
+    teacherReviewedAt: book.teacher_reviewed_at || undefined,
     pages: book.pages.map(mapStorybookPage),
     roles: book.roles.map(mapStorybookRole),
+    quality: book.quality ? mapStorybookQuality(book.quality) : undefined,
+  };
+}
+
+function mapStorybookQuality(report: ApiStorybookQualityReport) {
+  return {
+    status: report.status,
+    summary: report.summary,
+    checks: report.checks.map((check) => ({
+      key: check.key,
+      label: check.label,
+      status: check.status,
+      message: check.message,
+    })),
+    pages: report.pages.map((page) => ({
+      pageId: page.page_id,
+      pageNumber: page.page_number,
+      status: page.status,
+      issues: page.issues,
+      suggestions: page.suggestions,
+    })),
   };
 }
 

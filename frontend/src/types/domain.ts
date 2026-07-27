@@ -62,7 +62,7 @@ export interface StorybookPage {
   title: string;
   body: string;
   illustrationPrompt: string;
-  status: "ready" | "needs_regeneration" | "generating";
+  status: "ready" | "needs_regeneration" | "generating" | "failed";
 }
 
 export interface StorybookRole {
@@ -75,6 +75,30 @@ export interface StorybookRole {
   referenceImageUrl?: string;
   referenceImagePrompt?: string;
   referenceStatus: "not_started" | "generating" | "ready" | "needs_regeneration" | "failed";
+}
+
+export type StorybookQualityStatus = "passed" | "needs_review" | "blocked";
+
+export interface StorybookQualityCheck {
+  key: string;
+  label: string;
+  status: StorybookQualityStatus;
+  message: string;
+}
+
+export interface StorybookPageQuality {
+  pageId: string;
+  pageNumber: number;
+  status: StorybookQualityStatus;
+  issues: string[];
+  suggestions: string[];
+}
+
+export interface StorybookQualityReport {
+  status: StorybookQualityStatus;
+  summary: string;
+  checks: StorybookQualityCheck[];
+  pages: StorybookPageQuality[];
 }
 
 export interface Storybook {
@@ -93,8 +117,12 @@ export interface Storybook {
   useScene: string;
   teachingGoal: string;
   coverTone: string;
+  teacherReviewStatus?: "pending" | "confirmed";
+  teacherReviewedBy?: string;
+  teacherReviewedAt?: string;
   pages: StorybookPage[];
   roles: StorybookRole[];
+  quality?: StorybookQualityReport;
 }
 
 export interface ChildProfile {

@@ -1,6 +1,6 @@
 import { ArrowRight, CheckCircle2, Copy, Download, Pencil, Send } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
-import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   cancelGenerationJob,
   createPageImageTask,
@@ -28,7 +28,7 @@ import {
 } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
 import { storybooks } from "../../data/mock";
-import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
+import type { Storybook, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
 import {
   generationJobNextAction,
   generationJobStatusLabel,
@@ -43,6 +43,7 @@ export function StorybookDetailPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const { storybookId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const fallbackBook = storybooks.find((item) => item.id === storybookId) || storybooks.find((item) => item.workspaceId === workspace.id) || storybooks[0];
   const [remoteBook, setRemoteBook] = useState<Storybook | null>(null);
   const [loading, setLoading] = useState(shouldUseApi);
@@ -63,7 +64,10 @@ export function StorybookDetailPage() {
   const [shareExpiry, setShareExpiry] = useState<"7d" | "30d" | "never">("7d");
   const [exporting, setExporting] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const [duplicateTitle, setDuplicateTitle] = useState("");
   const [deliverySaving, setDeliverySaving] = useState(false);
+  const [reviewSaving, setReviewSaving] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaForm, setMetaForm] = useState({
@@ -97,6 +101,7 @@ export function StorybookDetailPage() {
     ...(book.pages.length ? [] : ["至少需要一个分页"]),
     ...(book.roles.length ? [] : ["至少需要一个角色或道具设定"]),
     ...(book.pages.some((page) => page.status === "generating") ? ["仍有插图正在生成"] : []),
+    ...(book.pages.some((page) => page.status === "failed") ? ["存在插图生成失败的分页"] : []),
   ] : [];
   const deliveryWarnings = book ? [
     ...(book.pages.some((page) => page.status === "needs_regeneration") ? ["有页面需要重绘，可先交付文字版，也建议稍后补图"] : []),
@@ -105,6 +110,16 @@ export function StorybookDetailPage() {
     Boolean(book && book.id === storybookId && (book.status === "exportable" || book.status === "listed"));
   const canMarkDeliverable =
     Boolean(book && book.id === storybookId && (book.status === "editing" || book.status === "image_pending") && deliveryBlockers.length === 0);
+  const quality = book ? book.quality || buildLocalStorybookQuality(book) : undefined;
+  const reviewDeliveryReminder = book && book.teacherReviewStatus !== "confirmed"
+    ? "这本绘本还没有老师复核记录，建议先点击“老师已复核”后再交付；如需演示仍可继续导出或分享。"
+    : "";
+  const qualityDeliveryBlocker = quality?.status === "blocked"
+    ? "生成质量检查存在阻断项，请先修正后再导出或创建分享链接。"
+    : "";
+  const canStartDelivery = canDeliver && !qualityDeliveryBlocker;
+  const routeResultNotice = resultNoticeFromSearch(location.search);
+  const visibleNotice = notice || routeResultNotice;
 
   useEffect(() => {
     if (!shouldUseApi || !storybookId) return;
@@ -210,6 +225,16 @@ export function StorybookDetailPage() {
     setGenerationJobs(await listStorybookGenerationJobs(workspace.id, storybookId, { limit: 8 }));
   }
 
+  async function refreshStorybook(storybookId = book?.id) {
+    if (!shouldUseApi || !storybookId) return undefined;
+    const updated = await getStorybook(workspace.id, storybookId);
+    setRemoteBook(updated);
+    setSelectedPageId((current) => current && updated.pages.some((page) => page.id === current) ? current : updated.pages[0]?.id);
+    setSelectedRoleId((current) => current && updated.roles.some((role) => role.id === current) ? current : updated.roles[0]?.id);
+    setVisibilityValue(updated.visibility);
+    return updated;
+  }
+
   const currentPageImageJob = latestPageImageJob(generationJobs, selectedPage?.id);
   const currentPageImage = extractImageResult(currentPageImageJob?.output);
 
@@ -300,10 +325,7 @@ export function StorybookDetailPage() {
         illustrationPrompt: pageForm.illustrationPrompt,
       });
       await refreshGenerationJobs(storybookId);
-      setRemoteBook((current) => current ? {
-        ...current,
-        pages: current.pages.map((page) => page.id === updated.id ? updated : page),
-      } : current);
+      await refreshStorybook(storybookId);
       setNotice({ title: "当前页已保存", copy: `第 ${updated.pageNumber} 页修改已写入后端。`, tone: "good" });
       setRetryImageJob(null);
     } catch (err) {
@@ -349,10 +371,7 @@ export function StorybookDetailPage() {
         referenceImagePrompt: roleForm.referenceImagePrompt,
       });
       await refreshGenerationJobs(book.id);
-      setRemoteBook((current) => current ? {
-        ...current,
-        roles: current.roles.map((role) => role.id === updated.id ? updated : role),
-      } : current);
+      await refreshStorybook(book.id);
       setNotice({ title: "角色设定已保存", copy: `${updated.name} 的外观和故事作用已写入后端。`, tone: "good" });
       setRetryImageJob(null);
     } catch (err) {
@@ -416,7 +435,7 @@ export function StorybookDetailPage() {
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
       const settledJob = await waitForGenerationJob(job);
       await refreshGenerationJobs(book.id);
-      handleImageJob(settledJob);
+      await handleImageJob(settledJob);
     } catch (err) {
       setNotice({ title: "插图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
@@ -433,7 +452,7 @@ export function StorybookDetailPage() {
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
       const settledJob = await waitForGenerationJob(job);
       await refreshGenerationJobs(book.id);
-      handleImageJob(settledJob);
+      await handleImageJob(settledJob);
     } catch (err) {
       setNotice({ title: "插图重试失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
@@ -455,7 +474,7 @@ export function StorybookDetailPage() {
     }
   }
 
-  function handleImageJob(job: GenerationJob) {
+  async function handleImageJob(job: GenerationJob) {
     if (!selectedPage) return;
     const currentPageId = selectedPage.id;
     if (job.status === "failed") {
@@ -468,11 +487,9 @@ export function StorybookDetailPage() {
       return;
     }
     setRetryImageJob(null);
-    setRemoteBook((current) => current ? {
-      ...current,
-      pages: current.pages.map((page) => page.id === currentPageId ? { ...page, status: "ready" } : page),
-    } : current);
-    setNotice({ title: "插图任务已完成", copy: `任务${generationStatusLabel(job.status)}，当前页已标记为插图已完成。`, tone: "good" });
+    await refreshStorybook(book?.id);
+    setSelectedPageId(currentPageId);
+    setNotice({ title: "插图任务已完成", copy: `任务${generationStatusLabel(job.status)}，当前页插图和质量检查已刷新。`, tone: "good" });
   }
 
   async function waitForGenerationJob(initialJob: GenerationJob) {
@@ -491,6 +508,10 @@ export function StorybookDetailPage() {
       setNotice({ title: "还不能导出", copy: "请先完成编辑并将绘本标记为可交付，再创建 PDF 导出。", tone: "info" });
       return;
     }
+    if (qualityDeliveryBlocker) {
+      setNotice({ title: "暂不能导出", copy: qualityDeliveryBlocker, tone: "info" });
+      return;
+    }
     if (!shouldUseApi) {
       setNotice({ title: "PDF 导出已开始", copy: "原型模式：导出任务会显示下载状态。", tone: "good" });
       setRetryImageJob(null);
@@ -505,10 +526,10 @@ export function StorybookDetailPage() {
       setNotice({
         title: settledJob.status === "failed" ? "PDF 导出失败" : settledJob.status === "succeeded" ? "PDF 导出已完成" : "PDF 导出任务已创建",
         copy: settledJob.fileUrl
-          ? `导出文件：${settledJob.fileUrl}。这表示后端已经生成了可下载 PDF。`
+          ? `导出文件：${settledJob.fileUrl}。这表示后端已经生成了可下载 PDF。${reviewDeliveryReminder ? ` ${reviewDeliveryReminder}` : ""}`
           : settledJob.status === "failed"
             ? exportFailureText(settledJob)
-            : `任务状态：${exportStatusLabel(settledJob.status)}。导出完成后会生成可下载文件。`,
+            : `任务状态：${exportStatusLabel(settledJob.status)}。导出完成后会生成可下载文件。${reviewDeliveryReminder ? ` ${reviewDeliveryReminder}` : ""}`,
         tone: settledJob.status === "failed" ? "info" : "good",
       });
       setRetryImageJob(null);
@@ -521,13 +542,19 @@ export function StorybookDetailPage() {
 
   async function duplicateCurrentStorybook() {
     if (!book) return;
+    const title = duplicateTitle.trim();
+    if (!title) {
+      setNotice({ title: "副本名称不能为空", copy: "请先填写一个便于后续识别的副本名称。", tone: "info" });
+      return;
+    }
     if (!shouldUseApi) {
       setNotice({ title: "副本已创建", copy: "原型模式：会复制分页、角色和编辑内容，并进入新的私有草稿。", tone: "good" });
+      setDuplicateOpen(false);
       return;
     }
     setDuplicating(true);
     try {
-      const duplicated = await duplicateStorybook(workspace.id, book.id);
+      const duplicated = await duplicateStorybook(workspace.id, book.id, { title });
       setRemoteBook(duplicated);
       setSelectedPageId(duplicated.pages[0]?.id);
       setSelectedRoleId(duplicated.roles[0]?.id);
@@ -535,6 +562,8 @@ export function StorybookDetailPage() {
       setExportJobs([]);
       setGenerationJobs([]);
       setCreatedShareUrl(null);
+      setDuplicateOpen(false);
+      setDuplicateTitle("");
       navigate(`/app/${workspace.id}/storybooks/${duplicated.id}`);
     } catch (err) {
       setNotice({ title: "复制失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
@@ -562,6 +591,38 @@ export function StorybookDetailPage() {
       setNotice({ title: "状态更新失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
       setDeliverySaving(false);
+    }
+  }
+
+  async function saveTeacherReview(status: "pending" | "confirmed") {
+    if (!book) return;
+    if (status === "confirmed" && quality?.status === "blocked") {
+      setNotice({ title: "暂不能确认复核", copy: "生成质量检查仍有阻断项，请先修正分页、角色或插图问题。", tone: "info" });
+      return;
+    }
+    if (!shouldUseApi) {
+      setNotice({
+        title: status === "confirmed" ? "老师复核已确认" : "已重新设为待复核",
+        copy: status === "confirmed" ? "原型模式：这本绘本已记录为老师复核通过。" : "原型模式：内容会回到待老师复核状态。",
+        tone: "good",
+      });
+      return;
+    }
+    setReviewSaving(true);
+    try {
+      const updated = await updateStorybook(workspace.id, book.id, { teacherReviewStatus: status });
+      setRemoteBook(updated);
+      setNotice({
+        title: status === "confirmed" ? "老师复核已确认" : "已重新设为待复核",
+        copy: status === "confirmed"
+          ? "系统已记录这次人工复核。后续修改分页或角色后会自动回到待复核。"
+          : "这本绘本会重新进入老师复核队列。",
+        tone: "good",
+      });
+    } catch (err) {
+      setNotice({ title: "复核状态保存失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+    } finally {
+      setReviewSaving(false);
     }
   }
 
@@ -626,6 +687,10 @@ export function StorybookDetailPage() {
       setNotice({ title: "还不能分享", copy: "请先完成编辑并将绘本标记为可交付，再创建家庭分享链接。", tone: "info" });
       return;
     }
+    if (qualityDeliveryBlocker) {
+      setNotice({ title: "暂不能分享", copy: qualityDeliveryBlocker, tone: "info" });
+      return;
+    }
     if (!shouldUseApi) return;
     setShareSaving(true);
     try {
@@ -635,7 +700,7 @@ export function StorybookDetailPage() {
       await refreshShareLinks(book.id);
       await refreshGenerationJobs(book.id);
       setCreatedShareUrl(link.url);
-      setNotice({ title: "分享链接已创建", copy: `链接：${link.url}。${shareExpiryLabel(link.expiresAt)}。收到这个链接的人可以直接打开家庭分享页。`, tone: "good" });
+      setNotice({ title: "分享链接已创建", copy: `链接：${link.url}。${shareExpiryLabel(link.expiresAt)}。收到这个链接的人可以直接打开家庭分享页。${reviewDeliveryReminder ? ` ${reviewDeliveryReminder}` : ""}`, tone: "good" });
       setRetryImageJob(null);
     } catch (err) {
       setNotice({ title: "分享失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
@@ -689,17 +754,17 @@ export function StorybookDetailPage() {
             {(book.status === "editing" || book.status === "image_pending") && (
               <button className="button secondary" type="button" disabled={deliverySaving || !canMarkDeliverable} title={!canMarkDeliverable ? deliveryBlockers.join("；") || "请等待当前绘本加载完成" : undefined} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "标记可交付"}</button>
             )}
-            <button className="button secondary" type="button" disabled={duplicating} onClick={duplicateCurrentStorybook}><Copy size={16} />{duplicating ? "复制中..." : "复制副本"}</button>
-            <button className="button secondary" type="button" disabled={!canDeliver} title={!canDeliver ? "请先标记可交付" : undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</button>
-            <button className="button primary" type="button" disabled={exporting || !canDeliver} title={!canDeliver ? "请先标记可交付" : undefined} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</button>
+            <button className="button secondary" type="button" disabled={duplicating} onClick={() => { setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={16} />{duplicating ? "复制中..." : "复制副本"}</button>
+            <button className="button secondary" type="button" disabled={!canStartDelivery} title={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</button>
+            <button className="button primary" type="button" disabled={exporting || !canStartDelivery} title={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</button>
           </>
         }
       />
-      {notice && (
+      {visibleNotice && (
         <Notice
-          title={notice.title}
-          copy={notice.copy}
-          tone={retryImageJob ? "danger" : notice.tone || "good"}
+          title={visibleNotice.title}
+          copy={visibleNotice.copy}
+          tone={retryImageJob ? "danger" : visibleNotice.tone || "good"}
           action={retryImageJob ? <button className="button secondary" type="button" disabled={imageGenerating} onClick={retryIllustration}>重新生成插图</button> : undefined}
         />
       )}
@@ -715,6 +780,19 @@ export function StorybookDetailPage() {
             <div className="modal-actions">
               <button className="button secondary" type="button" onClick={() => setMetaOpen(false)}>取消</button>
               <button className="button primary" type="submit" disabled={metaSaving}>{metaSaving ? "保存中" : "保存信息"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {duplicateOpen && (
+        <Modal title="复制为新绘本" onClose={() => setDuplicateOpen(false)}>
+          <form onSubmit={(event) => { event.preventDefault(); duplicateCurrentStorybook(); }}>
+            <label>副本名称<input value={duplicateTitle} onChange={(event) => setDuplicateTitle(event.target.value)} /></label>
+            <p className="task-summary">系统会复制分页正文、插图描述、角色设定和参考图，创建为新的私有草稿，不会覆盖当前绘本。</p>
+            <div className="modal-actions">
+              <button className="button secondary" type="button" onClick={() => setDuplicateOpen(false)}>取消</button>
+              <button className="button primary" type="submit" disabled={duplicating}>{duplicating ? "复制中..." : "确认复制"}</button>
             </div>
           </form>
         </Modal>
@@ -741,12 +819,82 @@ export function StorybookDetailPage() {
           <strong>{deliveryBlockers.length ? "还有阻断项" : deliveryWarnings.length ? "可交付，有提醒" : "可以交付"}</strong>
           <p>{deliveryBlockers[0] || deliveryWarnings[0] || (book.type === "custom" ? "定制版建议先确认隐私，再通过分享或导出发给家长。" : "普通版可先导出，再决定是否创建分享链接。")}</p>
         </Card>
+        {quality && (
+          <Card>
+            <Badge tone={qualityTone(quality.status)}>生成质量</Badge>
+            <strong>{qualityStatusLabel(quality.status)}</strong>
+            <p>{quality.summary}</p>
+          </Card>
+        )}
+        <Card>
+          <Badge tone={book.teacherReviewStatus === "confirmed" ? "good" : "warn"}>老师复核</Badge>
+          <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
+          <p>{book.teacherReviewStatus === "confirmed" ? `已由老师确认。${book.teacherReviewedAt ? `确认时间：${book.teacherReviewedAt}。` : ""}` : "导出或分享前建议由老师最终阅读确认。"}</p>
+        </Card>
         <Card>
           <Badge tone={book.source === "blank" ? "neutral" : "info"}>内容来源</Badge>
           <strong>{storybookSourceLabel(book)}</strong>
           <p>{book.source === "duplicate" ? "这是从已有绘本复制出的私有草稿，适合改成新的活动版本。" : book.source === "marketplace" ? "这是从市场复用的内容，可继续调整为本园版本。" : book.source === "derived" ? "这是基于普通绘本和儿童档案生成的定制副本。" : "这是从空白需求创建的原创绘本。"}</p>
         </Card>
       </section>
+
+      {quality && (
+        <Card className="quality-panel">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">生成完成后检查</p>
+              <h2>生成质量检查</h2>
+            </div>
+            <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>
+          </div>
+          <p>{quality.summary}</p>
+          <div className="review-confirm-row">
+            <div>
+              <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
+              <span>{book.teacherReviewStatus === "confirmed" ? "后续修改分页或角色后会自动回到待复核。" : quality.status === "blocked" ? "生成质量检查仍有阻断项，请先修正后再记录老师复核。" : "老师确认故事、角色、插图和隐私边界都适合当前课堂或家庭场景后，再记录复核。"}</span>
+            </div>
+            <button
+              className={book.teacherReviewStatus === "confirmed" ? "button secondary" : "button primary"}
+              type="button"
+              disabled={reviewSaving || (book.teacherReviewStatus !== "confirmed" && quality.status === "blocked")}
+              title={book.teacherReviewStatus !== "confirmed" && quality.status === "blocked" ? "请先修正生成质量阻断项" : undefined}
+              onClick={() => saveTeacherReview(book.teacherReviewStatus === "confirmed" ? "pending" : "confirmed")}
+            >
+              {reviewSaving ? "保存中..." : book.teacherReviewStatus === "confirmed" ? "重新设为待复核" : quality.status === "blocked" ? "先修正阻断项" : "老师已复核"}
+            </button>
+          </div>
+          <div className="quality-check-grid">
+            {quality.checks.map((check) => (
+              <div className="quality-check-item" key={check.key}>
+                <Badge tone={qualityTone(check.status)}>{qualityStatusLabel(check.status)}</Badge>
+                <strong>{check.label}</strong>
+                <span>{check.message}</span>
+              </div>
+            ))}
+          </div>
+          <div className="quality-page-list">
+            {quality.pages.map((page) => (
+              <button className="quality-page-row" type="button" key={page.pageId} onClick={() => setSelectedPageId(page.pageId)}>
+                <div>
+                  <strong>第 {page.pageNumber} 页</strong>
+                  <span>{qualityPageSummary(page)}</span>
+                  {(page.issues.length > 0 || page.suggestions.length > 0) && (
+                    <div className="quality-page-notes">
+                      {page.issues.map((issue) => (
+                        <small className="quality-page-note issue" key={`issue-${issue}`}>问题：{issue}</small>
+                      ))}
+                      {page.suggestions.map((suggestion) => (
+                        <small className="quality-page-note suggestion" key={`suggestion-${suggestion}`}>建议：{suggestion}</small>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Badge tone={qualityTone(page.status)}>{qualityStatusLabel(page.status)}</Badge>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <section className="detail-layout">
         <aside className="page-strip">
@@ -930,7 +1078,9 @@ export function StorybookDetailPage() {
             <div><span>导出状态</span><strong>{exportJobs.length ? exportStatusLabel(exportJobs[0].status) : "暂无记录"}</strong></div>
             <div><span>分享链接</span><strong>{shareLinks.length ? `${shareLinks.length} 个有效链接` : "未创建"}</strong></div>
           </div>
-          <div className="privacy-callout">分享前请确认不包含未授权儿童信息或家庭隐私。</div>
+          <div className="privacy-callout">
+            分享前请确认不包含未授权儿童信息或家庭隐私。{reviewDeliveryReminder ? ` 分享弹窗提醒：${reviewDeliveryReminder}` : ""}
+          </div>
           {shouldUseApi && (
             <div className="form-grid">
               <div>
@@ -973,7 +1123,7 @@ export function StorybookDetailPage() {
             {shouldUseApi ? (
               <>
                 {createdShareUrl && <a className="button secondary" href={createdShareUrl} target="_blank" rel="noreferrer">打开最新分享页</a>}
-                <button className="button primary" type="button" disabled={shareSaving} onClick={createShare}>
+                <button className="button primary" type="button" disabled={shareSaving || Boolean(qualityDeliveryBlocker)} title={qualityDeliveryBlocker || undefined} onClick={createShare}>
                   {shareSaving ? "处理中..." : "创建新的分享链接"}
                 </button>
               </>
@@ -985,6 +1135,110 @@ export function StorybookDetailPage() {
       )}
     </div>
   );
+}
+
+function qualityStatusLabel(status: string) {
+  return {
+    passed: "检查通过",
+    needs_review: "需要复核",
+    blocked: "存在阻断",
+  }[status] || status;
+}
+
+function qualityTone(status: string): "neutral" | "good" | "warn" | "danger" | "info" {
+  if (status === "passed") return "good";
+  if (status === "blocked") return "danger";
+  if (status === "needs_review") return "warn";
+  return "neutral";
+}
+
+function qualityPageSummary(page: StorybookQualityReport["pages"][number]) {
+  if (page.issues.length && page.suggestions.length) return `${page.issues.length} 个问题，${page.suggestions.length} 条建议。`;
+  if (page.issues.length) return `${page.issues.length} 个问题需要先处理。`;
+  if (page.suggestions.length) return `${page.suggestions.length} 条建议，老师确认后可继续。`;
+  return "这一页暂未发现明显问题。";
+}
+
+function teacherReviewLabel(status?: string) {
+  return status === "confirmed" ? "老师已复核" : "待老师复核";
+}
+
+function buildLocalStorybookQuality(book: Storybook): StorybookQualityReport {
+  const consistencyRoles = book.roles.filter((role) => role.needsConsistency);
+  const checks: StorybookQualityReport["checks"] = [
+    {
+      key: "structure",
+      label: "内容结构",
+      status: book.pages.length && book.roles.length ? "passed" : "blocked",
+      message: book.pages.length && book.roles.length ? "已包含分页内容和角色/道具设定。" : "分页或角色设定不完整。",
+    },
+  ];
+  const missingReferences = consistencyRoles.filter((role) => role.referenceStatus !== "ready" || !role.referenceImageUrl);
+  checks.push({
+    key: "role_references",
+    label: "角色参考图",
+    status: missingReferences.length ? "needs_review" : "passed",
+    message: missingReferences.length
+      ? `以下角色/道具还需要先生成或确认参考图：${missingReferences.map((role) => role.name).join("、")}。`
+      : "需要跨页一致的角色/道具都已有参考图。",
+  });
+
+  let blockedPages = 0;
+  let reviewPages = 0;
+  const pages = book.pages.map((page) => {
+    const issues: string[] = [];
+    const suggestions: string[] = [];
+    const promptHasConfirmedRole = consistencyRoles.length === 0 || consistencyRoles.some((role) => page.illustrationPrompt.includes(role.name));
+    if (!promptHasConfirmedRole) issues.push("插图描述没有明确带入已确认角色/道具名称。");
+    if (page.status === "generating") issues.push("插图仍在生成中。");
+    if (page.status === "failed") issues.push("插图生成失败，需要重新生成。");
+    if (page.status === "needs_regeneration") suggestions.push("当前页标记为需重绘，建议重新生成插图。");
+    consistencyRoles.forEach((role) => {
+      const pageText = `${page.title} ${page.body}`;
+      if (pageText.includes(role.name) && !page.illustrationPrompt.includes(role.name)) {
+        issues.push(`正文出现了「${role.name}」，但插图描述没有同步这个名称。`);
+      }
+    });
+    const status: StorybookQualityReport["status"] = issues.length ? "blocked" : suggestions.length ? "needs_review" : "passed";
+    if (status === "blocked") blockedPages += 1;
+    if (status === "needs_review") reviewPages += 1;
+    return {
+      pageId: page.id,
+      pageNumber: page.pageNumber,
+      status,
+      issues,
+      suggestions,
+    };
+  });
+
+  checks.push({
+    key: "page_prompts",
+    label: "分页一致性",
+    status: blockedPages ? "blocked" : reviewPages ? "needs_review" : pages.length ? "passed" : "blocked",
+    message: blockedPages
+      ? `${blockedPages} 个分页存在阻断问题，需要先修正提示词或重新生成。`
+      : reviewPages
+        ? `${reviewPages} 个分页需要老师复核或补充描述。`
+        : pages.length
+          ? "分页描述已带入角色/道具名称，没有发现明显一致性问题。"
+          : "还没有可检查的分页。",
+  });
+
+  const status: StorybookQualityReport["status"] = checks.some((check) => check.status === "blocked")
+    ? "blocked"
+    : checks.some((check) => check.status === "needs_review")
+      ? "needs_review"
+      : "passed";
+  return {
+    status,
+    summary: status === "passed"
+      ? "系统检查通过，建议老师做最终阅读确认。"
+      : status === "blocked"
+        ? "系统发现阻断问题，请先修正角色、提示词或重新生成。"
+        : "系统发现需要复核的项目，建议老师确认后再导出或分享。",
+    checks,
+    pages,
+  };
 }
 
 function roleLabelMap(roleType: string) {
@@ -1149,6 +1403,32 @@ function generationJobCopy(job: GenerationJob) {
 
 function generationJobTime(job: GenerationJob) {
   return job.finishedAt || job.createdAt;
+}
+
+function resultNoticeFromSearch(search: string): { title: string; copy: string; tone: "good" } | null {
+  const result = new URLSearchParams(search).get("result");
+  if (result === "plain") {
+    return {
+      title: "生成结果已展示",
+      copy: "普通绘本已经生成完成。请先检查故事、角色和分页插图，再导出 PDF 或派生定制版本。",
+      tone: "good",
+    };
+  }
+  if (result === "custom") {
+    return {
+      title: "定制结果已展示",
+      copy: "这本定制绘本已经生成完成。请检查儿童信息、故事改写和插图一致性，再导出或分享给家长。",
+      tone: "good",
+    };
+  }
+  if (result === "batch-custom") {
+    return {
+      title: "批量定制结果已展示",
+      copy: "已打开第一本定制绘本。请从这里开始逐本检查儿童信息、故事改写和插图一致性。",
+      tone: "good",
+    };
+  }
+  return null;
 }
 
 function canCancelGenerationJob(job: GenerationJob) {

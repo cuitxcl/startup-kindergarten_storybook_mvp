@@ -6,16 +6,23 @@ use uuid::Uuid;
 use serde_json::json;
 
 use crate::{
+    application::storybook_inputs::{
+        clean_optional, clean_teacher_review_status, storybook_status_name, storybook_type_name,
+        visibility_name,
+    },
     domains::common,
     error::ApiError,
     models::{
-        CreateStorybookRequest, Storybook, StorybookListQuery, StorybookPage, StorybookRole,
-        StorybookStatus, StorybookType, UpdatePageRequest, UpdateRoleRequest,
-        UpdateStorybookRequest, Visibility,
+        CreateStorybookRequest, DuplicateStorybookRequest, Storybook, StorybookListQuery,
+        UpdateStorybookRequest,
     },
 };
 
+#[cfg(not(feature = "db"))]
+use crate::models::{StorybookPage, StorybookRole, StorybookStatus, StorybookType, Visibility};
+
 pub use crate::application::storybook_customization::{derive_custom, derive_custom_batch};
+pub use crate::application::storybook_editing::{update_page, update_role};
 
 pub async fn list(
     ctx: &AppContext,
@@ -127,8 +134,12 @@ pub async fn create(
             use_scene: common::required(payload.use_scene, "use_scene")?,
             teaching_goal: common::required(payload.teaching_goal, "teaching_goal")?,
             cover_tone: "温暖、清楚".to_string(),
+            teacher_review_status: "pending".to_string(),
+            teacher_reviewed_by: None,
+            teacher_reviewed_at: None,
             pages: mock_pages(),
             roles: mock_roles(),
+            quality: Default::default(),
         };
         state.storybooks.push(book.clone());
         Ok(book)
@@ -171,15 +182,21 @@ pub async fn update(
             title: clean_optional(payload.title, "title")?,
             status: payload.status,
             visibility: payload.visibility,
+            teacher_review_status: clean_teacher_review_status(payload.teacher_review_status)?,
             age_group: clean_optional(payload.age_group, "age_group")?,
             use_scene: clean_optional(payload.use_scene, "use_scene")?,
             teaching_goal: clean_optional(payload.teaching_goal, "teaching_goal")?,
             cover_tone: clean_optional(payload.cover_tone, "cover_tone")?,
         };
-        let book =
-            crate::repositories::storybooks::update(&ctx.db, workspace_id, storybook_id, payload)
-                .await
-                .map_err(common::db_error)?;
+        let book = crate::repositories::storybooks::update(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+            payload,
+            common::actor_user_id(headers)?,
+        )
+        .await
+        .map_err(common::db_error)?;
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
@@ -191,6 +208,7 @@ pub async fn update(
                 "title": book.title,
                 "status": storybook_status_name(&book.status),
                 "visibility": visibility_name(&book.visibility),
+                "teacher_review_status": book.teacher_review_status,
                 "age_group": book.age_group,
                 "use_scene": book.use_scene,
             }),
@@ -222,6 +240,19 @@ pub async fn update(
         if let Some(value) = payload.visibility {
             book.visibility = value;
         }
+        if let Some(value) = clean_teacher_review_status(payload.teacher_review_status)? {
+            if value == "confirmed" {
+                crate::repositories::storybook_rules::ensure_teacher_review_ready(book)
+                    .map_err(common::db_error)?;
+                book.teacher_review_status = "confirmed".to_string();
+                book.teacher_reviewed_by = Some(common::actor_user_id(headers)?);
+                book.teacher_reviewed_at = Some("刚刚".to_string());
+            } else {
+                book.teacher_review_status = "pending".to_string();
+                book.teacher_reviewed_by = None;
+                book.teacher_reviewed_at = None;
+            }
+        }
         if let Some(value) = payload.age_group {
             book.age_group = common::required(value, "age_group")?;
         }
@@ -244,13 +275,20 @@ pub async fn duplicate(
     headers: &HeaderMap,
     workspace_id: Uuid,
     storybook_id: Uuid,
+    payload: DuplicateStorybookRequest,
 ) -> Result<Storybook, ApiError> {
     #[cfg(feature = "db")]
     {
         common::require_editor_db(ctx, headers, workspace_id).await?;
-        let book = crate::repositories::storybooks::duplicate(&ctx.db, workspace_id, storybook_id)
-            .await
-            .map_err(common::db_error)?;
+        let requested_title = clean_optional(payload.title, "title")?;
+        let book = crate::repositories::storybooks::duplicate(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+            requested_title,
+        )
+        .await
+        .map_err(common::db_error)?;
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
@@ -283,13 +321,17 @@ pub async fn duplicate(
             .cloned()
             .ok_or_else(|| ApiError::not_found("storybook"))?;
         let source_title = source.title.clone();
+        let requested_title = clean_optional(payload.title, "title")?;
         let mut book = source;
         book.id = Uuid::new_v4();
-        book.title = format!("{} 副本", source_title);
+        book.title = requested_title.unwrap_or_else(|| format!("{} 副本", source_title));
         book.status = StorybookStatus::Draft;
         book.visibility = Visibility::Private;
         book.source = "duplicate".to_string();
         book.source_title = Some(source_title);
+        book.teacher_review_status = "pending".to_string();
+        book.teacher_reviewed_by = None;
+        book.teacher_reviewed_at = None;
         book.updated_at = "刚刚".to_string();
         for page in &mut book.pages {
             page.id = Uuid::new_v4();
@@ -300,216 +342,6 @@ pub async fn duplicate(
         state.storybooks.push(book.clone());
         Ok(book)
     }
-}
-
-pub async fn update_page(
-    ctx: &AppContext,
-    headers: &HeaderMap,
-    workspace_id: Uuid,
-    storybook_id: Uuid,
-    page_id: Uuid,
-    payload: UpdatePageRequest,
-) -> Result<StorybookPage, ApiError> {
-    #[cfg(feature = "db")]
-    {
-        common::require_editor_db(ctx, headers, workspace_id).await?;
-        let payload = UpdatePageRequest {
-            title: clean_optional(payload.title, "title")?,
-            body: clean_optional(payload.body, "body")?,
-            illustration_prompt: clean_optional(
-                payload.illustration_prompt,
-                "illustration_prompt",
-            )?,
-            status: payload.status,
-        };
-        let page = crate::repositories::storybooks::update_page(
-            &ctx.db,
-            workspace_id,
-            storybook_id,
-            page_id,
-            payload,
-        )
-        .await
-        .map_err(common::db_error)?;
-        crate::repositories::audit::log(
-            &ctx.db,
-            Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
-            "storybook.page_updated",
-            "storybook_page",
-            Some(page.id),
-            json!({
-                "storybook_id": storybook_id,
-                "page_number": page.page_number,
-                "status": page_status_name(&page.status),
-            }),
-        )
-        .await
-        .map_err(common::db_error)?;
-        return Ok(page);
-    }
-
-    #[cfg(not(feature = "db"))]
-    {
-        let state = shared_state(ctx)?;
-        common::require_editor(&state, headers, workspace_id)?;
-        let mut state = state.write().expect("state lock poisoned");
-        let book = state
-            .storybooks
-            .iter_mut()
-            .find(|item| item.workspace_id == workspace_id && item.id == storybook_id)
-            .ok_or_else(|| ApiError::not_found("storybook"))?;
-        let page = book
-            .pages
-            .iter_mut()
-            .find(|item| item.id == page_id)
-            .ok_or_else(|| ApiError::not_found("page"))?;
-        if let Some(value) = payload.title {
-            page.title = common::required(value, "title")?;
-        }
-        if let Some(value) = payload.body {
-            page.body = common::required(value, "body")?;
-        }
-        if let Some(value) = payload.illustration_prompt {
-            page.illustration_prompt = common::required(value, "illustration_prompt")?;
-        }
-        if let Some(value) = payload.status {
-            page.status = value;
-        }
-        let page = page.clone();
-        book.updated_at = "刚刚".to_string();
-        Ok(page)
-    }
-}
-
-pub async fn update_role(
-    ctx: &AppContext,
-    headers: &HeaderMap,
-    workspace_id: Uuid,
-    storybook_id: Uuid,
-    role_id: Uuid,
-    payload: UpdateRoleRequest,
-) -> Result<StorybookRole, ApiError> {
-    #[cfg(feature = "db")]
-    {
-        common::require_editor_db(ctx, headers, workspace_id).await?;
-        let payload = UpdateRoleRequest {
-            name: clean_optional(payload.name, "name")?,
-            role_type: clean_optional(payload.role_type, "role_type")?,
-            appearance: clean_optional(payload.appearance, "appearance")?,
-            story_function: clean_optional(payload.story_function, "story_function")?,
-            needs_consistency: payload.needs_consistency,
-            reference_image_url: clean_optional(
-                payload.reference_image_url,
-                "reference_image_url",
-            )?,
-            reference_image_prompt: clean_optional(
-                payload.reference_image_prompt,
-                "reference_image_prompt",
-            )?,
-            reference_status: clean_optional(payload.reference_status, "reference_status")?,
-        };
-        let role = crate::repositories::storybooks::update_role(
-            &ctx.db,
-            workspace_id,
-            storybook_id,
-            role_id,
-            payload,
-        )
-        .await
-        .map_err(common::db_error)?;
-        crate::repositories::audit::log(
-            &ctx.db,
-            Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
-            "storybook.role_updated",
-            "storybook_role",
-            Some(role.id),
-            json!({
-                "storybook_id": storybook_id,
-                "name": role.name,
-                "role_type": role.role_type,
-                "needs_consistency": role.needs_consistency,
-            }),
-        )
-        .await
-        .map_err(common::db_error)?;
-        return Ok(role);
-    }
-
-    #[cfg(not(feature = "db"))]
-    {
-        let state = shared_state(ctx)?;
-        common::require_editor(&state, headers, workspace_id)?;
-        let mut state = state.write().expect("state lock poisoned");
-        let book = state
-            .storybooks
-            .iter_mut()
-            .find(|item| item.workspace_id == workspace_id && item.id == storybook_id)
-            .ok_or_else(|| ApiError::not_found("storybook"))?;
-        let role = book
-            .roles
-            .iter_mut()
-            .find(|item| item.id == role_id)
-            .ok_or_else(|| ApiError::not_found("role"))?;
-        if let Some(value) = payload.name {
-            role.name = common::required(value, "name")?;
-        }
-        if let Some(value) = payload.role_type {
-            role.role_type = common::required(value, "role_type")?;
-        }
-        if let Some(value) = payload.appearance {
-            role.appearance = common::required(value, "appearance")?;
-        }
-        if let Some(value) = payload.story_function {
-            role.story_function = common::required(value, "story_function")?;
-        }
-        if let Some(value) = payload.needs_consistency {
-            role.needs_consistency = value;
-        }
-        let role = role.clone();
-        book.updated_at = "刚刚".to_string();
-        Ok(role)
-    }
-}
-
-fn clean_optional(value: Option<String>, field: &'static str) -> Result<Option<String>, ApiError> {
-    value
-        .map(|value| common::required(value, field))
-        .transpose()
-}
-
-fn storybook_type_name(value: &StorybookType) -> &'static str {
-    match value {
-        StorybookType::Plain => "plain",
-        StorybookType::Custom => "custom",
-    }
-}
-
-fn storybook_status_name(value: &StorybookStatus) -> &'static str {
-    match value {
-        StorybookStatus::Draft => "draft",
-        StorybookStatus::PlanPending => "plan_pending",
-        StorybookStatus::RolesPending => "roles_pending",
-        StorybookStatus::Editing => "editing",
-        StorybookStatus::ImagePending => "image_pending",
-        StorybookStatus::Exportable => "exportable",
-        StorybookStatus::Submitted => "submitted",
-        StorybookStatus::Listed => "listed",
-    }
-}
-
-fn visibility_name(value: &Visibility) -> &'static str {
-    match value {
-        Visibility::Private => "private",
-        Visibility::Workspace => "workspace",
-        Visibility::MarketSubmission => "market_submission",
-        Visibility::MarketListed => "market_listed",
-    }
-}
-
-fn page_status_name(value: &str) -> &str {
-    value
 }
 
 #[cfg(not(feature = "db"))]

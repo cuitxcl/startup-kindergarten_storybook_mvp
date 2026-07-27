@@ -273,6 +273,9 @@ fn build_mock_custom_book(
     book.source_title = Some(source.title);
     book.target_child_id = Some(child_id);
     book.title = format!("{child_nickname}的定制故事");
+    book.teacher_review_status = "pending".to_string();
+    book.teacher_reviewed_by = None;
+    book.teacher_reviewed_at = None;
     book.updated_at = "刚刚".to_string();
     book
 }

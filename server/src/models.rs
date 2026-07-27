@@ -183,6 +183,50 @@ pub struct StorybookRole {
     pub reference_status: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StorybookQualityStatus {
+    Passed,
+    NeedsReview,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookQualityCheck {
+    pub key: String,
+    pub label: String,
+    pub status: StorybookQualityStatus,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookPageQuality {
+    pub page_id: Uuid,
+    pub page_number: u32,
+    pub status: StorybookQualityStatus,
+    pub issues: Vec<String>,
+    pub suggestions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookQualityReport {
+    pub status: StorybookQualityStatus,
+    pub summary: String,
+    pub checks: Vec<StorybookQualityCheck>,
+    pub pages: Vec<StorybookPageQuality>,
+}
+
+impl Default for StorybookQualityReport {
+    fn default() -> Self {
+        Self {
+            status: StorybookQualityStatus::NeedsReview,
+            summary: "等待生成质量检查".to_string(),
+            checks: Vec::new(),
+            pages: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Storybook {
     pub id: Uuid,
@@ -201,8 +245,12 @@ pub struct Storybook {
     pub use_scene: String,
     pub teaching_goal: String,
     pub cover_tone: String,
+    pub teacher_review_status: String,
+    pub teacher_reviewed_by: Option<Uuid>,
+    pub teacher_reviewed_at: Option<String>,
     pub pages: Vec<StorybookPage>,
     pub roles: Vec<StorybookRole>,
+    pub quality: StorybookQualityReport,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -504,11 +552,17 @@ pub struct CreateStorybookRequest {
     pub teaching_goal: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct DuplicateStorybookRequest {
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdateStorybookRequest {
     pub title: Option<String>,
     pub status: Option<StorybookStatus>,
     pub visibility: Option<Visibility>,
+    pub teacher_review_status: Option<String>,
     pub age_group: Option<String>,
     pub use_scene: Option<String>,
     pub teaching_goal: Option<String>,

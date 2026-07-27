@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
-use crate::models::Storybook;
-use std::{collections::HashMap, fs::File, path::PathBuf};
+use crate::{
+    models::Storybook,
+    services::pdf_images::{PdfImage, decode_png_for_pdf, image_placement},
+};
+use std::{collections::HashMap, path::PathBuf};
 use uuid::Uuid;
 
 const PAGE_WIDTH: i32 = 595;
@@ -10,19 +13,11 @@ const LEFT: i32 = 48;
 const TOP: i32 = 790;
 const LINE_HEIGHT: i32 = 24;
 const CONTENT_WIDTH: i32 = PAGE_WIDTH - LEFT * 2;
-
 struct PdfPage {
     background: Vec<String>,
     lines: Vec<(String, i32)>,
     footer: Option<String>,
     image: Option<usize>,
-}
-
-struct PdfImage {
-    name: String,
-    width: u32,
-    height: u32,
-    rgb: Vec<u8>,
 }
 
 pub fn encode_storybook_pdf(storybook: &Storybook) -> Vec<u8> {
@@ -193,8 +188,13 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
     let mut content = page.background.join("");
     if let Some(image_index) = page.image {
         let image = &images[image_index];
+        let placement = image_placement(image);
         content.push_str(&format!(
-            "q\n467 0 0 226 64 468 cm\n/{} Do\nQ\n",
+            "q\n{} 0 0 {} {} {} cm\n/{} Do\nQ\n",
+            pdf_number(placement.width),
+            pdf_number(placement.height),
+            pdf_number(placement.x),
+            pdf_number(placement.y),
             image.name
         ));
     }
@@ -219,59 +219,15 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
     content
 }
 
-fn decode_png_for_pdf(path: &PathBuf) -> Result<PdfImage, String> {
-    let file = File::open(path).map_err(|err| format!("打开 PNG 失败：{err}"))?;
-    let mut decoder = png::Decoder::new(file);
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|err| format!("读取 PNG 信息失败：{err}"))?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader
-        .next_frame(&mut buf)
-        .map_err(|err| format!("解码 PNG 失败：{err}"))?;
-    let bytes = &buf[..info.buffer_size()];
-    let rgb = png_bytes_to_rgb(bytes, info.color_type, info.bit_depth)?;
-    Ok(PdfImage {
-        name: String::new(),
-        width: info.width,
-        height: info.height,
-        rgb,
-    })
-}
-
-fn png_bytes_to_rgb(
-    bytes: &[u8],
-    color_type: png::ColorType,
-    bit_depth: png::BitDepth,
-) -> Result<Vec<u8>, String> {
-    if bit_depth != png::BitDepth::Eight {
-        return Err("PDF 导出暂只支持 8-bit PNG 插图".to_string());
-    }
-    match color_type {
-        png::ColorType::Rgb => Ok(bytes.to_vec()),
-        png::ColorType::Rgba => Ok(bytes
-            .chunks_exact(4)
-            .flat_map(|chunk| {
-                let alpha = u16::from(chunk[3]);
-                [0, 1, 2].map(move |index| {
-                    let foreground = u16::from(chunk[index]);
-                    let blended = (foreground * alpha + 255 * (255 - alpha)) / 255;
-                    blended as u8
-                })
-            })
-            .collect()),
-        png::ColorType::Grayscale => Ok(bytes.iter().flat_map(|value| [*value; 3]).collect()),
-        png::ColorType::GrayscaleAlpha => Ok(bytes
-            .chunks_exact(2)
-            .flat_map(|chunk| {
-                let alpha = u16::from(chunk[1]);
-                let foreground = u16::from(chunk[0]);
-                let blended = ((foreground * alpha + 255 * (255 - alpha)) / 255) as u8;
-                [blended; 3]
-            })
-            .collect()),
-        png::ColorType::Indexed => Err("PDF 导出暂不支持调色板 PNG 插图".to_string()),
+fn pdf_number(value: f64) -> String {
+    let rounded = (value * 100.0).round() / 100.0;
+    if (rounded - rounded.round()).abs() < f64::EPSILON {
+        format!("{}", rounded.round() as i64)
+    } else {
+        format!("{rounded:.2}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     }
 }
 
@@ -440,6 +396,71 @@ mod tests {
         let _ = std::fs::remove_file(image_path);
     }
 
+    #[test]
+    fn pdf_image_placement_preserves_square_image_ratio() {
+        let image = PdfImage {
+            name: "Im1".to_string(),
+            width: 1920,
+            height: 1920,
+            rgb: Vec::new(),
+        };
+
+        let placement = image_placement(&image);
+
+        assert_eq!(pdf_number(placement.width), "226");
+        assert_eq!(pdf_number(placement.height), "226");
+        assert_eq!(pdf_number(placement.x), "184.5");
+        assert_eq!(pdf_number(placement.y), "468");
+    }
+
+    #[test]
+    fn pdf_image_placement_preserves_wide_and_tall_ratios() {
+        let wide = PdfImage {
+            name: "Im1".to_string(),
+            width: 1600,
+            height: 800,
+            rgb: Vec::new(),
+        };
+        let tall = PdfImage {
+            name: "Im2".to_string(),
+            width: 800,
+            height: 1600,
+            rgb: Vec::new(),
+        };
+
+        let wide_placement = image_placement(&wide);
+        let tall_placement = image_placement(&tall);
+
+        assert_eq!(pdf_number(wide_placement.width), "452");
+        assert_eq!(pdf_number(wide_placement.height), "226");
+        assert_eq!(pdf_number(wide_placement.x), "71.5");
+        assert_eq!(pdf_number(tall_placement.width), "113");
+        assert_eq!(pdf_number(tall_placement.height), "226");
+        assert_eq!(pdf_number(tall_placement.x), "241");
+    }
+
+    #[test]
+    fn page_content_uses_aspect_fit_image_transform() {
+        let content = page_content(
+            &PdfPage {
+                background: Vec::new(),
+                lines: Vec::new(),
+                footer: None,
+                image: Some(0),
+            },
+            &[PdfImage {
+                name: "Im1".to_string(),
+                width: 1920,
+                height: 1920,
+                rgb: Vec::new(),
+            }],
+        );
+
+        assert!(content.contains("226 0 0 226 184.5 468 cm"));
+        assert!(content.contains("/Im1 Do"));
+        assert!(!content.contains("467 0 0 226 64 468 cm"));
+    }
+
     fn write_test_transparent_png(path: &std::path::Path) {
         std::fs::write(
             path,
@@ -467,6 +488,9 @@ mod tests {
             use_scene: "课堂共读".to_string(),
             teaching_goal: "学习轮流".to_string(),
             cover_tone: "温暖纸感".to_string(),
+            teacher_review_status: "pending".to_string(),
+            teacher_reviewed_by: None,
+            teacher_reviewed_at: None,
             pages: vec![
                 StorybookPage {
                     id: Uuid::new_v4(),
@@ -496,6 +520,7 @@ mod tests {
                 reference_image_prompt: None,
                 reference_status: "not_started".to_string(),
             }],
+            quality: Default::default(),
         }
     }
 }

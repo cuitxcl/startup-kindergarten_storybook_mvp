@@ -247,6 +247,7 @@ async function main() {
   await waitForText("家长资料链接");
   await selectOptionByLabelInCard("收集家长补充资料", "班级范围", "小一班");
   await selectOptionByLabelInCard("收集家长补充资料", "链接状态", "可填写");
+  await waitForText("停用小一班可填写链接");
   await clickByText("生成资料链接");
   await waitForText("家长资料链接已生成");
   const intakePath = await extractNoticeIntakePath();
@@ -288,19 +289,29 @@ async function main() {
   await waitForText("图片组件");
   await waitForText("seedream");
   await waitForText("缺少 SEEDREAM_API_KEY 或 ARK_API_KEY");
+  await expectWizardStepDisabled("绘本方案");
+  await expectWizardStepDisabled("角色道具");
+  await expectWizardStepDisabled("分页编辑");
   await fillInputAt(0, plainTitle);
   await fillInputAt(1, "验证 UI smoke 普通绘本流程");
   await clickByText("生成绘本方案");
   await waitForText("绘本方案已生成");
+  await expectWizardStepEnabled("绘本方案");
+  await expectWizardStepDisabled("角色道具");
   await waitForText("进入场景");
   await clickByText("确认方案，继续角色");
+  await waitForText("角色与关键道具");
+  await expectWizardStepEnabled("角色道具");
+  await expectWizardStepDisabled("分页编辑");
   await waitForText("米米");
   await clickByText("确认角色，继续分页");
   await waitForText("分页图文");
+  await expectWizardStepEnabled("分页编辑");
   await clickByText("确认分页，进入预览");
-  await waitForText("分页图文已生成并写入绘本");
-  await waitForText("已准备好");
-  await clickByText("进入绘本详情");
+  await waitForUrl("/storybooks/");
+  await waitForText("普通绘本详情");
+  await waitForText("生成结果已展示");
+  await waitForText(plainTitle);
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks`);
   await waitForText("园所绘本");
   await waitForText("先创建普通绘本");
@@ -309,6 +320,11 @@ async function main() {
   await waitForUrl("/storybooks/");
   await waitForText("普通绘本详情");
   await waitForText(plainTitle);
+  await waitForText("生成质量");
+  await waitForText("生成质量检查");
+  await waitForText("内容结构");
+  await waitForText("角色参考图");
+  await waitForText("分页一致性");
   const sharedBookTitle = await currentStorybookTitle();
   const plainBookId = await currentStorybookId();
   console.log(`plain=${plainBookId}`);
@@ -319,6 +335,9 @@ async function main() {
   await waitForText("参考图已写回角色");
   await waitForReferenceImageLoaded();
   await clickByText("复制副本");
+  await waitForText("复制为新绘本");
+  await fillByLabel("副本名称", `${plainTitle} 副本`);
+  await clickByText("确认复制");
   await waitForText(`${plainTitle} 副本`);
   await waitForText("普通绘本详情");
   await waitForText(`复制自《${plainTitle}》`);
@@ -345,11 +364,29 @@ async function main() {
   const editedPageTitle = `UI Smoke 第 1 页 ${stamp}`;
   await fillByLabel("页面标题", editedPageTitle);
   await fillByLabel("正文", "孩子们在老师引导下练习轮流等待。");
-  await fillByLabel("插图描述", "明亮教室里，老师和孩子围坐在地毯上，一起看小汽车。");
+  await fillByLabel("插图描述", "明亮教室里，米米和老师围坐在地毯上，一起看小汽车。");
   await clickByText("保存本页");
   await waitForText("当前页已保存");
   await clickByText("生成插图");
   await waitForText("插图任务已完成");
+  await waitForText("当前页插图和质量检查已刷新");
+  const qualityBook = await apiGet(`/api/workspaces/${schoolWorkspaceId}/storybooks/${plainBookId}`);
+  for (const page of qualityBook.data?.pages || []) {
+    await apiPatch(`/api/workspaces/${schoolWorkspaceId}/storybooks/${plainBookId}/pages/${page.id}`, {
+      illustration_prompt: "明亮教室里，米米和老师围坐在地毯上，一起看小汽车。",
+    });
+  }
+  await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/${plainBookId}`);
+  await waitForText("生成质量检查");
+  await clickByText("导出 PDF");
+  await waitForText("还没有老师复核记录");
+  await clickByText("分享");
+  await waitForText("管理分享链接");
+  await waitForText("分享弹窗提醒");
+  await clickByText("取消");
+  await clickByText("老师已复核");
+  await waitForText("老师复核已确认");
+  await waitForText("老师已复核");
   await selectOptionByText("园所/空间内共享");
   await clickByText("保存共享设置");
   await waitForText("共享设置已保存");
@@ -382,6 +419,9 @@ async function main() {
   }
   await waitForText("家庭分享版");
   await waitForText(sharedBookTitle);
+  await waitForText("绘本正文");
+  await waitForText(editedPageTitle);
+  await waitForText("孩子们在老师引导下练习轮流等待。");
   await clickByText("下载 PDF");
   await waitForText("PDF 已准备下载");
 
@@ -393,17 +433,24 @@ async function main() {
   await waitForText("seedream");
   await waitForText("缺少 SEEDREAM_API_KEY 或 ARK_API_KEY");
   await waitForText("当前儿童");
+  await expectWizardStepDisabled("档案检查");
+  await expectWizardStepDisabled("定制强度");
+  await expectWizardStepDisabled("定制方案");
   await clickCardContaining("小雨");
   await clickByText("确认孩子");
   await waitForText("档案检查");
+  await expectWizardStepEnabled("档案检查");
+  await expectWizardStepDisabled("定制强度");
   await clickByText("确认档案");
   await waitForText("定制强度");
+  await expectWizardStepEnabled("定制强度");
+  await expectWizardStepDisabled("定制方案");
   await clickByText("生成定制方案");
   await waitForText("定制方案已生成");
+  await expectWizardStepEnabled("定制方案");
   await clickByText("生成定制副本");
-  await waitForText("定制副本已生成");
-  await clickByText("查看生成结果");
   await waitForUrl("/storybooks/");
+  await waitForText("定制结果已展示");
   await waitForText("编辑当前页");
   await clickByText("标记可交付");
   await waitForText("绘本已标记可交付");
@@ -413,6 +460,7 @@ async function main() {
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/${plainBookId}/customize`);
   await waitForText("生成定制绘本");
   await clickByText("批量生成");
+  await expectWizardStepDisabled("档案检查");
   await waitForText("已选 0");
   await waitForText("最多 30 个");
   await clickCardContaining("小雨");
@@ -426,9 +474,8 @@ async function main() {
   await clickByText("生成定制方案");
   await waitForText("定制方案已生成");
   await clickByText("生成定制副本");
-  await waitForText("批量定制副本已生成");
-  await clickByText("查看生成结果");
   await waitForUrl("/storybooks/");
+  await waitForText("批量定制结果已展示");
   await waitForText("编辑当前页");
   console.log(`batch_custom_first=${await currentStorybookId()}`);
 
@@ -900,6 +947,28 @@ async function expectButtonDisabled(text) {
     await sleep(100);
   }
   throw new Error(`button is not disabled: ${text}\n${lastResult?.html || ""}\n${lastResult?.page || ""}`);
+}
+
+async function expectWizardStepDisabled(text) {
+  const result = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
+    if (!button) throw new Error('wizard step not found: ${escapeForError(text)}');
+    return { disabled: Boolean(button.disabled), html: button.outerHTML };
+  })()`);
+  if (!result.disabled) {
+    throw new Error(`wizard step is not disabled: ${text}\n${result.html}`);
+  }
+}
+
+async function expectWizardStepEnabled(text) {
+  const result = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
+    if (!button) throw new Error('wizard step not found: ${escapeForError(text)}');
+    return { disabled: Boolean(button.disabled), html: button.outerHTML };
+  })()`);
+  if (result.disabled) {
+    throw new Error(`wizard step is not enabled: ${text}\n${result.html}`);
+  }
 }
 
 async function clickCardContaining(text) {

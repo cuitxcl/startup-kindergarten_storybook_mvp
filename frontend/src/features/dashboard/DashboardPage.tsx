@@ -67,7 +67,7 @@ function defaultStorageQuota(workspace: Workspace): WorkspaceStorageQuota {
 function defaultUserStorageQuota(): UserStorageQuota {
   const quotaBytes = 209_715_200;
   return {
-    userId: "mock-user",
+    userId: "local-dashboard-preview",
     quotaBytes,
     usedBytes: 0,
     remainingBytes: quotaBytes,

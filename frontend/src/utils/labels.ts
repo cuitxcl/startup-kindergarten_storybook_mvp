@@ -15,6 +15,7 @@ export const pageStatusLabel: Record<StorybookPage["status"], string> = {
   ready: "插图已完成",
   needs_regeneration: "需要重绘",
   generating: "生成中",
+  failed: "生成失败",
 };
 
 export const roleLabel: Record<WorkspaceRole, string> = {

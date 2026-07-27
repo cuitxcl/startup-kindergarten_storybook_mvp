@@ -178,7 +178,7 @@ echo "3. start backend with composite provider"
   DEEPSEEK_BASE_URL="$DEEPSEEK_BASE_URL" \
   SEEDREAM_API_KEY=test-key \
   SEEDREAM_BASE_URL="$SEEDREAM_BASE_URL" \
-  SEEDREAM_IMAGE_MODEL=doubao-seedream-5-0-lite \
+  SEEDREAM_IMAGE_MODEL=doubao-seedream-5-0-260128 \
   DATABASE_URL="$DATABASE_URL" \
   cargo run --features db -- -e test start
 ) >"$LOG_DIR/server.log" 2>&1 &

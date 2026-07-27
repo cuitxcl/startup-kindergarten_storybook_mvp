@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::services::generation_deepseek_provider::{
-    DeepSeekTextProvider, format_deepseek_endpoint,
+    DeepSeekTextProvider, format_deepseek_endpoint, validate_output_against_input,
 };
 use crate::services::generation_mock_provider::MockGenerationProvider;
 use crate::services::generation_output_validator::normalize_provider_output;
@@ -15,7 +15,8 @@ use crate::services::generation_provider_contract::{
 };
 use crate::services::generation_seedream_provider::{
     SeedreamImageProvider, TRANSPARENT_PNG_BASE64, extract_image_base64, extract_image_url,
-    fetch_remote_image, format_seedream_endpoint, generated_image_file_name, write_generated_image,
+    fetch_remote_image, format_seedream_endpoint, generated_image_file_name,
+    seedream_reference_image_input, write_generated_image,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde_json::{Value as JsonValue, json};
@@ -92,11 +93,11 @@ fn provider_config_uses_first_non_empty_value() {
             [
                 None,
                 Some("".trim().to_string()),
-                Some("doubao-seedream-5-0-lite".to_string())
+                Some("doubao-seedream-5-0-260128".to_string())
             ],
             "fallback-model"
         ),
-        "doubao-seedream-5-0-lite"
+        "doubao-seedream-5-0-260128"
     );
     assert_eq!(
         first_non_empty_value([None, Some("  ".trim().to_string())], "fallback-model"),
@@ -119,8 +120,9 @@ fn composite_provider_names_match_job_type() {
             api_key: Some("test-key".to_string()),
             base_url: "https://ark.cn-beijing.volces.com".to_string(),
             endpoint_path: "/api/v3/images/generations".to_string(),
-            model: "doubao-seedream-5-0-lite".to_string(),
-            size: "1024x1024".to_string(),
+            model: "doubao-seedream-5-0-260128".to_string(),
+            size: "1920x1920".to_string(),
+            output_format: "png".to_string(),
             timeout_seconds: 45,
         },
     };
@@ -165,8 +167,9 @@ fn seedream_summary_reports_image_ready_only() {
         api_key: Some("test-key".to_string()),
         base_url: "https://ark.cn-beijing.volces.com".to_string(),
         endpoint_path: "/api/v3/images/generations".to_string(),
-        model: "doubao-seedream-5-0-lite".to_string(),
-        size: "1024x1024".to_string(),
+        model: "doubao-seedream-5-0-260128".to_string(),
+        size: "1920x1920".to_string(),
+        output_format: "png".to_string(),
         timeout_seconds: 45,
     });
     let summary = provider.summary();
@@ -211,8 +214,9 @@ fn composite_summary_reports_text_and_image_ready() {
             api_key: Some("test-key".to_string()),
             base_url: "https://ark.cn-beijing.volces.com".to_string(),
             endpoint_path: "/api/v3/images/generations".to_string(),
-            model: "doubao-seedream-5-0-lite".to_string(),
-            size: "1024x1024".to_string(),
+            model: "doubao-seedream-5-0-260128".to_string(),
+            size: "1920x1920".to_string(),
+            output_format: "png".to_string(),
             timeout_seconds: 45,
         },
     };
@@ -290,8 +294,9 @@ async fn seedream_provider_parses_real_http_image_response() {
         api_key: Some("test-key".to_string()),
         base_url,
         endpoint_path: "/api/v3/images/generations".to_string(),
-        model: "doubao-seedream-5-0-lite".to_string(),
-        size: "1024x1024".to_string(),
+        model: "doubao-seedream-5-0-260128".to_string(),
+        size: "1920x1920".to_string(),
+        output_format: "png".to_string(),
         timeout_seconds: 45,
     };
 
@@ -329,8 +334,9 @@ async fn seedream_provider_sends_reference_image_payload_for_edit_mode() {
         api_key: Some("test-key".to_string()),
         base_url,
         endpoint_path: "/api/v3/images/generations".to_string(),
-        model: "doubao-seedream-5-0-lite".to_string(),
-        size: "1024x1024".to_string(),
+        model: "doubao-seedream-5-0-260128".to_string(),
+        size: "1920x1920".to_string(),
+        output_format: "png".to_string(),
         timeout_seconds: 45,
     };
 
@@ -380,6 +386,32 @@ async fn seedream_provider_sends_reference_image_payload_for_edit_mode() {
     assert!((strength - 0.45).abs() < 0.0001);
 }
 
+#[test]
+fn seedream_reference_image_input_embeds_local_generated_images() {
+    let image_id = Uuid::new_v4().to_string();
+    let image_url = write_generated_image(&image_id, TRANSPARENT_PNG_BASE64, "seedream")
+        .expect("local generated image should be written");
+    let reference = ImageReference {
+        url: image_url.clone(),
+        source: "storybook_role".to_string(),
+        role_id: Some(Uuid::new_v4().to_string()),
+        label: Some("角色参考图".to_string()),
+    };
+
+    let input =
+        seedream_reference_image_input(&reference).expect("local reference should be embedded");
+
+    assert!(input.starts_with("data:image/png;base64,"));
+    assert!(input.contains(TRANSPARENT_PNG_BASE64));
+    assert_ne!(input, image_url);
+
+    let file_name = image_url.trim_start_matches("/generated-images/");
+    let _ = std::fs::remove_file(
+        crate::services::storage::local_generated_image_path(file_name)
+            .expect("local image path should be valid"),
+    );
+}
+
 #[tokio::test]
 async fn seedream_provider_redacts_private_image_prompt_output() {
     let body = format!(
@@ -391,8 +423,9 @@ async fn seedream_provider_redacts_private_image_prompt_output() {
         api_key: Some("test-key".to_string()),
         base_url,
         endpoint_path: "/api/v3/images/generations".to_string(),
-        model: "doubao-seedream-5-0-lite".to_string(),
-        size: "1024x1024".to_string(),
+        model: "doubao-seedream-5-0-260128".to_string(),
+        size: "1920x1920".to_string(),
+        output_format: "png".to_string(),
         timeout_seconds: 45,
     };
 
@@ -567,6 +600,48 @@ fn deepseek_prompt_contract_names_schema_and_job_type() {
     assert_eq!(prompt["provider"], "deepseek");
     assert_eq!(prompt["job_type"], "storybook_pages");
     assert_eq!(prompt["response_schema"]["mode"], "storybook_pages");
+    assert!(
+        prompt["user_prompt"]
+            .as_str()
+            .expect("user prompt should be text")
+            .contains("confirmed_roles")
+    );
+}
+
+#[test]
+fn deepseek_pages_output_must_reference_confirmed_roles() {
+    let input = json!({
+        "confirmed_roles": [
+            {
+                "name": "乐乐",
+                "role_type": "主角",
+                "appearance": "红色T恤，蓝色短裤",
+                "story_function": "学习轮流等待"
+            },
+            {
+                "name": "小美",
+                "role_type": "同伴",
+                "appearance": "粉色连衣裙，双马尾",
+                "story_function": "展示耐心排队"
+            }
+        ]
+    });
+    let output = json!({
+        "pages": [{
+            "page_number": 1,
+            "title": "好玩的套圈",
+            "body": "小象、小兔和小猴站成一排。",
+            "illustration_prompt": "小象 小兔 小猴 面前摆着彩色套圈"
+        }]
+    });
+    let normalized = normalize_provider_output(output, "deepseek", "storybook_pages", None, None)
+        .expect("shape is valid before role consistency check");
+
+    let err = validate_output_against_input(&normalized, &input, "storybook_pages")
+        .expect_err("pages that ignore confirmed roles should fail");
+
+    assert!(!err.retryable);
+    assert!(err.safe_message().contains("未引用已确认角色"));
 }
 
 #[test]

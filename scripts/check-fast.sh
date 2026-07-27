@@ -32,6 +32,7 @@ bash -n \
   "$ROOT_DIR/scripts/smoke-providers.sh" \
   "$ROOT_DIR/scripts/smoke-real-composite-provider.sh" \
   "$ROOT_DIR/scripts/smoke-real-providers.sh" \
+  "$ROOT_DIR/scripts/check-no-secrets.sh" \
   "$ROOT_DIR/scripts/load-env.sh"
 
 echo
@@ -65,15 +66,19 @@ echo "5. frontend mock/API guard"
 tail -1 /tmp/kindleaf-fast-mock-audit.log
 
 echo
-echo "6. frontend API build"
+echo "6. secret guard"
+"$ROOT_DIR/scripts/check-no-secrets.sh"
+
+echo
+echo "7. frontend API build"
 npm --prefix "$ROOT_DIR/frontend" run build:api
 
 echo
-echo "7. backend format"
+echo "8. backend format"
 cargo fmt --manifest-path "$ROOT_DIR/server/Cargo.toml" --all -- --check
 
 echo
-echo "8. backend tests"
+echo "9. backend tests"
 cargo test --manifest-path "$ROOT_DIR/server/Cargo.toml" --features db --quiet
 
 echo

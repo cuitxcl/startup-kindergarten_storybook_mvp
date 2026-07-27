@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation, useOutletContext, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   createGenerationJob,
   deriveCustomStorybooksBatch,
@@ -34,7 +34,9 @@ export function CustomizeStorybookPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const { storybookId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
+  const [unlockedStep, setUnlockedStep] = useState(0);
   const [customMode, setCustomMode] = useState<"single" | "batch">("single");
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [selectedBatchChildIds, setSelectedBatchChildIds] = useState<string[]>([]);
@@ -61,10 +63,14 @@ export function CustomizeStorybookPage() {
   const batchSelectionAtLimit = selectedBatchChildIds.length >= MAX_BATCH_CUSTOM_CHILDREN;
   const canContinueSelection = customMode === "batch" ? selectedBatchChildIds.length > 0 && selectedBatchChildIds.length <= MAX_BATCH_CUSTOM_CHILDREN : Boolean(selected);
   const primaryLabels = ["确认孩子", "确认档案", "生成定制方案", "生成定制副本", "已生成"];
+  const goToStep = (nextStep: number) => {
+    setUnlockedStep((value) => Math.max(value, nextStep));
+    setStep(nextStep);
+  };
   const nextStep = () => {
     setNotice(null);
     setRetryJob(null);
-    setStep((value) => Math.min(steps.length - 1, value + 1));
+    goToStep(Math.min(steps.length - 1, step + 1));
   };
 
   const createCustomizationPlan = async () => {
@@ -77,7 +83,7 @@ export function CustomizeStorybookPage() {
           ? "当前为本地原型反馈；批量模式会按每个儿童资料创建独立定制副本。"
           : "当前为本地原型反馈；接入 API 后会创建定制方案任务。",
       });
-      setStep(3);
+      goToStep(3);
       return;
     }
     setGeneratingPlan(true);
@@ -154,7 +160,7 @@ export function CustomizeStorybookPage() {
       setCustomizationPlan(job.output);
     }
     setNotice({ title: "定制方案已生成", copy: `生成任务${generationStatusLabel(job.status)}，任务编号：${job.id.slice(0, 8)}。` });
-    setStep(3);
+    goToStep(3);
   };
 
   useEffect(() => {
@@ -168,6 +174,8 @@ export function CustomizeStorybookPage() {
     setGenerationJobs([]);
     setCustomizationPlan(null);
     setSelectedChildId(null);
+    setStep(0);
+    setUnlockedStep(0);
     setError("");
     async function load() {
       try {
@@ -226,30 +234,36 @@ export function CustomizeStorybookPage() {
     if (!source || (customMode === "single" && !selected) || (customMode === "batch" && selectedBatchChildIds.length === 0)) return;
     if (!shouldUseApi) {
       setNotice({ title: customMode === "batch" ? "批量定制副本已生成" : "定制副本已生成", copy: "原型模式：会创建独立副本并进入编辑状态。" });
-      setStep(4);
+      goToStep(4);
       return;
     }
     setGenerating(true);
     setRetryJob(null);
     setNotice(null);
     try {
+      let targetBookId: string | null = null;
       if (customMode === "batch") {
         const result = await deriveCustomStorybooksBatch(workspace.id, source.id, {
           childIds: selectedBatchChildIds,
           intensity,
           customizationPlan: customizationPlan || undefined,
         });
-        setGeneratedBookId(result.storybooks[0]?.id || null);
+        targetBookId = result.storybooks[0]?.id || null;
+        setGeneratedBookId(targetBookId);
         setNotice({ title: "批量定制副本已生成", copy: `后端已创建 ${result.createdCount} 本独立定制绘本，原普通绘本不会被覆盖。` });
       } else {
         const book = await deriveCustomStorybook(workspace.id, source.id, { childId: selected!.id, intensity, customizationPlan: customizationPlan || undefined });
-        setGeneratedBookId(book.id);
+        targetBookId = book.id;
+        setGeneratedBookId(targetBookId);
         setNotice({ title: "定制副本已生成", copy: "后端已创建独立定制绘本，原普通绘本不会被覆盖。" });
       }
       if (source?.id) {
         setGenerationJobs(await listStorybookGenerationJobs(workspace.id, source.id));
       }
-      setStep(4);
+      goToStep(4);
+      if (targetBookId) {
+        navigate(`/app/${workspace.id}/storybooks/${targetBookId}?result=${customMode === "batch" ? "batch-custom" : "custom"}`);
+      }
     } catch (err) {
       setNotice({ title: "生成失败", copy: err instanceof Error ? err.message : "请稍后重试" });
     } finally {
@@ -346,6 +360,7 @@ export function CustomizeStorybookPage() {
           copy="先确认孩子资料，再决定定制强度，最后生成独立副本。"
           steps={steps}
           active={step}
+          maxUnlockedStep={unlockedStep}
           onSelect={setStep}
         />
         <Card className="wizard-card">

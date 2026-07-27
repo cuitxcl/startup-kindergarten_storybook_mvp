@@ -187,13 +187,15 @@ impl AiGenerationProvider for DeepSeekTextProvider {
             ))
         })?;
 
-        normalize_provider_output(
+        let normalized = normalize_provider_output(
             output,
             self.name(),
             request.job_type,
             response_json.get("usage").cloned(),
             Some(privacy_audit),
-        )
+        )?;
+        validate_output_against_input(&normalized, request.input, request.job_type)?;
+        Ok(normalized)
     }
 
     async fn generate_image(
@@ -202,6 +204,88 @@ impl AiGenerationProvider for DeepSeekTextProvider {
     ) -> Result<JsonValue, GenerationProviderError> {
         MockGenerationProvider.generate_image(request).await
     }
+}
+
+pub(crate) fn validate_output_against_input(
+    output: &JsonValue,
+    input: &JsonValue,
+    job_type: &str,
+) -> Result<(), GenerationProviderError> {
+    if job_type != "storybook_pages" {
+        return Ok(());
+    }
+    let confirmed_roles = input
+        .get("confirmed_roles")
+        .and_then(|value| value.as_array())
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(|role| role.get("name").and_then(|name| name.as_str()))
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if confirmed_roles.is_empty() {
+        return Ok(());
+    }
+
+    let pages = output
+        .get("pages")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| {
+            GenerationProviderError::new("provider 输出 storybook_pages.pages 必须是 array")
+        })?;
+    for (index, page) in pages.iter().enumerate() {
+        let title = page
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let body = page
+            .get("body")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let prompt = page
+            .get("illustration_prompt")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let combined = format!("{title} {body} {prompt}");
+        if !confirmed_roles.iter().any(|name| combined.contains(name)) {
+            return Err(GenerationProviderError::new(format!(
+                "provider 输出 storybook_pages.pages[{index}] 未引用已确认角色：{}",
+                confirmed_roles.join("、")
+            )));
+        }
+        if !confirmed_roles.iter().any(|name| prompt.contains(name)) {
+            return Err(GenerationProviderError::new(format!(
+                "provider 输出 storybook_pages.pages[{index}].illustration_prompt 未包含已确认角色姓名"
+            )));
+        }
+        let unexpected_animals = [
+            "小象",
+            "小兔",
+            "小猴",
+            "小熊",
+            "小猫",
+            "小狗",
+            "小狐狸",
+            "小鹿",
+        ];
+        let role_text = input
+            .get("confirmed_roles")
+            .map(JsonValue::to_string)
+            .unwrap_or_default();
+        if let Some(animal) = unexpected_animals
+            .iter()
+            .find(|animal| combined.contains(**animal) && !role_text.contains(**animal))
+        {
+            return Err(GenerationProviderError::new(format!(
+                "provider 输出 storybook_pages.pages[{index}] 出现未确认替代角色：{animal}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn format_deepseek_endpoint(base_url: &str, endpoint_path: &str) -> String {
@@ -222,7 +306,9 @@ pub(crate) fn prompt_for(job_type: &str) -> &'static str {
             "根据教学目标生成普通绘本方案。先给故事主线，再给分页节奏和老师审核点。"
         }
         "storybook_roles" => "根据故事方案生成主角、同伴、老师形象和关键道具设定，强调跨页一致性。",
-        "storybook_pages" => "根据已确认方案和角色生成分页图文，每页包含标题、正文和插图提示词。",
+        "storybook_pages" => {
+            "根据已确认方案和角色生成分页图文，每页包含标题、正文和插图提示词。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角；插图提示词也必须复述这些角色一致性线索。"
+        }
         "customization_plan" => {
             "基于普通绘本和儿童档案生成定制方案，只输出可审核的改写点和风险检查。"
         }

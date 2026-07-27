@@ -107,6 +107,9 @@ function validateSeedreamPayload(payload) {
   if (payload.response_format !== "b64_json") {
     return { error: "invalid_response_format", response_format: payload.response_format };
   }
+  if (payload.output_format !== "png") {
+    return { error: "invalid_output_format", output_format: payload.output_format };
+  }
   if (payload.watermark !== false) {
     return { error: "invalid_watermark", watermark: payload.watermark };
   }

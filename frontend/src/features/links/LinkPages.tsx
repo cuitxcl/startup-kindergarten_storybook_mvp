@@ -238,6 +238,27 @@ export function ShareLinkPage() {
           <div><span>使用场景</span><strong>{displayBook.useScene}</strong></div>
           <div><span>教学目标</span><strong>{displayBook.teachingGoal}</strong></div>
         </div>
+        <section className="shared-story-pages" aria-label="绘本正文">
+          <div className="section-head compact">
+            <div>
+              <p className="eyebrow">绘本正文</p>
+              <h2>老师分享的当前版本</h2>
+            </div>
+            <Badge tone="neutral">{displayBook.pages.length || 0} 页</Badge>
+          </div>
+          {displayBook.pages.length ? (
+            displayBook.pages.map((page) => (
+              <article className="shared-story-page" key={page.id}>
+                <span>第 {page.pageNumber} 页</span>
+                <h3>{page.title}</h3>
+                <p>{page.body}</p>
+                {page.illustrationPrompt && <small>插图：{page.illustrationPrompt}</small>}
+              </article>
+            ))
+          ) : (
+            <p className="task-summary">老师暂未分享分页正文，可先下载 PDF 查看当前版本。</p>
+          )}
+        </section>
         {notice && <Notice title={notice.title} copy={notice.copy} tone={notice.tone} />}
         {exportBlobUrl && <a className="button secondary" href={exportBlobUrl} target="_blank" rel="noreferrer">打开 PDF</a>}
         {exportFileUrl && !exportBlobUrl && <span className="task-summary">PDF 文件已生成，正在准备安全下载。</span>}

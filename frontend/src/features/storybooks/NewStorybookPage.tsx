@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useOutletContext } from "react-router-dom";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { createGenerationJob, createStorybook, getGenerationJob, getWorkspaceGenerationProvider, retryGenerationJob, shouldUseApi, updateStorybook, type GenerationJob, type GenerationProviderStatus } from "../../api/client";
 import { Badge, Card, Notice, PageHeader, WizardSideNav } from "../../components/ui";
 import { storybooks } from "../../data/mock";
@@ -14,7 +14,9 @@ const steps = ["需求", "绘本方案", "角色道具", "分页编辑", "预览
 
 export function NewStorybookPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
+  const [unlockedStep, setUnlockedStep] = useState(0);
   const [notice, setNotice] = useState<{ title: string; copy: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [generatingStep, setGeneratingStep] = useState<string | null>(null);
@@ -35,6 +37,10 @@ export function NewStorybookPage() {
   const showNotice = (title: string, copy: string) => {
     setRetryJob(null);
     setNotice({ title, copy });
+  };
+  const goToStep = (nextStep: number) => {
+    setUnlockedStep((value) => Math.max(value, nextStep));
+    setStep(nextStep);
   };
 
   useEffect(() => {
@@ -142,7 +148,7 @@ export function NewStorybookPage() {
     setNotice(null);
     if (step === 0) {
       if (await runGeneration("storybook_plan", "绘本方案已生成")) {
-        setStep(1);
+        goToStep(1);
       }
       return;
     }
@@ -160,21 +166,25 @@ export function NewStorybookPage() {
         if (shouldUseApi && createdBookId) {
           await updateStorybook(workspace.id, createdBookId, { status: "roles_pending" });
         }
-        setStep(3);
+        goToStep(3);
       }
       return;
     }
     if (step === 3) {
       if (await runGeneration("storybook_pages", "分页图文已生成并写入绘本")) {
-        if (shouldUseApi && createdBookId) {
-          await updateStorybook(workspace.id, createdBookId, { status: "editing" });
-          await updateStorybook(workspace.id, createdBookId, { status: "exportable" });
+        const bookId = shouldUseApi ? createdBookId : targetBook;
+        if (shouldUseApi && bookId) {
+          await updateStorybook(workspace.id, bookId, { status: "editing" });
+          await updateStorybook(workspace.id, bookId, { status: "exportable" });
         }
-        setStep(4);
+        goToStep(4);
+        if (bookId) {
+          navigate(`/app/${workspace.id}/storybooks/${bookId}?result=plain`);
+        }
       }
       return;
     }
-    setStep((value) => Math.min(steps.length - 1, value + 1));
+    goToStep(Math.min(steps.length - 1, step + 1));
   };
 
   return (
@@ -213,6 +223,7 @@ export function NewStorybookPage() {
           copy="先确认故事方案，再确认角色道具，最后编辑分页并导出。"
           steps={steps}
           active={step}
+          maxUnlockedStep={unlockedStep}
           onSelect={setStep}
         />
         <Card className="wizard-card">

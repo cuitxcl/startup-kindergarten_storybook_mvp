@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::models::{PaginationMeta, Storybook, StorybookListQuery, StorybookPage, StorybookRole};
 use crate::repositories::storybook_rules::{
-    parse_storybook_status, parse_storybook_type, parse_visibility,
+    parse_storybook_status, parse_storybook_type, parse_visibility, storybook_quality_report,
 };
 
 pub async fn list_by_workspace(
@@ -57,7 +57,11 @@ pub async fn list_by_workspace(
               s.id, s.workspace_id, s.storybook_type, s.status, s.visibility, s.source,
               s.source_storybook_id, s.target_child_id, s.title, coalesce(s.age_group, '') as age_group,
               coalesce(s.use_scene, '') as use_scene, coalesce(s.teaching_goal, '') as teaching_goal,
-              coalesce(s.cover_tone, '') as cover_tone, s.updated_at,
+              coalesce(s.cover_tone, '') as cover_tone,
+              coalesce(s.teacher_review_status, 'pending') as teacher_review_status,
+              s.teacher_reviewed_by,
+              s.teacher_reviewed_at,
+              s.updated_at,
               coalesce(u.display_name, '林老师') as creator_name,
               source.title as source_title
             from storybooks s
@@ -132,7 +136,11 @@ async fn query_storybooks(
               s.id, s.workspace_id, s.storybook_type, s.status, s.visibility, s.source,
               s.source_storybook_id, s.target_child_id, s.title, coalesce(s.age_group, '') as age_group,
               coalesce(s.use_scene, '') as use_scene, coalesce(s.teaching_goal, '') as teaching_goal,
-              coalesce(s.cover_tone, '') as cover_tone, s.updated_at,
+              coalesce(s.cover_tone, '') as cover_tone,
+              coalesce(s.teacher_review_status, 'pending') as teacher_review_status,
+              s.teacher_reviewed_by,
+              s.teacher_reviewed_at,
+              s.updated_at,
               coalesce(u.display_name, '林老师') as creator_name,
               source.title as source_title
             from storybooks s
@@ -152,7 +160,11 @@ async fn query_storybooks(
               s.id, s.workspace_id, s.storybook_type, s.status, s.visibility, s.source,
               s.source_storybook_id, s.target_child_id, s.title, coalesce(s.age_group, '') as age_group,
               coalesce(s.use_scene, '') as use_scene, coalesce(s.teaching_goal, '') as teaching_goal,
-              coalesce(s.cover_tone, '') as cover_tone, s.updated_at,
+              coalesce(s.cover_tone, '') as cover_tone,
+              coalesce(s.teacher_review_status, 'pending') as teacher_review_status,
+              s.teacher_reviewed_by,
+              s.teacher_reviewed_at,
+              s.updated_at,
               coalesce(u.display_name, '林老师') as creator_name,
               source.title as source_title
             from storybooks s
@@ -175,9 +187,12 @@ async fn storybooks_from_rows(
     let mut books = Vec::with_capacity(rows.len());
     for row in rows {
         let id = row.try_get("", "id")?;
-        books.push(Storybook {
+        let pages = pages_for(db, id).await?;
+        let workspace_id = row.try_get("", "workspace_id")?;
+        let roles = roles_for(db, workspace_id, id).await?;
+        let mut book = Storybook {
             id,
-            workspace_id: row.try_get("", "workspace_id")?,
+            workspace_id,
             title: row.try_get("", "title")?,
             storybook_type: parse_storybook_type(&row.try_get::<String>("", "storybook_type")?),
             status: parse_storybook_status(&row.try_get::<String>("", "status")?),
@@ -194,9 +209,17 @@ async fn storybooks_from_rows(
             use_scene: row.try_get("", "use_scene")?,
             teaching_goal: row.try_get("", "teaching_goal")?,
             cover_tone: row.try_get("", "cover_tone")?,
-            pages: pages_for(db, id).await?,
-            roles: roles_for(db, row.try_get("", "workspace_id")?, id).await?,
-        });
+            teacher_review_status: row.try_get("", "teacher_review_status")?,
+            teacher_reviewed_by: row.try_get("", "teacher_reviewed_by")?,
+            teacher_reviewed_at: row
+                .try_get::<Option<DateTime<Utc>>>("", "teacher_reviewed_at")?
+                .map(|value| value.format("%Y-%m-%d %H:%M").to_string()),
+            pages,
+            roles,
+            quality: Default::default(),
+        };
+        book.quality = storybook_quality_report(&book);
+        books.push(book);
     }
     Ok(books)
 }

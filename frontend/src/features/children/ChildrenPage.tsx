@@ -69,8 +69,6 @@ export function ChildrenPage() {
   ];
   const addLabel = workspace.type === "personal" ? "新增孩子资料" : "新增儿童档案";
   const addButton = <button className="button primary" type="button" onClick={() => setOpen(true)}>{addLabel}</button>;
-  const activeIntakeLinkCount = intakeLinks.filter((link) => link.status === "active").length;
-  const hasActiveIntakeLinks = activeIntakeLinkCount > 0 || (intakeLinkStatus === "active" && (intakeLinkMeta?.total ?? 0) > 0);
 
   useEffect(() => {
     setOffset(0);
@@ -397,7 +395,7 @@ export function ChildrenPage() {
               <button
                 className="button secondary"
                 type="button"
-                disabled={revokingActiveLinks || !hasActiveIntakeLinks}
+                disabled={revokingActiveLinks}
                 onClick={revokeAllActiveIntakeLinks}
               >
                 {revokingActiveLinks ? "停用中..." : classroomFilter ? `停用${classroomFilter}可填写链接` : "停用全部可填写链接"}

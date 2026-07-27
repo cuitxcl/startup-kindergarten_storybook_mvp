@@ -217,7 +217,9 @@ fi
 if [[ "$MODE" == "seedream" || "$MODE" == "composite" ]]; then
   seedream_base_url="${SEEDREAM_BASE_URL:-${ARK_BASE_URL:-https://ark.cn-beijing.volces.com}}"
   seedream_endpoint_path="${SEEDREAM_ENDPOINT_PATH:-${ARK_IMAGE_ENDPOINT_PATH:-/api/v3/images/generations}}"
-  seedream_model="${SEEDREAM_IMAGE_MODEL:-${ARK_IMAGE_MODEL:-doubao-seedream-5-0-lite}}"
+  seedream_model="${SEEDREAM_IMAGE_MODEL:-${ARK_IMAGE_MODEL:-doubao-seedream-5-0-260128}}"
+  seedream_size="${SEEDREAM_IMAGE_SIZE:-1920x1920}"
+  seedream_output_format="${SEEDREAM_OUTPUT_FORMAT:-png}"
   if [[ -n "${SEEDREAM_API_KEY:-}" ]]; then
     provider_key_ready "SEEDREAM_API_KEY" "${SEEDREAM_API_KEY:-}" || true
   elif [[ -n "${ARK_API_KEY:-}" ]]; then
@@ -228,6 +230,8 @@ if [[ "$MODE" == "seedream" || "$MODE" == "composite" ]]; then
   validate_url "Seedream base URL" "$seedream_base_url"
   validate_endpoint_path "Seedream endpoint path" "$seedream_endpoint_path"
   ok "Seedream image model=$seedream_model"
+  ok "Seedream image size=$seedream_size"
+  ok "Seedream output format=$seedream_output_format"
 fi
 
 check_port_free "$API_PORT"

@@ -1,6 +1,9 @@
 use sea_orm::DbErr;
 
-use crate::models::{Storybook, StorybookRole, StorybookStatus, StorybookType, Visibility};
+use crate::models::{
+    Storybook, StorybookPageQuality, StorybookQualityCheck, StorybookQualityReport,
+    StorybookQualityStatus, StorybookRole, StorybookStatus, StorybookType, Visibility,
+};
 
 pub fn parse_storybook_type(value: &str) -> StorybookType {
     match value {
@@ -88,7 +91,212 @@ pub fn ensure_deliverable_ready(book: &Storybook) -> Result<(), DbErr> {
             "仍有插图正在生成，完成后才能标记可交付".to_string(),
         ));
     }
+    if book.pages.iter().any(|page| page.status == "failed") {
+        return Err(DbErr::Custom(
+            "存在插图生成失败的分页，重新生成后才能标记可交付".to_string(),
+        ));
+    }
     Ok(())
+}
+
+pub fn ensure_teacher_review_ready(book: &Storybook) -> Result<(), DbErr> {
+    let quality = storybook_quality_report(book);
+    if quality.status == StorybookQualityStatus::Blocked {
+        return Err(DbErr::Custom(
+            "生成质量检查存在阻断项，请先修正后再确认老师复核".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
+    let mut checks = Vec::new();
+    let mut page_reports = Vec::new();
+    let consistency_roles: Vec<_> = book
+        .roles
+        .iter()
+        .filter(|role| role.needs_consistency)
+        .collect();
+
+    checks.push(quality_check(
+        "structure",
+        "内容结构",
+        if book.pages.is_empty() || book.roles.is_empty() {
+            StorybookQualityStatus::Blocked
+        } else {
+            StorybookQualityStatus::Passed
+        },
+        if book.pages.is_empty() {
+            "还没有分页内容，无法判断绘本质量。"
+        } else if book.roles.is_empty() {
+            "还没有角色或道具设定，后续插图容易不一致。"
+        } else {
+            "已包含分页内容和角色/道具设定。"
+        },
+    ));
+
+    let missing_reference_roles: Vec<_> = consistency_roles
+        .iter()
+        .filter(|role| role.reference_status != "ready" || role.reference_image_url.is_none())
+        .map(|role| role.name.clone())
+        .collect();
+    checks.push(quality_check(
+        "role_references",
+        "角色参考图",
+        if consistency_roles.is_empty() {
+            StorybookQualityStatus::NeedsReview
+        } else if missing_reference_roles.is_empty() {
+            StorybookQualityStatus::Passed
+        } else {
+            StorybookQualityStatus::NeedsReview
+        },
+        if consistency_roles.is_empty() {
+            "没有设置需要跨页一致的角色或道具，建议至少确认主角。".to_string()
+        } else if missing_reference_roles.is_empty() {
+            "需要跨页一致的角色/道具都已有参考图。".to_string()
+        } else {
+            format!(
+                "以下角色/道具还需要先生成或确认参考图：{}。",
+                missing_reference_roles.join("、")
+            )
+        },
+    ));
+
+    let mut blocked_pages = 0;
+    let mut review_pages = 0;
+    for page in &book.pages {
+        let mut issues = Vec::new();
+        let mut suggestions = Vec::new();
+        let combined_text = format!("{} {} {}", page.title, page.body, page.illustration_prompt);
+
+        if page.status == "generating" {
+            issues.push("插图仍在生成中。".to_string());
+        } else if page.status == "failed" {
+            issues.push("插图生成失败，需要重新生成。".to_string());
+        } else if page.status == "needs_regeneration" {
+            suggestions.push("当前页标记为需重绘，建议重新生成插图后再交付。".to_string());
+        }
+
+        if !consistency_roles.is_empty()
+            && !consistency_roles
+                .iter()
+                .any(|role| text_contains(&page.illustration_prompt, &role.name))
+        {
+            issues.push("插图描述没有明确带入已确认角色/道具名称。".to_string());
+        }
+
+        for role in &consistency_roles {
+            if text_contains(&combined_text, &role.name)
+                && !text_contains(&page.illustration_prompt, &role.name)
+            {
+                issues.push(format!(
+                    "正文出现了「{}」，但插图描述没有同步这个名称。",
+                    role.name
+                ));
+            }
+            if text_contains(&page.illustration_prompt, &role.name)
+                && !role_appearance_has_prompt_hint(role, &page.illustration_prompt)
+            {
+                suggestions.push(format!(
+                    "「{}」的插图描述可以补充外观关键词，便于跨页保持一致。",
+                    role.name
+                ));
+            }
+        }
+
+        let role_names = book
+            .roles
+            .iter()
+            .map(|role| role.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        for animal in ["小兔", "兔子", "小熊", "小象", "小猫", "小狗", "小狐狸"] {
+            if text_contains(&page.illustration_prompt, animal)
+                && !text_contains(&role_names, animal)
+            {
+                issues.push(format!(
+                    "插图描述出现了未确认形象「{}」，请先修正提示词或重新生成。",
+                    animal
+                ));
+            }
+        }
+
+        let status = if issues.iter().any(|issue| {
+            issue.contains("没有明确带入")
+                || issue.contains("生成失败")
+                || issue.contains("仍在生成中")
+                || issue.contains("未确认形象")
+        }) {
+            blocked_pages += 1;
+            StorybookQualityStatus::Blocked
+        } else if !issues.is_empty() || !suggestions.is_empty() {
+            review_pages += 1;
+            StorybookQualityStatus::NeedsReview
+        } else {
+            StorybookQualityStatus::Passed
+        };
+
+        page_reports.push(StorybookPageQuality {
+            page_id: page.id,
+            page_number: page.page_number,
+            status,
+            issues,
+            suggestions,
+        });
+    }
+
+    checks.push(quality_check(
+        "page_prompts",
+        "分页一致性",
+        if blocked_pages > 0 {
+            StorybookQualityStatus::Blocked
+        } else if review_pages > 0 {
+            StorybookQualityStatus::NeedsReview
+        } else if page_reports.is_empty() {
+            StorybookQualityStatus::Blocked
+        } else {
+            StorybookQualityStatus::Passed
+        },
+        if page_reports.is_empty() {
+            "还没有可检查的分页。".to_string()
+        } else if blocked_pages > 0 {
+            format!("{blocked_pages} 个分页存在阻断问题，需要先修正提示词或重新生成。")
+        } else if review_pages > 0 {
+            format!("{review_pages} 个分页需要老师复核或补充描述。")
+        } else {
+            "分页描述已带入角色/道具名称，没有发现明显一致性问题。".to_string()
+        },
+    ));
+
+    let status = if checks
+        .iter()
+        .any(|check| check.status == StorybookQualityStatus::Blocked)
+    {
+        StorybookQualityStatus::Blocked
+    } else if checks
+        .iter()
+        .any(|check| check.status == StorybookQualityStatus::NeedsReview)
+    {
+        StorybookQualityStatus::NeedsReview
+    } else {
+        StorybookQualityStatus::Passed
+    };
+    let summary = match status {
+        StorybookQualityStatus::Passed => "系统检查通过，建议老师做最终阅读确认。".to_string(),
+        StorybookQualityStatus::NeedsReview => {
+            "系统发现需要复核的项目，建议老师确认后再导出或分享。".to_string()
+        }
+        StorybookQualityStatus::Blocked => {
+            "系统发现阻断问题，请先修正角色、提示词或重新生成。".to_string()
+        }
+    };
+
+    StorybookQualityReport {
+        status,
+        summary,
+        checks,
+        pages: page_reports,
+    }
 }
 
 pub fn role_edit_requires_page_regeneration(before: &StorybookRole, after: &StorybookRole) -> bool {
@@ -102,6 +310,34 @@ fn role_visual_signature_changed(before: &StorybookRole, after: &StorybookRole) 
         || before.appearance.trim() != after.appearance.trim()
         || before.story_function.trim() != after.story_function.trim()
         || before.needs_consistency != after.needs_consistency
+}
+
+fn quality_check(
+    key: &str,
+    label: &str,
+    status: StorybookQualityStatus,
+    message: impl Into<String>,
+) -> StorybookQualityCheck {
+    StorybookQualityCheck {
+        key: key.to_string(),
+        label: label.to_string(),
+        status,
+        message: message.into(),
+    }
+}
+
+fn text_contains(text: &str, value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && text.contains(value)
+}
+
+fn role_appearance_has_prompt_hint(role: &StorybookRole, prompt: &str) -> bool {
+    role.appearance
+        .split(['，', ',', '、', '；', ';', ' '])
+        .map(str::trim)
+        .filter(|part| part.chars().count() >= 2)
+        .take(3)
+        .any(|part| prompt.contains(part))
 }
 
 fn is_allowed_status_transition(from: &StorybookStatus, to: &StorybookStatus) -> bool {
@@ -233,12 +469,104 @@ mod tests {
         book.pages[0].status = "generating".to_string();
         assert!(ensure_deliverable_ready(&book).is_err());
 
+        book = test_storybook();
+        book.pages[0].status = "failed".to_string();
+        assert!(ensure_deliverable_ready(&book).is_err());
+
         book.pages.clear();
         assert!(ensure_deliverable_ready(&book).is_err());
 
         book = test_storybook();
         book.roles.clear();
         assert!(ensure_deliverable_ready(&book).is_err());
+    }
+
+    #[test]
+    fn quality_report_blocks_page_prompt_without_confirmed_role() {
+        let book = test_storybook();
+        let report = storybook_quality_report(&book);
+
+        assert_eq!(report.status, StorybookQualityStatus::Blocked);
+        assert!(report.summary.contains("阻断"));
+        assert!(
+            report.pages[0]
+                .issues
+                .iter()
+                .any(|issue| issue.contains("没有明确带入"))
+        );
+    }
+
+    #[test]
+    fn quality_report_passes_when_reference_and_page_prompt_are_aligned() {
+        let mut book = test_storybook();
+        align_quality_fixture(&mut book);
+
+        let report = storybook_quality_report(&book);
+
+        assert_eq!(report.status, StorybookQualityStatus::Passed);
+        assert!(report.pages[0].issues.is_empty());
+    }
+
+    #[test]
+    fn quality_report_blocks_unconfirmed_substitute_character() {
+        let mut book = test_storybook();
+        align_quality_fixture(&mut book);
+        book.pages[0].illustration_prompt =
+            "林老师，温和、稳定，和小兔一起在教室里引导孩子轮流等待。".to_string();
+
+        let report = storybook_quality_report(&book);
+
+        assert_eq!(report.status, StorybookQualityStatus::Blocked);
+        assert!(
+            report.pages[0]
+                .issues
+                .iter()
+                .any(|issue| issue.contains("未确认形象"))
+        );
+    }
+
+    #[test]
+    fn quality_report_blocks_page_while_image_is_generating() {
+        let mut book = test_storybook();
+        align_quality_fixture(&mut book);
+        book.pages[0].status = "generating".to_string();
+
+        let report = storybook_quality_report(&book);
+
+        assert_eq!(report.status, StorybookQualityStatus::Blocked);
+        assert!(
+            report.pages[0]
+                .issues
+                .iter()
+                .any(|issue| issue.contains("仍在生成中"))
+        );
+    }
+
+    #[test]
+    fn teacher_review_check_rejects_blocked_quality() {
+        let book = test_storybook();
+
+        let err =
+            ensure_teacher_review_ready(&book).expect_err("blocked quality should reject review");
+
+        assert!(err.to_string().contains("生成质量检查存在阻断项"));
+    }
+
+    #[test]
+    fn teacher_review_check_allows_non_blocked_quality() {
+        let mut book = test_storybook();
+        align_quality_fixture(&mut book);
+
+        assert!(ensure_teacher_review_ready(&book).is_ok());
+    }
+
+    fn align_quality_fixture(book: &mut Storybook) {
+        book.roles[0].reference_image_url =
+            Some("/api/workspaces/demo/generation-jobs/demo/image".to_string());
+        book.roles[0].reference_status = "ready".to_string();
+        book.pages[0].body = "林老师带孩子练习轮流等待。".to_string();
+        book.pages[0].illustration_prompt =
+            "林老师，温和、稳定，在教室里引导孩子轮流等待。".to_string();
     }
 
     fn test_storybook() -> Storybook {
@@ -258,6 +586,9 @@ mod tests {
             use_scene: "规则引导".to_string(),
             teaching_goal: "学习轮流与分享".to_string(),
             cover_tone: "温暖、清楚".to_string(),
+            teacher_review_status: "pending".to_string(),
+            teacher_reviewed_by: None,
+            teacher_reviewed_at: None,
             pages: vec![StorybookPage {
                 id: Uuid::new_v4(),
                 page_number: 1,
@@ -277,6 +608,7 @@ mod tests {
                 reference_image_prompt: None,
                 reference_status: "not_started".to_string(),
             }],
+            quality: Default::default(),
         }
     }
 }

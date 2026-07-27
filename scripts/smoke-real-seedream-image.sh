@@ -157,7 +157,7 @@ trap 'status=$?; cleanup; exit $status' EXIT
 echo "== Kindleaf real Seedream image smoke =="
 echo "API_BASE_URL=$API_BASE_URL"
 echo "Seedream base URL=${SEEDREAM_BASE_URL:-${ARK_BASE_URL:-https://ark.cn-beijing.volces.com}}"
-echo "Seedream image model=${SEEDREAM_IMAGE_MODEL:-${ARK_IMAGE_MODEL:-doubao-seedream-5-0-lite}}"
+echo "Seedream image model=${SEEDREAM_IMAGE_MODEL:-${ARK_IMAGE_MODEL:-doubao-seedream-5-0-260128}}"
 echo "DB_NAME=$DB_NAME"
 echo "logs=$LOG_DIR"
 echo "This script calls the real Seedream provider and may consume quota."

@@ -580,6 +580,15 @@ created_plain_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks" "{\"title\
 created_plain_id=$(echo "$created_plain_json" | json_get "console.log(p.data.id)")
 page_id=$(echo "$created_plain_json" | json_get "console.log(p.data.pages[0].id)")
 role_id=$(echo "$created_plain_json" | json_get "console.log(p.data.roles[0].id)")
+echo "$created_plain_json" | json_get "
+const q = p.data.quality;
+if(!q || !['passed','needs_review','blocked'].includes(q.status) || !Array.isArray(q.checks) || !Array.isArray(q.pages)) process.exit(1);
+const labels = q.checks.map((item)=>item.label);
+for (const label of ['内容结构','角色参考图','分页一致性']) {
+  if(!labels.includes(label)) process.exit(1);
+}
+console.log('storybook_quality=' + q.status);
+" >/dev/null
 echo "storybook=$created_plain_id page=$page_id role=$role_id"
 AUTH_HEADER="Authorization: Bearer $registered_token"
 expect_error 403 forbidden - GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id"
@@ -605,6 +614,13 @@ api GET "/api/workspaces/$SCHOOL_WS/generation-jobs?storybook_id=$created_plain_
 created_plain_after_generation_json=$(api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id")
 page_id=$(echo "$created_plain_after_generation_json" | json_get "if(p.data.pages.length!==6) process.exit(1); console.log(p.data.pages[0].id)")
 role_id=$(echo "$created_plain_after_generation_json" | json_get "const teacher=p.data.roles.find((item)=>item.name==='Smoke鹿老师'); if(!teacher) process.exit(1); console.log(teacher.id)")
+echo "$created_plain_after_generation_json" | json_get "
+const q = p.data.quality;
+if(!q || !['passed','needs_review','blocked'].includes(q.status)) process.exit(1);
+if(!q.checks.some((item)=>item.key==='page_prompts')) process.exit(1);
+if(q.pages.length !== 6) process.exit(1);
+console.log('storybook_quality_after_pages=' + q.status + '/' + q.pages.length);
+" >/dev/null
 
 echo "7. update page and image task"
 expect_error 400 validation_error body PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" auth '{"body":"   "}'
@@ -618,12 +634,20 @@ api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"editing"}' | json_get "if(p.data.status!=='editing') process.exit(1); console.log('storybook_status=' + p.data.status);" >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"status":"generating"}' >/dev/null
 expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"status":"exportable"}'
+api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const q=p.data.quality; const page=q?.pages?.find((item)=>item.page_id==='$page_id'); if(q?.status!=='blocked' || page?.status!=='blocked' || !page.issues?.some((issue)=>issue.includes('仍在生成中'))) process.exit(1); console.log('quality_blocks_generating_page=' + q.status);" >/dev/null
+expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"teacher_review_status":"confirmed"}'
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"status":"failed"}' >/dev/null
+expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"status":"exportable"}'
+api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const q=p.data.quality; const page=q?.pages?.find((item)=>item.page_id==='$page_id'); if(q?.status!=='blocked' || page?.status!=='blocked' || !page.issues?.some((issue)=>issue.includes('生成失败'))) process.exit(1); console.log('quality_blocks_failed_page=' + q.status);" >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"status":"ready"}' >/dev/null
 echo "deliverable_check_blocks_generating_page=ok"
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"exportable"}' | json_get "if(p.data.status!=='exportable') process.exit(1); console.log('storybook_deliverable=' + p.data.status);" >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"title":" Smoke 第 1 页 ","body":" 孩子们一起练习等待。 ","illustration_prompt":" 明亮教室，老师和孩子围坐在地毯上 "}' >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/roles/$role_id" '{"name":" Smoke老师形象 ","role_type":" teacher ","appearance":" 温和、稳定、会蹲下来和孩子说话 ","story_function":" 帮助孩子理解等待和表达 ","needs_consistency":true}' | json_get "if(p.data.name!=='Smoke老师形象' || p.data.role_type!=='teacher') process.exit(1); console.log('role=' + p.data.name);" >/dev/null
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const page=p.data.pages.find((item)=>item.id==='$page_id'); if(!page || page.title!=='Smoke 第 1 页' || page.body!=='孩子们一起练习等待。' || page.illustration_prompt!=='明亮教室，老师和孩子围坐在地毯上') process.exit(1); const role=p.data.roles.find((item)=>item.id==='$role_id'); if(!role || role.name!=='Smoke老师形象' || role.appearance!=='温和、稳定、会蹲下来和孩子说话') process.exit(1); console.log('role_saved=' + role.name);" >/dev/null
+expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports"
+expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/share-links" auth '{}'
+echo "delivery_quality_blocked=ok"
 role_reference_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/roles/$role_id/reference-image-tasks" '{"prompt":"Smoke老师形象，温和、稳定、儿童绘本角色参考图"}')
 role_reference_job_id=$(echo "$role_reference_job_json" | json_get "if(p.data.status!=='queued' || p.data.output_json!==null || p.data.job_type!=='storybook_role_reference_image') process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$role_reference_job_id" succeeded
@@ -631,8 +655,18 @@ role_reference_job_detail_json=$(api GET "/api/workspaces/$SCHOOL_WS/generation-
 role_reference_file_url=$(echo "$role_reference_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id/image'; const url=p.data.output_json?.image?.image_url; if('created_by' in p.data) process.exit(1); if(p.data.status!=='succeeded' || p.data.output_json?.image?.role_id!=='$role_id' || p.data.output_json?.image?.target_type!=='role' || url !== expected) process.exit(1); console.log(url);")
 expect_png_download "$role_reference_file_url" role_reference_image auth
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const role=p.data.roles.find((item)=>item.id==='$role_id'); if(!role || role.reference_status!=='ready' || !role.reference_image_url) process.exit(1); console.log('role_reference_image=' + role.reference_status);" >/dev/null
-duplicated_storybook_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/duplicate")
-duplicated_storybook_id=$(echo "$duplicated_storybook_json" | json_get "if(p.data.status!=='draft' || p.data.visibility!=='private' || p.data.source!=='duplicate' || p.data.source_title !== '$renamed_plain_title' || !p.data.title.includes('副本')) process.exit(1); const page=p.data.pages.find((item)=>item.title==='Smoke 第 1 页' && item.body==='孩子们一起练习等待。'); const role=p.data.roles.find((item)=>item.name==='Smoke老师形象' && item.appearance==='温和、稳定、会蹲下来和孩子说话'); if(!page || !role) process.exit(1); console.log(p.data.id)")
+expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"teacher_review_status":"confirmed"}'
+all_page_ids=$(api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "for (const page of p.data.pages) console.log(page.id);")
+while IFS= read -r quality_page_id; do
+  [[ -z "$quality_page_id" ]] && continue
+  api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$quality_page_id" '{"illustration_prompt":"明亮教室，Smoke老师形象和孩子围坐在地毯上练习等待"}' >/dev/null
+done <<< "$all_page_ids"
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"teacher_review_status":"confirmed"}' | json_get "if(p.data.teacher_review_status!=='confirmed' || !p.data.teacher_reviewed_by || !p.data.teacher_reviewed_at) process.exit(1); console.log('teacher_review=' + p.data.teacher_review_status);" >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"body":"孩子们一起练习等待。"}' >/dev/null
+api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "if(p.data.teacher_review_status!=='pending' || p.data.teacher_reviewed_by !== null || p.data.teacher_reviewed_at !== null) process.exit(1); console.log('teacher_review_reset=' + p.data.teacher_review_status);" >/dev/null
+duplicate_title="Smoke命名副本$intake_stamp"
+duplicated_storybook_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/duplicate" "{\"title\":\"$duplicate_title\"}")
+duplicated_storybook_id=$(echo "$duplicated_storybook_json" | json_get "if(p.data.status!=='draft' || p.data.visibility!=='private' || p.data.source!=='duplicate' || p.data.source_title !== '$renamed_plain_title' || p.data.title !== '$duplicate_title') process.exit(1); const page=p.data.pages.find((item)=>item.title==='Smoke 第 1 页' && item.body==='孩子们一起练习等待。'); const role=p.data.roles.find((item)=>item.name==='Smoke老师形象' && item.appearance==='温和、稳定、会蹲下来和孩子说话'); if(!page || !role) process.exit(1); console.log(p.data.id)")
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$duplicated_storybook_id" | json_get "if(p.data.id!=='$duplicated_storybook_id' || p.data.status!=='draft' || p.data.visibility!=='private' || p.data.source_title !== '$renamed_plain_title' || p.data.pages[0].id==='$page_id') process.exit(1); console.log('storybook_duplicated=' + p.data.title);"
 image_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id/image-tasks" "{\"prompt\":\"明亮教室，老师和孩子围坐在地毯上\",\"reference_role_ids\":[\"$role_id\"],\"image_mode\":\"reference_image\"}")
 image_job_id=$(echo "$image_job_json" | json_get "if(p.data.status!=='queued' || p.data.output_json!==null) process.exit(1); console.log(p.data.id)")

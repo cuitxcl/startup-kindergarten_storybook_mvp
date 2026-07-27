@@ -267,7 +267,7 @@ deepseek_endpoint_path="$(first_non_empty "/chat/completions" "${DEEPSEEK_ENDPOI
 deepseek_model="$(first_non_empty "deepseek-v4-flash" "${DEEPSEEK_MODEL:-}")"
 seedream_base_url="$(first_non_empty "https://ark.cn-beijing.volces.com" "${SEEDREAM_BASE_URL:-}" "${ARK_BASE_URL:-}")"
 seedream_endpoint_path="$(first_non_empty "/api/v3/images/generations" "${SEEDREAM_ENDPOINT_PATH:-}" "${ARK_IMAGE_ENDPOINT_PATH:-}")"
-seedream_model="$(first_non_empty "doubao-seedream-5-0-lite" "${SEEDREAM_IMAGE_MODEL:-}" "${ARK_IMAGE_MODEL:-}")"
+seedream_model="$(first_non_empty "doubao-seedream-5-0-260128" "${SEEDREAM_IMAGE_MODEL:-}" "${ARK_IMAGE_MODEL:-}")"
 
 validate_url "APP_HOST" "$app_host"
 if is_local_url "$app_host"; then

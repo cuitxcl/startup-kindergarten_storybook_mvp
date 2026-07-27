@@ -12,8 +12,8 @@ use crate::{
     error::ApiError,
     models::{
         CreateStorybookRequest, DeriveCustomBatchRequest, DeriveCustomBatchResponse,
-        DeriveCustomRequest, Envelope, Storybook, StorybookListQuery, StorybookPage, StorybookRole,
-        UpdatePageRequest, UpdateRoleRequest, UpdateStorybookRequest,
+        DeriveCustomRequest, DuplicateStorybookRequest, Envelope, Storybook, StorybookListQuery,
+        StorybookPage, StorybookRole, UpdatePageRequest, UpdateRoleRequest, UpdateStorybookRequest,
     },
 };
 
@@ -94,9 +94,16 @@ async fn duplicate_storybook(
     State(ctx): State<AppContext>,
     headers: HeaderMap,
     Path((workspace_id, storybook_id)): Path<(Uuid, Uuid)>,
+    payload: Option<Json<DuplicateStorybookRequest>>,
 ) -> Result<(StatusCode, Json<Envelope<Storybook>>), ApiError> {
-    let book =
-        application::storybooks::duplicate(&ctx, &headers, workspace_id, storybook_id).await?;
+    let book = application::storybooks::duplicate(
+        &ctx,
+        &headers,
+        workspace_id,
+        storybook_id,
+        payload.map(|Json(payload)| payload).unwrap_or_default(),
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(Envelope::new(book))))
 }
 
