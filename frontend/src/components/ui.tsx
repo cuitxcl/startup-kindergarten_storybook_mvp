@@ -4,8 +4,8 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <section className={`card ${className}`}>{children}</section>;
+export function Card({ children, className = "", id }: { children: ReactNode; className?: string; id?: string }) {
+  return <section id={id} className={`card ${className}`}>{children}</section>;
 }
 
 export function EmptyState({ title, copy, action }: { title: string; copy: string; action?: ReactNode }) {

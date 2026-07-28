@@ -118,6 +118,21 @@ export function StorybookDetailPage() {
     ? "生成质量检查存在阻断项，请先修正后再导出或创建分享链接。"
     : "";
   const canStartDelivery = canDeliver && !qualityDeliveryBlocker;
+  const selectedPageQuality = selectedPage && quality
+    ? quality.pages.find((page) => page.pageId === selectedPage.id)
+    : undefined;
+  const firstActionableQualityPage = quality?.pages.find((page) => page.status === "blocked")
+    || quality?.pages.find((page) => page.status === "needs_review");
+  const firstRoleNeedingReference = book?.roles.find((role) => role.needsConsistency && (role.referenceStatus !== "ready" || !role.referenceImageUrl));
+  const selectedPageReferenceText = selectedPage
+    ? `${pageForm.title || selectedPage.title} ${pageForm.body || selectedPage.body} ${pageForm.illustrationPrompt || selectedPage.illustrationPrompt}`
+    : "";
+  const selectedPageReferencedRoles = book?.roles.filter((role) => role.needsConsistency && selectedPageReferenceText.includes(role.name)) || [];
+  const selectedPageReadyReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceStatus === "ready" && role.referenceImageUrl);
+  const selectedPageMissingReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceStatus !== "ready" || !role.referenceImageUrl);
+  const pageImageReferenceBlocker = selectedPageMissingReferenceRoles.length
+    ? `本页提到了 ${selectedPageMissingReferenceRoles.map((role) => role.name).join("、")}，请先生成角色参考图再生成插图。`
+    : "";
   const routeResultNotice = resultNoticeFromSearch(location.search);
   const visibleNotice = notice || routeResultNotice;
 
@@ -208,6 +223,26 @@ export function StorybookDetailPage() {
   function updateRoleForm(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
     const { name, value } = event.target;
     setRoleForm((current) => ({ ...current, [name]: value }));
+  }
+
+  function focusQualityPage(page: StorybookQualityReport["pages"][number]) {
+    setSelectedPageId(page.pageId);
+    setNotice({
+      title: `已定位到第 ${page.pageNumber} 页`,
+      copy: page.issues[0] || page.suggestions[0] || "请在下方检查正文、插图描述和插图生成状态。",
+      tone: "info",
+    });
+    window.setTimeout(() => document.getElementById("storybook-page-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }
+
+  function focusRoleReference(role: StorybookRole) {
+    setSelectedRoleId(role.id);
+    setNotice({
+      title: `已定位到 ${role.name}`,
+      copy: "请先检查角色设定并生成参考图，再继续分页插图和老师复核。",
+      tone: "info",
+    });
+    window.setTimeout(() => document.getElementById("storybook-role-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
   async function refreshShareLinks(storybookId = book?.id) {
@@ -418,6 +453,11 @@ export function StorybookDetailPage() {
 
   async function generateIllustration() {
     if (!book || !selectedPage) return;
+    if (pageImageReferenceBlocker) {
+      setNotice({ title: "先补齐角色参考图", copy: pageImageReferenceBlocker, tone: "info" });
+      if (selectedPageMissingReferenceRoles[0]) focusRoleReference(selectedPageMissingReferenceRoles[0]);
+      return;
+    }
     if (!shouldUseApi) {
       setNotice({ title: "插图任务已完成", copy: "原型模式：图片生成任务会更新当前页插图状态。", tone: "good" });
       setRetryImageJob(null);
@@ -848,6 +888,30 @@ export function StorybookDetailPage() {
             <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>
           </div>
           <p>{quality.summary}</p>
+          {(firstActionableQualityPage || firstRoleNeedingReference) && (
+            <div className="quality-action-callout">
+              <div>
+                <strong>{quality.status === "blocked" ? "先处理阻断项" : "建议先处理待复核项"}</strong>
+                <span>
+                  {firstActionableQualityPage
+                    ? `第 ${firstActionableQualityPage.pageNumber} 页需要检查：${firstActionableQualityPage.issues[0] || firstActionableQualityPage.suggestions[0] || "请核对分页内容。"}`
+                    : `${firstRoleNeedingReference?.name} 还没有可用参考图。`}
+                </span>
+              </div>
+              <div className="inline-actions">
+                {firstActionableQualityPage && (
+                  <button className="button secondary" type="button" onClick={() => focusQualityPage(firstActionableQualityPage)}>
+                    定位问题页
+                  </button>
+                )}
+                {firstRoleNeedingReference && (
+                  <button className="button secondary" type="button" onClick={() => focusRoleReference(firstRoleNeedingReference)}>
+                    定位角色参考图
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <div className="review-confirm-row">
             <div>
               <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
@@ -874,7 +938,7 @@ export function StorybookDetailPage() {
           </div>
           <div className="quality-page-list">
             {quality.pages.map((page) => (
-              <button className="quality-page-row" type="button" key={page.pageId} onClick={() => setSelectedPageId(page.pageId)}>
+              <button className="quality-page-row" type="button" key={page.pageId} onClick={() => focusQualityPage(page)}>
                 <div>
                   <strong>第 {page.pageNumber} 页</strong>
                   <span>{qualityPageSummary(page)}</span>
@@ -928,7 +992,7 @@ export function StorybookDetailPage() {
           )}
         </Card>
         <aside className="editor-panel">
-          <Card>
+          <Card id="storybook-role-editor">
             <h2>角色与道具</h2>
             <div className="compact-list">
               {book.roles.map((role) => (
@@ -1055,14 +1119,54 @@ export function StorybookDetailPage() {
               )}
             </Card>
           )}
-          <Card>
+          <Card id="storybook-page-editor">
             <h2>编辑当前页</h2>
+            {selectedPageQuality && selectedPageQuality.status !== "passed" && (
+              <div className="quality-focus-callout">
+                <Badge tone={qualityTone(selectedPageQuality.status)}>{qualityStatusLabel(selectedPageQuality.status)}</Badge>
+                <div>
+                  <strong>当前页检查</strong>
+                  {(selectedPageQuality.issues.length > 0 || selectedPageQuality.suggestions.length > 0) ? (
+                    <>
+                      {selectedPageQuality.issues.map((issue) => (
+                        <span key={`selected-issue-${issue}`}>问题：{issue}</span>
+                      ))}
+                      {selectedPageQuality.suggestions.map((suggestion) => (
+                        <span key={`selected-suggestion-${suggestion}`}>建议：{suggestion}</span>
+                      ))}
+                    </>
+                  ) : (
+                    <span>请检查正文、插图描述和插图生成状态。</span>
+                  )}
+                </div>
+              </div>
+            )}
             <label>页面标题<input name="title" value={pageForm.title} onChange={updatePageForm} /></label>
             <label>正文<textarea name="body" rows={5} value={pageForm.body} onChange={updatePageForm} /></label>
             <label>插图描述<textarea name="illustrationPrompt" rows={4} value={pageForm.illustrationPrompt} onChange={updatePageForm} /></label>
+            <div className={`reference-guard-callout ${pageImageReferenceBlocker ? "needs-reference" : ""}`}>
+              <Badge tone={pageImageReferenceBlocker ? "warn" : selectedPageReadyReferenceRoles.length ? "good" : "neutral"}>插图参考图</Badge>
+              <div>
+                <strong>{pageImageReferenceBlocker ? "先补齐本页角色参考图" : selectedPageReadyReferenceRoles.length ? "本页会引用角色参考图" : "本页未识别到需固定形象的角色"}</strong>
+                {selectedPageReadyReferenceRoles.length > 0 && (
+                  <span>已就绪：{selectedPageReadyReferenceRoles.map((role) => role.name).join("、")}。</span>
+                )}
+                {selectedPageMissingReferenceRoles.length > 0 && (
+                  <span>缺少参考图：{selectedPageMissingReferenceRoles.map((role) => role.name).join("、")}。</span>
+                )}
+                {!selectedPageReferencedRoles.length && (
+                  <span>如果本页出现固定主角、老师或关键道具，请在插图描述中写出名称，系统才会带入对应参考图。</span>
+                )}
+              </div>
+              {selectedPageMissingReferenceRoles[0] && (
+                <button className="button secondary" type="button" onClick={() => focusRoleReference(selectedPageMissingReferenceRoles[0])}>
+                  定位缺少的参考图
+                </button>
+              )}
+            </div>
             <div className="inline-actions">
               <button className="button secondary" type="button" disabled={imageGenerating} onClick={generateIllustration}>
-                {imageGenerating ? "生成中..." : selectedPage.status === "needs_regeneration" ? "重新生成插图" : "生成插图"}
+                {imageGenerating ? "生成中..." : pageImageReferenceBlocker ? "先生成参考图" : selectedPage.status === "needs_regeneration" ? "重新生成插图" : "生成插图"}
               </button>
               <button className="button primary" type="button" onClick={savePage}>保存本页</button>
             </div>

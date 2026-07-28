@@ -303,9 +303,15 @@ async function main() {
   await waitForText("角色与关键道具");
   await expectWizardStepEnabled("角色道具");
   await expectWizardStepDisabled("分页编辑");
+  await waitForText("生成角色道具");
+  await clickByText("生成角色道具");
+  await waitForText("角色与道具已生成并写入绘本");
+  await waitForText("手动修改");
   await waitForText("米米");
-  await clickByText("确认角色，继续分页");
+  await clickByText("确认角色，生成分页");
   await waitForText("分页图文");
+  await waitForText("分页图文已生成并写入绘本");
+  await waitForText("手动修改");
   await expectWizardStepEnabled("分页编辑");
   await clickByText("确认分页，进入预览");
   await waitForUrl("/storybooks/");
@@ -329,6 +335,9 @@ async function main() {
   const plainBookId = await currentStorybookId();
   console.log(`plain=${plainBookId}`);
   await waitForText("先确认角色参考图");
+  await waitForText("定位角色参考图");
+  await clickByText("定位角色参考图");
+  await waitForText("已定位到");
   await waitForText("生成参考图");
   await clickByText("生成参考图");
   await waitForText("角色参考图已生成");
@@ -367,6 +376,19 @@ async function main() {
   await fillByLabel("插图描述", "明亮教室里，米米和老师围坐在地毯上，一起看小汽车。");
   await clickByText("保存本页");
   await waitForText("当前页已保存");
+  await waitForText("插图参考图");
+  let referenceGuardPasses = 0;
+  while (await pageHasText("缺少参考图")) {
+    if (referenceGuardPasses > 4) throw new Error("too many missing page reference roles");
+    await clickByText("定位缺少的参考图");
+    await waitForText("已定位到");
+    await clickByText("生成参考图");
+    await waitForText("角色参考图已生成");
+    await waitForText("参考图已写回角色");
+    await waitForReferenceImageLoaded();
+    referenceGuardPasses += 1;
+  }
+  await waitForText("本页会引用角色参考图");
   await clickByText("生成插图");
   await waitForText("插图任务已完成");
   await waitForText("当前页插图和质量检查已刷新");

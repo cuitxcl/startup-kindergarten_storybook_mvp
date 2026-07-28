@@ -303,7 +303,7 @@ pub(crate) fn format_deepseek_endpoint(base_url: &str, endpoint_path: &str) -> S
 pub(crate) fn prompt_for(job_type: &str) -> &'static str {
     match job_type {
         "storybook_plan" => {
-            "根据教学目标生成普通绘本方案。先给故事主线，再给分页节奏和老师审核点。"
+            "根据 input.title、input.theme、input.use_scene、input.style 生成普通绘本方案。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。先给故事主线，再给分页节奏和老师审核点。"
         }
         "storybook_roles" => "根据故事方案生成主角、同伴、老师形象和关键道具设定，强调跨页一致性。",
         "storybook_pages" => {

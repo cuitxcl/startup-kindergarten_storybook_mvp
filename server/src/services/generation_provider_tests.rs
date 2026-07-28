@@ -581,6 +581,31 @@ fn generated_image_file_name_sanitizes_path_segments() {
 }
 
 #[test]
+fn deepseek_plan_prompt_requires_title_and_theme_alignment() {
+    let provider = DeepSeekTextProvider {
+        api_key: Some("test-key".to_string()),
+        base_url: "https://api.deepseek.com".to_string(),
+        endpoint_path: "/chat/completions".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        timeout_seconds: 45,
+        max_tokens: 4096,
+    };
+    let prompt = provider
+        .build_prompt(&GenerationRequest {
+            job_type: "storybook_plan",
+            input: &json!({"title": "丛林大探险", "theme": "丛林大探险"}),
+        })
+        .expect("prompt contract should be built");
+
+    let user_prompt = prompt["user_prompt"]
+        .as_str()
+        .expect("user prompt should be text");
+    assert!(user_prompt.contains("input.title"));
+    assert!(user_prompt.contains("input.theme"));
+    assert!(user_prompt.contains("不得沿用无关"));
+}
+
+#[test]
 fn deepseek_prompt_contract_names_schema_and_job_type() {
     let provider = DeepSeekTextProvider {
         api_key: Some("test-key".to_string()),
