@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { currentSession, isApiClientError, shouldUseApi } from "../api/client";
 import { currentUser, workspaces } from "../data/mock";
-import { Badge } from "../components/ui";
 import type { User, Workspace } from "../types/domain";
 import { appWorkspaces, pathWithWorkspace, pickPrimaryWorkspace, resolveWorkspaceAlias } from "../utils/workspace";
 
@@ -144,11 +143,7 @@ export function AppShell() {
             </label>
           </div>
           <div className="topbar-meta">
-            <Badge tone={workspace.type === "personal" ? "info" : "good"}>
-              {workspace.type === "personal" ? "个人空间" : "园所空间"}
-            </Badge>
-            <Badge>{roleLabel(workspace.role)}</Badge>
-            <span>{user.displayName}</span>
+            <span>{user.displayName} · {roleLabel(workspace.role)}</span>
           </div>
         </header>
         <Outlet context={{ workspace }} />

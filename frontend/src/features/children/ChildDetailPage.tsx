@@ -34,6 +34,7 @@ export function ChildDetailPage() {
     .find((item) => item.status === "exportable")
     || (shouldUseApi ? remoteSourceBooks : storybooks).find((item) => item.workspaceId === workspace.id && item.type === "plain");
   const customizeTarget = preferredSource ? `/app/${workspace.id}/storybooks/${preferredSource.id}/customize?childId=${child?.id || ""}` : `/app/${workspace.id}/storybooks`;
+  const customizeActionLabel = preferredSource ? `从《${preferredSource.title}》生成定制绘本` : "先选择普通绘本";
   const [form, setForm] = useState({
     nickname: shouldUseApi ? "" : fallbackChild.nickname,
     ageGroup: shouldUseApi ? "3-4 岁" : fallbackChild.ageGroup,
@@ -162,7 +163,7 @@ export function ChildDetailPage() {
         actions={
           <>
             <Link className="button secondary" to={`/app/${workspace.id}/storybooks`}>回到绘本列表</Link>
-            {child.status !== "archived" && <Link className="button primary" to={customizeTarget}>{preferredSource ? "直接进入定制绘本" : "去绘本列表选择母本"}</Link>}
+            {child.status !== "archived" && <Link className="button primary" to={customizeTarget}>{customizeActionLabel}</Link>}
             <button className="button secondary" type="button" onClick={() => setOpen(true)}>编辑资料</button>
             {child.status === "archived" ? (
               <button className="button primary" type="button" disabled={restoring} onClick={restoreCurrentChild}>{restoring ? "恢复中" : "恢复资料"}</button>
@@ -186,9 +187,21 @@ export function ChildDetailPage() {
           {related.length === 0 ? (
             <>
               <p>还没有为这个孩子生成定制绘本。可以先从一本文字和插图都稳定的普通绘本开始。</p>
-              <Link className="button primary" to={customizeTarget}>{preferredSource ? `从《${preferredSource.title}》开始定制` : "去绘本列表选择母本"}</Link>
+              <Link className="button primary" to={customizeTarget}>{customizeActionLabel}</Link>
             </>
-          ) : related.map((book) => <p key={book.id}>{book.title}</p>)}
+          ) : (
+            <div className="compact-list">
+              {related.map((book) => (
+                <Link className="compact-row" to={`/app/${workspace.id}/storybooks/${book.id}`} key={book.id}>
+                  <div>
+                    <strong>{book.title}</strong>
+                    <span>{book.updatedAt} · {book.status === "exportable" ? "可导出" : "继续编辑"}</span>
+                  </div>
+                  <Badge tone="good">查看</Badge>
+                </Link>
+              ))}
+            </div>
+          )}
         </Card>
       </section>
       {open && (

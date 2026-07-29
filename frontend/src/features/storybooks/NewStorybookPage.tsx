@@ -80,9 +80,13 @@ export function NewStorybookPage() {
     style: "温暖、生活化，有清晰的老师引导。",
   });
   const targetBook = shouldUseApi ? createdBookId : storybooks.find((item) => item.workspaceId === workspace.id)?.id || "storybook-1";
+  const generatedRoles = rolesFromOutput(generationOutputs.storybook_roles);
+  const generatedPages = pagesFromOutput(generationOutputs.storybook_pages);
+  const currentRoles = editableRoles.length ? editableRoles : generatedRoles;
+  const currentPages = editablePages.length ? editablePages : generatedPages;
   const hasPlan = Boolean(generationOutputs.storybook_plan || planDraft.summary || planDraft.outlineText);
-  const hasRoles = editableRoles.length > 0;
-  const hasPages = editablePages.length > 0;
+  const hasRoles = currentRoles.length > 0;
+  const hasPages = currentPages.length > 0;
   const primaryLabels = [
     "生成绘本方案",
     hasPlan ? "确认方案，继续角色" : "生成绘本方案",
@@ -145,7 +149,7 @@ export function NewStorybookPage() {
       const job = await createGenerationJob(workspace.id, {
         jobType,
         storybookId: bookId || undefined,
-        input: generationInputFor(jobType, form, planDraft, editableRoles, editablePages),
+        input: generationInputFor(jobType, form, planDraft, currentRoles, currentPages),
       });
       const settledJob = await waitForGenerationJob(job);
       return await handleGenerationJob(settledJob, title);
@@ -207,22 +211,22 @@ export function NewStorybookPage() {
         const roles = shouldUseApi && job.storybookId
           ? rolesFromStorybook((await getStorybook(workspace.id, job.storybookId)).roles)
           : rolesFromOutput(job.output);
-        setEditableRoles(roles);
+        setEditableRoles(roles.length ? roles : rolesFromOutput(job.output));
       }
       if (job.jobType === "storybook_pages") {
         const pages = shouldUseApi && job.storybookId
           ? pagesFromStorybook((await getStorybook(workspace.id, job.storybookId)).pages)
           : pagesFromOutput(job.output);
-        setEditablePages(pages);
+        setEditablePages(pages.length ? pages : pagesFromOutput(job.output));
       }
     }
     setNotice({ title, copy: `生成任务${generationStatusLabel(job.status)}，任务编号：${job.id.slice(0, 8)}。` });
     return true;
   };
-  const persistRoles = async (bookId: string) => {
-    if (!shouldUseApi || !editableRoles.length) return;
+  const persistRoles = async (bookId: string, rolesToPersist = currentRoles) => {
+    if (!shouldUseApi || !rolesToPersist.length) return;
     const book = await getStorybook(workspace.id, bookId);
-    const updated = await Promise.all(editableRoles.map(async (role, index) => {
+    const updated = await Promise.all(rolesToPersist.map(async (role, index) => {
       const existing = role.id
         ? book.roles.find((item) => item.id === role.id)
         : book.roles.find((item) => item.name === role.name) || book.roles[index];
@@ -239,10 +243,10 @@ export function NewStorybookPage() {
     }));
     setEditableRoles(updated);
   };
-  const persistPages = async (bookId: string) => {
-    if (!shouldUseApi || !editablePages.length) return;
+  const persistPages = async (bookId: string, pagesToPersist = currentPages) => {
+    if (!shouldUseApi || !pagesToPersist.length) return;
     const book = await getStorybook(workspace.id, bookId);
-    const updated = await Promise.all(editablePages.map(async (page, index) => {
+    const updated = await Promise.all(pagesToPersist.map(async (page, index) => {
       const existing = page.id
         ? book.pages.find((item) => item.id === page.id)
         : book.pages.find((item) => item.pageNumber === page.pageNumber) || book.pages[index];
@@ -293,7 +297,7 @@ export function NewStorybookPage() {
         return;
       }
       if (bookId) {
-        await persistRoles(bookId);
+        await persistRoles(bookId, currentRoles);
       }
       if (await runGeneration("storybook_pages", "分页图文已生成并写入绘本")) {
         if (shouldUseApi && bookId) {
@@ -337,28 +341,12 @@ export function NewStorybookPage() {
         title="新建普通绘本"
         copy={`这本绘本会创建在 ${workspace.name}，后续可直接导出或派生定制版本。`}
       />
-      {provider && (
-        <Card>
-          <div className="section-head">
-            <div>
-              <p className="eyebrow">生成状态</p>
-              <h2>{providerStatusTitle(provider)}</h2>
-              <p>{provider.diagnostic}</p>
-            </div>
-            <Badge tone={provider.realTextReady ? "good" : "warn"}>{provider.provider}</Badge>
-          </div>
-          <div className="review-list">
-            <div><span>文本真实可用</span><strong>{provider.realTextReady ? "是" : "否"}</strong></div>
-            <div><span>图片真实可用</span><strong>{provider.realImageReady ? "是" : "否"}</strong></div>
-            <div><span>缺失配置</span><strong>{provider.missingConfiguration.length ? provider.missingConfiguration.join(" · ") : "无"}</strong></div>
-            {provider.components.map((component) => (
-              <div key={`${component.kind}-${component.provider}`}>
-                <span>{componentKindLabel(component.kind)}组件</span>
-                <strong>{component.provider} · {component.ready ? "已就绪" : `缺少 ${component.requiredConfiguration.join(" · ")}`}</strong>
-              </div>
-            ))}
-          </div>
-        </Card>
+      {provider && !provider.realTextReady && (
+        <Notice
+          title="真实文本生成暂不可用"
+          copy={`${provider.diagnostic}${provider.missingConfiguration.length ? ` 缺少：${provider.missingConfiguration.join("、")}` : ""}`}
+          tone="warn"
+        />
       )}
       <div className="wizard-shell">
         <WizardSideNav
@@ -389,8 +377,8 @@ export function NewStorybookPage() {
             </div>
           )}
           {step === 1 && <ReviewBlock title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => runGeneration("storybook_plan", "已重新生成方案")} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} />} />}
-          {step === 2 && <ReviewBlock title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, editableRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<RoleEditor roles={editableRoles.length ? editableRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} />} />}
-          {step === 3 && <ReviewBlock title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, editablePages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<PageEditor pages={editablePages.length ? editablePages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={editableRoles} />} />}
+          {step === 2 && <ReviewBlock title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} />} />}
+          {step === 3 && <ReviewBlock title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} />} />}
           {step === 4 && (
             <div className="preview-complete">
               <Badge tone="good">可导出</Badge>
@@ -421,17 +409,6 @@ function generationStatusLabel(status: string) {
 function generationErrorMessage(job: GenerationJob) {
   const output = job.output as { error?: { message?: string } } | undefined;
   return output?.error?.message || "生成任务失败，可稍后重试";
-}
-
-function providerStatusTitle(provider: GenerationProviderStatus) {
-  if (provider.productionReady) return "真实文本和图片生成已就绪";
-  if (provider.realTextReady) return "真实文本生成已就绪";
-  if (provider.realImageReady) return "真实图片生成已就绪";
-  return "当前使用本地演示生成";
-}
-
-function componentKindLabel(kind: string) {
-  return kind === "image" ? "图片" : kind === "text" ? "文本" : kind;
 }
 
 function generationOutputMeta(output: unknown) {
@@ -503,7 +480,7 @@ function storybookRoleItems(output: unknown, editableRoles: EditableRole[] = [],
     return [
       `待生成：将根据第 2 步《${form?.title || "当前绘本"}》方案生成角色，不会使用固定示例角色。`,
       requirements.length ? `来自方案的角色需求：${requirements.join("、")}` : `角色会围绕「${form?.theme || "当前主题"}」和故事方案生成。`,
-      "操作：点击“生成角色道具”后，再审核或手动修改具体名称、外观、故事作用和参考图提示词。",
+      "操作：点击“生成角色道具”后，再审核或手动修改具体名称、稳定外观和故事作用。",
     ];
   }
 
@@ -628,14 +605,13 @@ function RoleEditor({ roles, onChange }: { roles: EditableRole[]; onChange: (rol
             <select value={role.roleType} onChange={(event) => update(index, { roleType: event.target.value as StorybookRole["roleType"] })}>
               <option value="protagonist">主角</option>
               <option value="supporting">配角</option>
-              <option value="peer">同伴儿童</option>
+              <option value="peer">同伴角色</option>
               <option value="teacher">老师形象</option>
               <option value="prop">关键道具</option>
             </select>
           </label>
-          <label className="span-2">外观细节<textarea rows={4} value={role.appearance} onChange={(event) => update(index, { appearance: event.target.value })} /></label>
+          <label className="span-2">稳定外观<textarea rows={4} value={role.appearance} onChange={(event) => update(index, { appearance: event.target.value })} /></label>
           <label className="span-2">故事作用<textarea rows={3} value={role.storyFunction} onChange={(event) => update(index, { storyFunction: event.target.value })} /></label>
-          <label className="span-2">参考图提示词<textarea rows={3} value={role.referenceImagePrompt} onChange={(event) => update(index, { referenceImagePrompt: event.target.value })} /></label>
           <label className="check-row"><input type="checkbox" checked={role.needsConsistency} onChange={(event) => update(index, { needsConsistency: event.target.checked })} />后续分页插图保持同一形象</label>
         </div>
       ))}
@@ -674,10 +650,6 @@ function PageEditor({ pages, roles, onChange }: { pages: EditablePage[]; roles: 
 function generationModeLabel(mode: string) {
   if (mode === "等待任务") return "等待任务";
   return generationJobTypeLabel[mode] || mode;
-}
-
-function linesFromText(value: string) {
-  return value.split(/\n|、|；|;/).map((item) => item.trim()).filter(Boolean);
 }
 
 function linesFromRows(value: string) {
@@ -752,12 +724,13 @@ function generationInputFor(
 }
 
 function rolePayload(role: EditableRole) {
+  const appearance = cleanVisualAppearance(role.appearance);
   return {
     name: role.name,
     role_type: role.roleType,
-    appearance: role.appearance,
+    appearance,
     story_function: role.storyFunction,
-    reference_image_prompt: role.referenceImagePrompt,
+    reference_image_prompt: role.needsConsistency ? role.referenceImagePrompt || `${role.name}，${appearance || "绘本角色"}，温暖绘本风格，单一角色标准图，白底或简洁背景，画面只有这个角色，无人类，无其他角色，保持跨页一致` : undefined,
     needs_consistency: role.needsConsistency,
   };
 }
@@ -776,10 +749,10 @@ function roleFromStorybook(role: StorybookRole): EditableRole {
     id: role.id,
     name: role.name,
     roleType: role.roleType,
-    appearance: role.appearance,
+    appearance: cleanVisualAppearance(role.appearance),
     storyFunction: role.storyFunction,
     needsConsistency: role.needsConsistency,
-    referenceImagePrompt: role.referenceImagePrompt || `${role.name}，${role.appearance}，儿童绘本角色参考图，保持跨页一致`,
+    referenceImagePrompt: role.referenceImagePrompt || "",
   };
 }
 
@@ -789,7 +762,7 @@ function rolesFromStorybook(roles: StorybookRole[]) {
 
 function rolesFromOutput(output: unknown): EditableRole[] {
   const value = output as { roles?: { name?: string; role_type?: string; appearance?: string; story_function?: string; reference_image_prompt?: string; needs_consistency?: boolean }[] } | undefined;
-  if (!value?.roles?.length) return defaultEditableRoles();
+  if (!value?.roles?.length) return [];
   return value.roles.map((role, index) => normalizeEditableRole({
     name: role.name || `角色 ${index + 1}`,
     roleType: normalizeRoleType(role.role_type),
@@ -807,7 +780,7 @@ function roleDraftsFromPlan(plan: EditablePlan, form: { title: string; theme: st
       normalizeEditableRole({
         name: "主角",
         roleType: "protagonist",
-        appearance: `围绕《${form.title || form.theme || "当前绘本"}》设计的主角，请补充物种或人物身份、颜色、服装、表情动作和跨页识别特征。`,
+        appearance: `围绕《${form.title || form.theme || "当前绘本"}》设计的主角，请补充物种或人物身份、颜色、服装或材质、体型轮廓、表情和跨页识别特征。不要写动作或剧情行为。`,
         storyFunction: `带领孩子进入「${form.theme || "当前主题"}」故事，并在情节中完成一次清楚的变化。`,
         needsConsistency: true,
         referenceImagePrompt: "",
@@ -830,7 +803,7 @@ function roleDraftsFromPlan(plan: EditablePlan, form: { title: string; theme: st
     return normalizeEditableRole({
       name,
       roleType: inferRoleType(name, detail, index),
-      appearance: `根据第 2 步方案需求：${detail}。请补充颜色、服装或材质、体型轮廓、表情动作和一个可跨页重复识别的小特征。`,
+      appearance: `根据第 2 步方案需求：${detail}。请补充颜色、服装或材质、体型轮廓、表情和一个可跨页重复识别的小特征。不要写动作或剧情行为。`,
       storyFunction: detail || `服务于「${form.theme || "当前主题"}」的故事推进。`,
       needsConsistency: true,
       referenceImagePrompt: "",
@@ -840,11 +813,12 @@ function roleDraftsFromPlan(plan: EditablePlan, form: { title: string; theme: st
 
 function normalizeEditableRole(role: EditableRole): EditableRole {
   const appearance = role.appearance.trim();
+  const visualAppearance = cleanVisualAppearance(appearance);
   return {
     ...role,
-    appearance: appearance.length >= 28 ? appearance : enrichShortAppearance(role.name, appearance, role.roleType),
+    appearance: visualAppearance.length >= 28 ? visualAppearance : enrichShortAppearance(role.name, visualAppearance, role.roleType),
     storyFunction: role.storyFunction.trim() || "推动故事冲突和转变，帮助幼儿理解规则与情绪。",
-    referenceImagePrompt: role.referenceImagePrompt.trim() || `${role.name}，${appearance || "幼儿绘本角色"}，正面半身角色参考图，温暖手绘风，清晰服装和颜色，保持跨页一致`,
+    referenceImagePrompt: role.referenceImagePrompt.trim(),
   };
 }
 
@@ -862,46 +836,45 @@ function inferRoleType(name: string, detail: string, index: number): StorybookRo
   return "supporting";
 }
 
-function defaultEditableRoles(): EditableRole[] {
-  return [
-    normalizeEditableRole({
-      name: "小兔米米",
-      roleType: "protagonist",
-      appearance: "白色小兔，圆脸，长耳朵内侧带淡粉色，穿黄色背带裤和浅米色小鞋，表情好奇但有点急切，动作灵活，适合做主角。",
-      storyFunction: "主角，一开始想马上玩小汽车，后来学会等待、表达和轮流。",
-      needsConsistency: true,
-      referenceImagePrompt: "小兔米米，白色圆脸小兔，长耳朵淡粉内侧，黄色背带裤，浅米色小鞋，好奇温暖表情，儿童绘本角色参考图",
-    }),
-    normalizeEditableRole({
-      name: "小熊乐乐",
-      roleType: "peer",
-      appearance: "浅棕色小熊，圆耳朵，穿蓝色开衫和白色 T 恤，身体微胖，笑容友好，常站在主角旁边等待一起玩。",
-      storyFunction: "同伴儿童，和主角一起经历轮流冲突，用友好回应帮助主角完成转变。",
-      needsConsistency: true,
-      referenceImagePrompt: "小熊乐乐，浅棕色小熊，圆耳朵，蓝色开衫，白色 T 恤，友好笑容，儿童绘本角色参考图",
-    }),
-    normalizeEditableRole({
-      name: "鹿老师",
-      roleType: "teacher",
-      appearance: "温柔的鹿老师，浅棕色鹿角，戴圆框眼镜，穿米白色针织外套和绿色围裙，常蹲下来与孩子平视交流。",
-      storyFunction: "老师引导者，帮助孩子看见情绪，提出简单规则，并鼓励孩子自己尝试。",
-      needsConsistency: true,
-      referenceImagePrompt: "鹿老师，浅棕色鹿角，圆框眼镜，米白针织外套，绿色围裙，蹲下平视孩子，温柔老师形象参考图",
-    }),
-    normalizeEditableRole({
-      name: "红色小汽车",
-      roleType: "prop",
-      appearance: "亮红色玩具小汽车，圆润车身，黄色车灯，黑色小轮子，车顶有一颗白色星星贴纸，大小适合两个孩子轮流推着玩。",
-      storyFunction: "关键道具，引发轮流等待的故事冲突，也作为规则练习的共同目标。",
-      needsConsistency: true,
-      referenceImagePrompt: "红色玩具小汽车，圆润车身，黄色车灯，黑色轮子，车顶白色星星贴纸，儿童绘本道具参考图",
-    }),
-  ];
+function enrichShortAppearance(name: string, appearance: string, roleType: StorybookRole["roleType"]) {
+  const base = appearance || (roleType === "prop" ? "关键道具" : "绘本角色");
+  return `${cleanVisualAppearance(base)}；请补足颜色、服装或材质、体型轮廓、表情和一个可跨页重复识别的小特征，作为「${name}」的稳定参考设定。不要写动作或剧情行为。`;
 }
 
-function enrichShortAppearance(name: string, appearance: string, roleType: StorybookRole["roleType"]) {
-  const base = appearance || (roleType === "prop" ? "关键道具" : "儿童绘本角色");
-  return `${base}；请补足颜色、服装或材质、体型轮廓、表情动作和一个可跨页重复识别的小特征，作为「${name}」的稳定参考设定。`;
+function cleanVisualAppearance(value: string) {
+  const behaviorKeywords = [
+    "喜欢",
+    "总喜欢",
+    "经常",
+    "常常",
+    "总是",
+    "常和",
+    "离开队伍",
+    "交流",
+    "适合",
+    "带领",
+    "制定",
+    "强调",
+    "学习",
+    "代表",
+    "推动",
+    "帮助",
+    "引导",
+    "鼓励",
+    "提醒",
+    "跑",
+    "跳",
+    "蹦",
+    "玩",
+    "等待",
+    "分享",
+  ];
+  const parts = value
+    .split(/[，,。；;、]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !behaviorKeywords.some((keyword) => part.includes(keyword)));
+  return parts.join("，") || value.trim();
 }
 
 function pageFromStorybook(page: StorybookPage): EditablePage {
@@ -920,7 +893,7 @@ function pagesFromStorybook(pages: StorybookPage[]) {
 
 function pagesFromOutput(output: unknown): EditablePage[] {
   const value = output as { pages?: { page_number?: number; title?: string; body?: string; illustration_prompt?: string }[] } | undefined;
-  if (!value?.pages?.length) return defaultEditablePages();
+  if (!value?.pages?.length) return [];
   return value.pages.map((page, index) => ({
     pageNumber: page.page_number || index + 1,
     title: page.title || `第 ${index + 1} 页`,
@@ -945,13 +918,4 @@ function pageDraftsFromPlan(plan: EditablePlan, form: { title: string; theme: st
     body: item,
     illustrationPrompt: `根据本页内容绘制，必须延续第 3 步确认的角色名称和外观：${item}`,
   }));
-}
-
-function defaultEditablePages(): EditablePage[] {
-  return [
-    { pageNumber: 1, title: "小汽车来到教室", body: "小兔米米看见红色小汽车，眼睛一下子亮了起来。", illustrationPrompt: "明亮教室里，小兔米米看着红色小汽车，小熊乐乐站在旁边，鹿老师在远处微笑观察。" },
-    { pageNumber: 2, title: "朋友也想玩", body: "小熊乐乐也想试一试，小兔米米抱着小汽车不想松手。", illustrationPrompt: "小兔米米抱着红色小汽车，小熊乐乐伸出手想一起玩，鹿老师蹲下来准备引导。" },
-    { pageNumber: 3, title: "鹿老师给出办法", body: "鹿老师说：我们可以排队，用沙漏提醒轮流时间。", illustrationPrompt: "鹿老师蹲在小兔米米和小熊乐乐身边，手里拿着沙漏，红色小汽车放在地毯上。" },
-    { pageNumber: 4, title: "轮到我，也轮到你", body: "小兔米米先玩一会儿，再把小汽车推给小熊乐乐。", illustrationPrompt: "小兔米米把红色小汽车推向小熊乐乐，两个人都看着沙漏，鹿老师在旁边鼓励。" },
-  ];
 }

@@ -1893,7 +1893,7 @@ function mapStorybookRole(role: ApiStorybookRole): StorybookRole {
   return {
     id: role.id,
     name: role.name,
-    roleType: role.role_type,
+    roleType: normalizeStorybookRoleType(role.role_type),
     appearance: role.appearance,
     storyFunction: role.story_function,
     needsConsistency: role.needs_consistency,
@@ -1901,6 +1901,16 @@ function mapStorybookRole(role: ApiStorybookRole): StorybookRole {
     referenceImagePrompt: role.reference_image_prompt || undefined,
     referenceStatus: role.reference_status || "not_started",
   };
+}
+
+function normalizeStorybookRoleType(value?: string): StorybookRole["roleType"] {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "protagonist" || normalized === "main" || value === "主角") return "protagonist";
+  if (normalized === "teacher" || normalized === "guide" || value === "老师" || value === "教师" || value === "引导者" || value === "向导") return "teacher";
+  if (normalized === "peer" || normalized === "companion" || value === "同伴" || value === "朋友" || value === "伙伴") return "peer";
+  if (normalized === "prop" || normalized === "tool" || normalized === "object" || value === "道具" || value === "关键道具") return "prop";
+  if (normalized === "supporting" || value === "配角" || value === "背景角色") return "supporting";
+  return "supporting";
 }
 
 function mapExportJob(job: ApiExportJob): ExportJob {

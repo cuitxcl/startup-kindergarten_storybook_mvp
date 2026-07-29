@@ -274,7 +274,7 @@ async fn role_reference_prompt(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select r.name, r.role_type, r.appearance, coalesce(r.story_function, '') as story_function
+            select r.name, r.role_type, r.appearance
             from storybook_roles r
             join storybooks s on s.id = r.storybook_id
             where s.workspace_id = $1 and s.id = $2 and r.id = $3
@@ -287,8 +287,7 @@ async fn role_reference_prompt(
     let name: String = row.try_get("", "name")?;
     let role_type: String = row.try_get("", "role_type")?;
     let appearance: String = row.try_get("", "appearance")?;
-    let story_function: String = row.try_get("", "story_function")?;
     Ok(format!(
-        "为幼儿园绘本角色生成单独参考图。角色名：{name}；角色类型：{role_type}；外观：{appearance}；故事作用：{story_function}。要求：白底或简洁背景，儿童绘本风格，全身或半身清晰，便于后续分页插图保持一致。"
+        "为绘本生成单一角色标准参考图。角色名：{name}；视觉类型：{role_type}；外观：{appearance}。要求：白底或简洁背景，温暖绘本风格，全身或半身清晰，画面中只有这个角色，无人类，无其他角色，便于后续分页插图保持一致。不要加入故事情节动作或分页场景。"
     ))
 }

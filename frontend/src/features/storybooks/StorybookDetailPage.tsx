@@ -26,7 +26,7 @@ import {
   type GenerationJob,
   type ShareLink,
 } from "../../api/client";
-import { Badge, Card, EmptyState, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
+import { Badge, Card, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
 import { storybooks } from "../../data/mock";
 import type { Storybook, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
 import {
@@ -82,6 +82,8 @@ export function StorybookDetailPage() {
   const [currentImagePreviewError, setCurrentImagePreviewError] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [visibilityValue, setVisibilityValue] = useState<Storybook["visibility"]>(shouldUseApi ? "private" : fallbackBook.visibility);
+  const [pageEditorOpen, setPageEditorOpen] = useState(false);
+  const [roleManagerOpen, setRoleManagerOpen] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState<string | undefined>(shouldUseApi ? undefined : fallbackBook.roles[0]?.id);
   const [roleForm, setRoleForm] = useState<{
     name: string;
@@ -89,14 +91,23 @@ export function StorybookDetailPage() {
     appearance: string;
     storyFunction: string;
     needsConsistency: boolean;
-    referenceImagePrompt: string;
-  }>({ name: "", roleType: "teacher", appearance: "", storyFunction: "", needsConsistency: true, referenceImagePrompt: "" });
+  }>({ name: "", roleType: "teacher", appearance: "", storyFunction: "", needsConsistency: true });
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleImageGenerating, setRoleImageGenerating] = useState(false);
   const [roleReferencePreviewUrl, setRoleReferencePreviewUrl] = useState("");
   const [roleReferencePreviewError, setRoleReferencePreviewError] = useState("");
   const selectedPage = book?.pages.find((page) => page.id === selectedPageId) || book?.pages[0];
   const selectedRole = book?.roles.find((role) => role.id === selectedRoleId) || book?.roles[0];
+  const selectedRolePageCount = book && selectedRole ? rolePageUsageCount(book, selectedRole) : 0;
+  const selectedRoleNeedsReference = Boolean(selectedRole?.needsConsistency && selectedRolePageCount >= 2);
+  const selectedRoleReferenceJob = selectedRole ? activeRoleReferenceJob(generationJobs, selectedRole.id) : undefined;
+  const selectedRoleReferenceGenerating = roleImageGenerating || Boolean(selectedRoleReferenceJob);
+  const roleReferencePromptPreview = buildRoleReferencePrompt(roleForm);
+  const pageHasUnsavedChanges = selectedPage
+    ? pageForm.title !== selectedPage.title
+      || pageForm.body !== selectedPage.body
+      || pageForm.illustrationPrompt !== selectedPage.illustrationPrompt
+    : false;
   const deliveryBlockers = book ? [
     ...(book.pages.length ? [] : ["至少需要一个分页"]),
     ...(book.roles.length ? [] : ["至少需要一个角色或道具设定"]),
@@ -117,19 +128,23 @@ export function StorybookDetailPage() {
   const qualityDeliveryBlocker = quality?.status === "blocked"
     ? "生成质量检查存在阻断项，请先修正后再导出或创建分享链接。"
     : "";
+  const effectiveDeliveryBlocker = qualityDeliveryBlocker || deliveryBlockers[0] || "";
   const canStartDelivery = canDeliver && !qualityDeliveryBlocker;
+  const customizationBlocker = book ? customizationBlockerFor(book, quality) : "请等待当前绘本加载完成";
+  const canCreateCustomVersion = book?.type === "plain" && !customizationBlocker;
   const selectedPageQuality = selectedPage && quality
     ? quality.pages.find((page) => page.pageId === selectedPage.id)
     : undefined;
   const firstActionableQualityPage = quality?.pages.find((page) => page.status === "blocked")
     || quality?.pages.find((page) => page.status === "needs_review");
-  const firstRoleNeedingReference = book?.roles.find((role) => role.needsConsistency && (role.referenceStatus !== "ready" || !role.referenceImageUrl));
+  const firstRoleNeedingReference = book?.roles.find((role) => roleNeedsReference(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl));
   const selectedPageReferenceText = selectedPage
     ? `${pageForm.title || selectedPage.title} ${pageForm.body || selectedPage.body} ${pageForm.illustrationPrompt || selectedPage.illustrationPrompt}`
     : "";
-  const selectedPageReferencedRoles = book?.roles.filter((role) => role.needsConsistency && selectedPageReferenceText.includes(role.name)) || [];
-  const selectedPageReadyReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceStatus === "ready" && role.referenceImageUrl);
-  const selectedPageMissingReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceStatus !== "ready" || !role.referenceImageUrl);
+  const selectedPageReferencedRoles = book?.roles.filter((role) => roleNeedsReference(book, role) && selectedPageReferenceText.includes(role.name)) || [];
+  const selectedPageUsableReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceImageUrl);
+  const selectedPageMissingReferenceRoles = selectedPageReferencedRoles.filter((role) => !role.referenceImageUrl);
+  const selectedPageStaleReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceImageUrl && role.referenceStatus !== "ready");
   const pageImageReferenceBlocker = selectedPageMissingReferenceRoles.length
     ? `本页提到了 ${selectedPageMissingReferenceRoles.map((role) => role.name).join("、")}，请先生成角色参考图再生成插图。`
     : "";
@@ -190,6 +205,7 @@ export function StorybookDetailPage() {
       body: selectedPage.body,
       illustrationPrompt: selectedPage.illustrationPrompt,
     });
+    setPageEditorOpen(false);
   }, [selectedPage?.id]);
 
   useEffect(() => {
@@ -209,15 +225,24 @@ export function StorybookDetailPage() {
     setRoleForm({
       name: selectedRole.name,
       roleType: selectedRole.roleType,
-      appearance: selectedRole.appearance,
+      appearance: cleanVisualAppearance(selectedRole.appearance),
       storyFunction: selectedRole.storyFunction,
       needsConsistency: selectedRole.needsConsistency,
-      referenceImagePrompt: selectedRole.referenceImagePrompt || `${selectedRole.name}，${selectedRole.appearance}，儿童绘本角色参考图`,
     });
-  }, [selectedRole?.id, selectedRole?.referenceImagePrompt]);
+  }, [selectedRole?.id]);
 
   function updatePageForm(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     setPageForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  }
+
+  function cancelPageEdit() {
+    if (!selectedPage) return;
+    setPageForm({
+      title: selectedPage.title,
+      body: selectedPage.body,
+      illustrationPrompt: selectedPage.illustrationPrompt,
+    });
+    setPageEditorOpen(false);
   }
 
   function updateRoleForm(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
@@ -237,12 +262,7 @@ export function StorybookDetailPage() {
 
   function focusRoleReference(role: StorybookRole) {
     setSelectedRoleId(role.id);
-    setNotice({
-      title: `已定位到 ${role.name}`,
-      copy: "请先检查角色设定并生成参考图，再继续分页插图和老师复核。",
-      tone: "info",
-    });
-    window.setTimeout(() => document.getElementById("storybook-role-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    setRoleManagerOpen(true);
   }
 
   async function refreshShareLinks(storybookId = book?.id) {
@@ -272,6 +292,13 @@ export function StorybookDetailPage() {
 
   const currentPageImageJob = latestPageImageJob(generationJobs, selectedPage?.id);
   const currentPageImage = extractImageResult(currentPageImageJob?.output);
+  const shouldShowImageGenerationAction = Boolean(selectedPage && (
+    selectedPage.status === "needs_regeneration"
+      || selectedPage.status === "failed"
+      || selectedPage.status === "generating"
+      || !currentPageImage
+      || pageForm.illustrationPrompt !== selectedPage.illustrationPrompt
+  ));
 
   useEffect(() => {
     if (!currentPageImage) {
@@ -350,6 +377,7 @@ export function StorybookDetailPage() {
     if (!selectedPage || !storybookId) return;
     if (!shouldUseApi) {
       setNotice({ title: "当前页已保存", copy: `原型模式：第 ${selectedPage.pageNumber} 页修改已记录。`, tone: "good" });
+      setPageEditorOpen(false);
       setRetryImageJob(null);
       return;
     }
@@ -362,6 +390,7 @@ export function StorybookDetailPage() {
       await refreshGenerationJobs(storybookId);
       await refreshStorybook(storybookId);
       setNotice({ title: "当前页已保存", copy: `第 ${updated.pageNumber} 页修改已写入后端。`, tone: "good" });
+      setPageEditorOpen(false);
       setRetryImageJob(null);
     } catch (err) {
       setNotice({ title: "保存失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
@@ -400,14 +429,14 @@ export function StorybookDetailPage() {
       const updated = await updateStorybookRole(workspace.id, book.id, selectedRole.id, {
         name: roleForm.name,
         roleType: roleForm.roleType,
-        appearance: roleForm.appearance,
+        appearance: cleanVisualAppearance(roleForm.appearance),
         storyFunction: roleForm.storyFunction,
         needsConsistency: roleForm.needsConsistency,
-        referenceImagePrompt: roleForm.referenceImagePrompt,
+        referenceImagePrompt: buildRoleReferencePrompt(roleForm),
       });
       await refreshGenerationJobs(book.id);
       await refreshStorybook(book.id);
-      setNotice({ title: "角色设定已保存", copy: `${updated.name} 的外观和故事作用已写入后端。`, tone: "good" });
+      setNotice({ title: "角色设定已保存", copy: `${updated.name} 的外观设定已写入后端，参考图提示词会自动跟随外观更新。`, tone: "good" });
       setRetryImageJob(null);
     } catch (err) {
       setNotice({ title: "角色保存失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
@@ -418,6 +447,10 @@ export function StorybookDetailPage() {
 
   async function generateRoleReferenceImage() {
     if (!book || !selectedRole) return;
+    if (!selectedRoleNeedsReference) {
+      setNotice({ title: "无需生成参考图", copy: `${selectedRole.name} 当前只在 ${selectedRolePageCount} 页出现，不需要单独生成角色参考图。`, tone: "info" });
+      return;
+    }
     if (!shouldUseApi) {
       setNotice({ title: "角色参考图已生成", copy: "原型模式：角色参考图会用于后续分页插图。", tone: "good" });
       return;
@@ -425,24 +458,44 @@ export function StorybookDetailPage() {
     setRoleImageGenerating(true);
     try {
       const job = await createRoleReferenceImageTask(workspace.id, book.id, selectedRole.id, {
-        prompt: roleForm.referenceImagePrompt || `${roleForm.name}，${roleForm.appearance}，儿童绘本角色参考图`,
-        referenceImageUrls: selectedRole.referenceImageUrl ? [selectedRole.referenceImageUrl] : [],
-        imageMode: selectedRole.referenceImageUrl ? "edit_image" : "text_to_image",
-        editInstruction: selectedRole.referenceImageUrl ? "保持角色核心形象一致，优化为更清晰稳定的角色参考图。" : undefined,
-        strength: selectedRole.referenceImageUrl ? 0.45 : undefined,
+        prompt: roleReferencePromptPreview,
+        referenceImageUrls: [],
+        imageMode: "text_to_image",
       });
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
-      const settledJob = await waitForGenerationJob(job);
+      const settledJob = await waitForGenerationJob(job, { attempts: 70, intervalMs: 1000 });
       await refreshGenerationJobs(book.id);
+      if (settledJob.status === "queued" || settledJob.status === "running") {
+        setNotice({
+          title: "参考图仍在生成",
+          copy: `任务${generationStatusLabel(settledJob.status)}，完成前会持续显示为生成中。任务编号：${settledJob.id.slice(0, 8)}。`,
+          tone: "info",
+        });
+        return;
+      }
       const updated = await getStorybook(workspace.id, book.id);
       setRemoteBook(updated);
       const updatedRole = updated.roles.find((role) => role.id === selectedRole.id);
+      if (settledJob.status === "failed") {
+        setNotice({
+          title: "角色参考图生成失败",
+          copy: `${generationErrorMessage(settledJob)}。任务编号：${settledJob.id.slice(0, 8)}。`,
+          tone: "info",
+        });
+        return;
+      }
+      if (!updatedRole?.referenceImageUrl || updatedRole.referenceStatus !== "ready") {
+        setNotice({
+          title: "参考图已完成，等待写回",
+          copy: "生图任务已结束，但角色参考图状态还没有刷新完成，请稍后重新打开角色管理查看。",
+          tone: "info",
+        });
+        return;
+      }
       setNotice({
-        title: settledJob.status === "failed" ? "角色参考图生成失败" : "角色参考图已生成",
-        copy: settledJob.status === "failed"
-          ? `${generationErrorMessage(settledJob)}。任务编号：${settledJob.id.slice(0, 8)}。`
-          : `${updatedRole?.name || selectedRole.name} 的参考图已写回角色，后续插图会优先引用。`,
-        tone: settledJob.status === "failed" ? "info" : "good",
+        title: "角色参考图已生成",
+        copy: `${updatedRole.name} 的参考图已写回角色，后续插图会优先引用。`,
+        tone: "good",
       });
     } catch (err) {
       setNotice({ title: "角色参考图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
@@ -532,10 +585,12 @@ export function StorybookDetailPage() {
     setNotice({ title: "插图任务已完成", copy: `任务${generationStatusLabel(job.status)}，当前页插图和质量检查已刷新。`, tone: "good" });
   }
 
-  async function waitForGenerationJob(initialJob: GenerationJob) {
+  async function waitForGenerationJob(initialJob: GenerationJob, options: { attempts?: number; intervalMs?: number } = {}) {
+    const attempts = options.attempts ?? 16;
+    const intervalMs = options.intervalMs ?? 700;
     let currentJob = initialJob;
-    for (let attempt = 0; attempt < 16 && ["queued", "running"].includes(currentJob.status); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 700));
+    for (let attempt = 0; attempt < attempts && ["queued", "running"].includes(currentJob.status); attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
       currentJob = await getGenerationJob(workspace.id, currentJob.id);
       setGenerationJobs((jobs) => [currentJob, ...jobs.filter((job) => job.id !== currentJob.id)]);
     }
@@ -786,17 +841,20 @@ export function StorybookDetailPage() {
       <PageHeader
         eyebrow={book.type === "plain" ? "普通绘本详情" : "定制绘本详情"}
         title={book.title}
-        copy={`${book.teachingGoal}。${storybookSourceLabel(book)}。${storybookNextAction(book)}。当前内容归属：${workspace.name}`}
+        copy={`${book.teachingGoal}。${storybookSourceLabel(book)}。归属：${workspace.name}`}
+        actionClassName="storybook-detail-actions"
+        className="storybook-detail-header"
         actions={
           <>
-            {book.type === "plain" && <Link className="button secondary" to="customize">生成定制版<ArrowRight size={16} /></Link>}
+            {book.type === "plain" && canCreateCustomVersion && <Link className="button primary" to="customize">生成定制版<ArrowRight size={16} /></Link>}
+            <button className="button secondary" type="button" onClick={() => setRoleManagerOpen(true)}><Pencil size={16} />管理角色</button>
             <button className="button secondary" type="button" onClick={() => setMetaOpen(true)}><Pencil size={16} />编辑信息</button>
             {(book.status === "editing" || book.status === "image_pending") && (
               <button className="button secondary" type="button" disabled={deliverySaving || !canMarkDeliverable} title={!canMarkDeliverable ? deliveryBlockers.join("；") || "请等待当前绘本加载完成" : undefined} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "标记可交付"}</button>
             )}
             <button className="button secondary" type="button" disabled={duplicating} onClick={() => { setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={16} />{duplicating ? "复制中..." : "复制副本"}</button>
             <button className="button secondary" type="button" disabled={!canStartDelivery} title={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</button>
-            <button className="button primary" type="button" disabled={exporting || !canStartDelivery} title={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</button>
+            <button className={book.type === "plain" ? "button secondary" : "button primary"} type="button" disabled={exporting || !canStartDelivery} title={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</button>
           </>
         }
       />
@@ -838,289 +896,169 @@ export function StorybookDetailPage() {
         </Modal>
       )}
 
-      <section className="metric-grid">
-        <Card>
-          <Badge tone={book.visibility === "private" ? "neutral" : "good"}>当前可见性</Badge>
-          <strong>{visibilityLabel(book.visibility)}</strong>
-          <p>{book.visibility === "private" ? "当前版本仅空间内可见，适合继续编辑。" : "当前版本可以在空间内共享或继续发给家长。"}</p>
-        </Card>
-        <Card>
-          <Badge tone={exporting ? "warn" : exportJobs.length ? statusTone(exportJobs[0].status) : "neutral"}>最近导出</Badge>
-          <strong>{exporting ? "导出中" : exportJobs.length ? exportStatusLabel(exportJobs[0].status) : "暂无记录"}</strong>
-          <p>{exporting ? "正在生成 PDF 文件，完成后会出现下载入口。" : exportJobs.length && exportJobs[0].fileUrl ? "已生成可下载 PDF 文件。" : "点击导出后会生成 PDF 任务。"}</p>
-        </Card>
-        <Card>
-          <Badge tone={shareLinks.length ? "good" : "neutral"}>分享状态</Badge>
-          <strong>{shareLinks.length ? `${shareLinks.length} 个链接` : "尚未创建"}</strong>
-          <p>{shareLinks.length ? "可直接打开分享页交付家长。" : "先创建分享链接，再打开家庭版页面。"}</p>
-        </Card>
-        <Card>
-          <Badge tone={deliveryBlockers.length ? "warn" : deliveryWarnings.length ? "info" : "good"}>交付检查</Badge>
-          <strong>{deliveryBlockers.length ? "还有阻断项" : deliveryWarnings.length ? "可交付，有提醒" : "可以交付"}</strong>
-          <p>{deliveryBlockers[0] || deliveryWarnings[0] || (book.type === "custom" ? "定制版建议先确认隐私，再通过分享或导出发给家长。" : "普通版可先导出，再决定是否创建分享链接。")}</p>
-        </Card>
-        {quality && (
-          <Card>
-            <Badge tone={qualityTone(quality.status)}>生成质量</Badge>
-            <strong>{qualityStatusLabel(quality.status)}</strong>
-            <p>{quality.summary}</p>
-          </Card>
-        )}
-        <Card>
-          <Badge tone={book.teacherReviewStatus === "confirmed" ? "good" : "warn"}>老师复核</Badge>
-          <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
-          <p>{book.teacherReviewStatus === "confirmed" ? `已由老师确认。${book.teacherReviewedAt ? `确认时间：${book.teacherReviewedAt}。` : ""}` : "导出或分享前建议由老师最终阅读确认。"}</p>
-        </Card>
-        <Card>
-          <Badge tone={book.source === "blank" ? "neutral" : "info"}>内容来源</Badge>
-          <strong>{storybookSourceLabel(book)}</strong>
-          <p>{book.source === "duplicate" ? "这是从已有绘本复制出的私有草稿，适合改成新的活动版本。" : book.source === "marketplace" ? "这是从市场复用的内容，可继续调整为本园版本。" : book.source === "derived" ? "这是基于普通绘本和儿童档案生成的定制副本。" : "这是从空白需求创建的原创绘本。"}</p>
-        </Card>
-      </section>
-
-      {quality && (
-        <Card className="quality-panel">
-          <div className="section-head">
-            <div>
-              <p className="eyebrow">生成完成后检查</p>
-              <h2>生成质量检查</h2>
-            </div>
-            <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>
-          </div>
-          <p>{quality.summary}</p>
-          {(firstActionableQualityPage || firstRoleNeedingReference) && (
-            <div className="quality-action-callout">
-              <div>
-                <strong>{quality.status === "blocked" ? "先处理阻断项" : "建议先处理待复核项"}</strong>
-                <span>
-                  {firstActionableQualityPage
-                    ? `第 ${firstActionableQualityPage.pageNumber} 页需要检查：${firstActionableQualityPage.issues[0] || firstActionableQualityPage.suggestions[0] || "请核对分页内容。"}`
-                    : `${firstRoleNeedingReference?.name} 还没有可用参考图。`}
-                </span>
-              </div>
-              <div className="inline-actions">
-                {firstActionableQualityPage && (
-                  <button className="button secondary" type="button" onClick={() => focusQualityPage(firstActionableQualityPage)}>
-                    定位问题页
-                  </button>
-                )}
-                {firstRoleNeedingReference && (
-                  <button className="button secondary" type="button" onClick={() => focusRoleReference(firstRoleNeedingReference)}>
-                    定位角色参考图
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-          <div className="review-confirm-row">
-            <div>
-              <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
-              <span>{book.teacherReviewStatus === "confirmed" ? "后续修改分页或角色后会自动回到待复核。" : quality.status === "blocked" ? "生成质量检查仍有阻断项，请先修正后再记录老师复核。" : "老师确认故事、角色、插图和隐私边界都适合当前课堂或家庭场景后，再记录复核。"}</span>
-            </div>
-            <button
-              className={book.teacherReviewStatus === "confirmed" ? "button secondary" : "button primary"}
-              type="button"
-              disabled={reviewSaving || (book.teacherReviewStatus !== "confirmed" && quality.status === "blocked")}
-              title={book.teacherReviewStatus !== "confirmed" && quality.status === "blocked" ? "请先修正生成质量阻断项" : undefined}
-              onClick={() => saveTeacherReview(book.teacherReviewStatus === "confirmed" ? "pending" : "confirmed")}
-            >
-              {reviewSaving ? "保存中..." : book.teacherReviewStatus === "confirmed" ? "重新设为待复核" : quality.status === "blocked" ? "先修正阻断项" : "老师已复核"}
-            </button>
-          </div>
-          <div className="quality-check-grid">
-            {quality.checks.map((check) => (
-              <div className="quality-check-item" key={check.key}>
-                <Badge tone={qualityTone(check.status)}>{qualityStatusLabel(check.status)}</Badge>
-                <strong>{check.label}</strong>
-                <span>{check.message}</span>
-              </div>
-            ))}
-          </div>
-          <div className="quality-page-list">
-            {quality.pages.map((page) => (
-              <button className="quality-page-row" type="button" key={page.pageId} onClick={() => focusQualityPage(page)}>
-                <div>
-                  <strong>第 {page.pageNumber} 页</strong>
-                  <span>{qualityPageSummary(page)}</span>
-                  {(page.issues.length > 0 || page.suggestions.length > 0) && (
-                    <div className="quality-page-notes">
-                      {page.issues.map((issue) => (
-                        <small className="quality-page-note issue" key={`issue-${issue}`}>问题：{issue}</small>
-                      ))}
-                      {page.suggestions.map((suggestion) => (
-                        <small className="quality-page-note suggestion" key={`suggestion-${suggestion}`}>建议：{suggestion}</small>
-                      ))}
+      {roleManagerOpen && selectedRole && (
+        <Modal title="管理整本绘本的角色与道具" className="role-manager-modal" onClose={() => setRoleManagerOpen(false)}>
+          <div id="storybook-role-editor" className="role-manager-content">
+            <div className="role-manager-list">
+              <p className="task-summary">这些设定属于整本绘本，会影响所有分页插图的一致性。</p>
+              <div className="compact-list">
+                {book.roles.map((role) => (
+                  <button className={`compact-row ${selectedRole?.id === role.id ? "active" : ""}`} type="button" key={role.id} onClick={() => setSelectedRoleId(role.id)}>
+                    <div><strong>{role.name}</strong><span>{cleanVisualAppearance(role.appearance)}</span></div>
+                    <div className="badge-stack">
+                      <Badge>{roleLabelMap(role.roleType)}</Badge>
+                      {roleNeedsReference(book, role) ? (
+                        activeRoleReferenceJob(generationJobs, role.id) ? (
+                          <Badge tone="neutral">生成中</Badge>
+                        ) : (
+                          <Badge tone={role.referenceStatus === "ready" ? "good" : role.referenceStatus === "failed" ? "danger" : "neutral"}>{roleReferenceStatusLabel(role.referenceStatus)}</Badge>
+                        )
+                      ) : (
+                        <Badge tone="neutral">单页出现</Badge>
+                      )}
                     </div>
-                  )}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="form-stack">
+              <div className="inline-actions editor-actions modal-editor-actions">
+                <button className="button secondary" type="button" disabled={roleSaving} onClick={saveRole}>{roleSaving ? "保存中..." : "保存角色设定"}</button>
+                <button className="button primary" type="button" disabled={selectedRoleReferenceGenerating || !selectedRoleNeedsReference} title={!selectedRoleNeedsReference ? "只出现一次的角色或道具不需要参考图" : undefined} onClick={generateRoleReferenceImage}>
+                  {selectedRoleReferenceGenerating ? "生成中..." : !selectedRoleNeedsReference ? "无需参考图" : selectedRole.referenceImageUrl ? "重绘参考图" : "生成参考图"}
+                </button>
+              </div>
+              <div className="reference-preview">
+                {!selectedRoleNeedsReference ? (
+                  <div className="reference-empty">无需参考图</div>
+                ) : selectedRoleReferenceGenerating ? (
+                  <div className="reference-empty">正在生成新的参考图</div>
+                ) : selectedRole.referenceImageUrl ? (
+                  roleReferencePreviewUrl ? (
+                    <img src={roleReferencePreviewUrl} alt={`${selectedRole.name} 的角色参考图`} />
+                  ) : roleReferencePreviewError ? (
+                    <div className="reference-empty">参考图读取失败：{roleReferencePreviewError}</div>
+                  ) : (
+                    <div className="reference-empty">正在读取角色参考图</div>
+                  )
+                ) : (
+                  <div className="reference-empty">待生成角色参考图</div>
+                )}
+                <div>
+                  <Badge tone={selectedRole.referenceStatus === "ready" ? "good" : selectedRole.referenceStatus === "failed" ? "danger" : "neutral"}>
+                    {selectedRoleReferenceGenerating ? "生成中" : selectedRoleNeedsReference ? roleReferenceStatusLabel(selectedRole.referenceStatus) : "单页出现"}
+                  </Badge>
+                  <p>{selectedRoleReferenceGenerating ? "参考图任务还在生成，完成后会写回角色并用于后续分页插图。" : selectedRoleNeedsReference ? "先确认角色参考图，再生成分页插图，可以显著提高跨页形象一致性。" : selectedRole.referenceImageUrl ? "这个角色或道具当前没有跨页重复出现，已有历史参考图不会用于分页插图。" : "这个角色或道具当前没有跨页重复出现，不需要单独生成参考图。"}</p>
                 </div>
-                <Badge tone={qualityTone(page.status)}>{qualityStatusLabel(page.status)}</Badge>
-              </button>
-            ))}
+              </div>
+              <label>角色名称<input name="name" value={roleForm.name} onChange={updateRoleForm} /></label>
+              <label>
+                视觉类型
+                <select name="roleType" value={roleForm.roleType} onChange={updateRoleForm}>
+                  <option value="protagonist">主角</option>
+                  <option value="supporting">配角</option>
+                  <option value="peer">同伴角色</option>
+                  <option value="teacher">老师形象</option>
+                  <option value="prop">关键道具</option>
+                </select>
+              </label>
+              <label>稳定外观<textarea name="appearance" rows={4} value={roleForm.appearance} onChange={updateRoleForm} /></label>
+              {selectedRoleNeedsReference ? (
+                <div className="reference-prompt-preview">
+                  <div>
+                    <strong>参考图生成依据</strong>
+                    <span>由角色名称、视觉类型和外观设定自动生成；故事作用不参与参考图，避免把剧情动作画进角色标准照。</span>
+                  </div>
+                  <p>{roleReferencePromptPreview}</p>
+                </div>
+              ) : (
+                <div className="reference-prompt-preview muted">
+                  <div>
+                    <strong>无需生成参考图</strong>
+                    <span>当前只按分页里的插图描述生成画面；如果后续这个角色跨页重复出现，再开启参考图。</span>
+                  </div>
+                </div>
+              )}
+              <label className="check-row"><input type="checkbox" checked={roleForm.needsConsistency} onChange={(event) => setRoleForm((current) => ({ ...current, needsConsistency: event.target.checked }))} />跨页保持一致（出现 2 页以上才需要参考图）</label>
+            </div>
           </div>
-        </Card>
+        </Modal>
       )}
 
       <section className="detail-layout">
         <aside className="page-strip">
           <h2>页面</h2>
-          {book.pages.map((page) => (
-            <button key={page.id} type="button" className={`page-thumb ${selectedPage.id === page.id ? "active" : ""}`} onClick={() => setSelectedPageId(page.id)}>
-              <span>第 {page.pageNumber} 页</span>
-              <strong>{page.title}</strong>
-              <Badge tone={statusTone(page.status)}>{pageStatusLabel[page.status]}</Badge>
-            </button>
-          ))}
+          {book.pages.map((page) => {
+            const pageImage = extractImageResult(latestPageImageJob(generationJobs, page.id)?.output);
+            const isMockImage = pageImage?.provider === "mock";
+            return (
+              <button key={page.id} type="button" className={`page-thumb ${selectedPage.id === page.id ? "active" : ""}`} onClick={() => setSelectedPageId(page.id)}>
+                <span>第 {page.pageNumber} 页</span>
+                <strong>{page.title}</strong>
+                <Badge tone={isMockImage ? "warn" : statusTone(page.status)}>{isMockImage ? "占位图" : pageStatusLabel[page.status]}</Badge>
+              </button>
+            );
+          })}
         </aside>
-        <Card className="preview-panel">
-          <div className="storybook-preview-art"><span>{book.coverTone}</span><strong>{book.title}</strong></div>
-          <h2>{selectedPage.title}</h2>
-          <p>{selectedPage.body}</p>
-          <div className="privacy-callout">插图描述：{selectedPage.illustrationPrompt}</div>
-          {currentPageImage && (
-            <div className="preview-image-block">
-              <Badge tone="info">当前页插图结果</Badge>
-              {currentImagePreviewUrl ? (
-                <img src={currentImagePreviewUrl} alt={currentPageImage.altText || selectedPage.title} />
-              ) : currentImagePreviewError ? (
-                <p>插图文件读取失败：{currentImagePreviewError}</p>
-              ) : (
-                <p>正在读取当前登录态下的插图文件。</p>
-              )}
-              <p>{currentPageImage.prompt}</p>
-              <small>{currentPageImage.styleNotes.join(" · ")}</small>
-            </div>
-          )}
-        </Card>
-        <aside className="editor-panel">
-          <Card id="storybook-role-editor">
-            <h2>角色与道具</h2>
-            <div className="compact-list">
-              {book.roles.map((role) => (
-                <button className={`compact-row ${selectedRole?.id === role.id ? "active" : ""}`} type="button" key={role.id} onClick={() => setSelectedRoleId(role.id)}>
-                  <div><strong>{role.name}</strong><span>{role.appearance}</span></div>
-                  <div className="badge-stack">
-                    <Badge>{roleLabelMap(role.roleType)}</Badge>
-                    <Badge tone={role.referenceStatus === "ready" ? "good" : role.referenceStatus === "failed" ? "danger" : "neutral"}>{roleReferenceStatusLabel(role.referenceStatus)}</Badge>
-                  </div>
+        <div className="storybook-workspace-main">
+          <Card className="preview-panel">
+            <div className="storybook-preview-art"><span>{book.coverTone}</span><strong>{book.title}</strong></div>
+            <div className="page-content-toolbar">
+              <span>第 {selectedPage.pageNumber} 页</span>
+              {!pageEditorOpen && (
+                <button className="button secondary" type="button" onClick={() => setPageEditorOpen(true)}>
+                  编辑本页
                 </button>
-              ))}
+              )}
             </div>
-            {selectedRole && (
-              <div className="form-stack">
-                <div className="reference-preview">
-                  {selectedRole.referenceImageUrl ? (
-                    roleReferencePreviewUrl ? (
-                      <img src={roleReferencePreviewUrl} alt={`${selectedRole.name} 的角色参考图`} />
-                    ) : roleReferencePreviewError ? (
-                      <div className="reference-empty">参考图读取失败：{roleReferencePreviewError}</div>
-                    ) : (
-                      <div className="reference-empty">正在读取角色参考图</div>
-                    )
-                  ) : (
-                    <div className="reference-empty">待生成角色参考图</div>
-                  )}
-                  <div>
-                    <Badge tone={selectedRole.referenceStatus === "ready" ? "good" : selectedRole.referenceStatus === "failed" ? "danger" : "neutral"}>
-                      {roleReferenceStatusLabel(selectedRole.referenceStatus)}
-                    </Badge>
-                    <p>先确认角色参考图，再生成分页插图，可以显著提高跨页形象一致性。</p>
-                  </div>
+            {pageEditorOpen ? (
+              <div className="inline-page-editor">
+                <label>页面标题<input name="title" value={pageForm.title} onChange={updatePageForm} /></label>
+                <label>正文<textarea name="body" rows={5} value={pageForm.body} onChange={updatePageForm} /></label>
+                <label>插图描述<textarea name="illustrationPrompt" rows={4} value={pageForm.illustrationPrompt} onChange={updatePageForm} /></label>
+                <div className="inline-actions editor-actions contextual-actions">
+                  <button className="button secondary" type="button" onClick={cancelPageEdit}>取消编辑</button>
+                  <button className="button primary" type="button" disabled={!pageHasUnsavedChanges} onClick={savePage}>保存本页修改</button>
                 </div>
-                <label>角色名称<input name="name" value={roleForm.name} onChange={updateRoleForm} /></label>
-                <label>
-                  类型
-                  <select name="roleType" value={roleForm.roleType} onChange={updateRoleForm}>
-                    <option value="protagonist">主角</option>
-                    <option value="supporting">配角</option>
-                    <option value="peer">同伴儿童</option>
-                    <option value="teacher">老师形象</option>
-                    <option value="prop">关键道具</option>
-                  </select>
-                </label>
-                <label>外观设定<textarea name="appearance" rows={3} value={roleForm.appearance} onChange={updateRoleForm} /></label>
-                <label>故事作用<textarea name="storyFunction" rows={3} value={roleForm.storyFunction} onChange={updateRoleForm} /></label>
-                <label>参考图提示词<textarea name="referenceImagePrompt" rows={3} value={roleForm.referenceImagePrompt} onChange={updateRoleForm} /></label>
-                <label className="check-row"><input type="checkbox" checked={roleForm.needsConsistency} onChange={(event) => setRoleForm((current) => ({ ...current, needsConsistency: event.target.checked }))} />跨页保持一致</label>
-                <div className="inline-actions">
-                  <button className="button secondary" type="button" disabled={roleSaving} onClick={saveRole}>{roleSaving ? "保存中..." : "保存角色设定"}</button>
-                  <button className="button primary" type="button" disabled={roleImageGenerating} onClick={generateRoleReferenceImage}>
-                    {roleImageGenerating ? "生成中..." : selectedRole.referenceImageUrl ? "重绘参考图" : "生成参考图"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </Card>
-          <Card>
-            <h2>共享设置</h2>
-            <p>{book.type === "custom" ? "定制绘本通常包含儿童信息，建议保持私有，只通过受控分享链接交付。" : "普通绘本可以设为园所共享，作为后续定制绘本母本复用。"}</p>
-            {shouldUseApi && <Badge tone={shareLinks.length ? "good" : "neutral"}>{shareLinks.length ? `${shareLinks.length} 个有效分享链接` : "暂无有效分享链接"}</Badge>}
-            <label>
-              可见范围
-              <select value={visibilityValue} onChange={(event) => setVisibilityValue(event.target.value as Storybook["visibility"])}>
-                <option value="private">仅当前空间私有</option>
-                <option value="workspace">园所/空间内共享</option>
-              </select>
-            </label>
-            <button className="button secondary" type="button" disabled={visibilitySaving || visibilityValue === book.visibility} onClick={saveVisibility}>
-              {visibilitySaving ? "保存中..." : visibilityValue === book.visibility ? "已保存" : "保存共享设置"}
-            </button>
-            {shouldUseApi && (
-              <div className="review-list">
-                <span>最近导出</span>
-                {exportJobs.length ? (
-                  <div className="inline-actions">
-                    <Badge tone={statusTone(exportJobs[0].status)}>{exportStatusLabel(exportJobs[0].status)}</Badge>
-                    {exportJobs[0].fileUrl ? (
-                      <button className="button secondary" type="button" onClick={() => openExportPdf(exportJobs[0])}>打开 PDF</button>
-                    ) : (
-                      <button className="button secondary" type="button" onClick={() => refreshExportJobs()}>刷新状态</button>
-                    )}
-                    {exportJobs[0].status === "failed" && <small>{exportFailureText(exportJobs[0])}</small>}
-                  </div>
-                ) : (
-                  <p>还没有导出记录。</p>
+                {shouldShowImageGenerationAction && (
+                  <p className="form-hint">{pageHasUnsavedChanges ? "保存本页修改后，可在当前页检查中按新描述重绘插图。" : "没有文字修改时，可退出编辑后按当前描述重绘插图。"}</p>
                 )}
               </div>
+            ) : (
+              <>
+                <h2>{selectedPage.title}</h2>
+                <p>{selectedPage.body}</p>
+                <div className="privacy-callout">插图描述：{selectedPage.illustrationPrompt}</div>
+              </>
+            )}
+            {currentPageImage && (
+              <div className="preview-image-block">
+                <Badge tone="info">当前页插图结果</Badge>
+                {currentPageImage.provider === "mock" ? (
+                  <div className="image-placeholder-note">
+                    <strong>当前还没有真实插图</strong>
+                    <span>这次任务使用了 mock 占位图，说明后端没有读到真实生图配置。请确认 Seedream 配置生效后重新生成。</span>
+                  </div>
+                ) : currentImagePreviewUrl ? (
+                  <img src={currentImagePreviewUrl} alt={currentPageImage.altText || selectedPage.title} />
+                ) : currentImagePreviewError ? (
+                  <p>插图文件读取失败：{currentImagePreviewError}</p>
+                ) : (
+                  <p>正在读取当前登录态下的插图文件。</p>
+                )}
+                <p>{currentPageImage.prompt}</p>
+                <small>{currentPageImage.styleNotes.join(" · ")}</small>
+              </div>
             )}
           </Card>
-          {shouldUseApi && (
-            <Card>
-              <div className="section-head">
-                <div>
-                  <p className="eyebrow">Recent</p>
-                  <h2>本书生成历史</h2>
-                </div>
-                <Badge tone={generationJobs.some((job) => job.status === "failed") ? "danger" : generationJobs.length ? "good" : "neutral"}>
-                  {generationJobs.length ? `${generationJobs.length} 条` : "暂无记录"}
-                </Badge>
-              </div>
-              {generationJobs.length === 0 ? (
-                <EmptyState title="还没有生成记录" copy="故事方案、角色、分页、插图和定制方案完成后，会显示在这里。" />
-              ) : (
-                <div className="compact-list generation-job-list">
-                  {generationJobs.slice(0, 4).map((job) => (
-                    <div key={job.id} className="compact-row static">
-                      <div>
-                        <strong>{generationJobTitle(job)}</strong>
-                        <span>{generationJobCopy(job)}</span>
-                        <small>{generationJobNextAction(job)}</small>
-                        <small>任务 {job.id.slice(0, 8)} · {generationJobTime(job)}</small>
-                        {generationPrivacyAuditSummary(job.output) && <small>{generationPrivacyAuditSummary(job.output)}</small>}
-                        {canCancelGenerationJob(job) && (
-                          <button className="button secondary compact-action" type="button" disabled={cancelingJobId === job.id} onClick={() => cancelJob(job)}>
-                            {cancelingJobId === job.id ? "取消中..." : "取消任务"}
-                          </button>
-                        )}
-                      </div>
-                      <Badge tone={statusTone(job.status)}>{generationJobStatusLabel[job.status] || job.status}</Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-          )}
+          <aside className="editor-panel">
           <Card id="storybook-page-editor">
-            <h2>编辑当前页</h2>
+            <div className="panel-title-row">
+              <div>
+                <h2>当前页检查</h2>
+                <p>只处理本页需要复核或重绘的内容。</p>
+              </div>
+            </div>
             {selectedPageQuality && selectedPageQuality.status !== "passed" && (
               <div className="quality-focus-callout">
                 <Badge tone={qualityTone(selectedPageQuality.status)}>{qualityStatusLabel(selectedPageQuality.status)}</Badge>
@@ -1141,18 +1079,18 @@ export function StorybookDetailPage() {
                 </div>
               </div>
             )}
-            <label>页面标题<input name="title" value={pageForm.title} onChange={updatePageForm} /></label>
-            <label>正文<textarea name="body" rows={5} value={pageForm.body} onChange={updatePageForm} /></label>
-            <label>插图描述<textarea name="illustrationPrompt" rows={4} value={pageForm.illustrationPrompt} onChange={updatePageForm} /></label>
             <div className={`reference-guard-callout ${pageImageReferenceBlocker ? "needs-reference" : ""}`}>
-              <Badge tone={pageImageReferenceBlocker ? "warn" : selectedPageReadyReferenceRoles.length ? "good" : "neutral"}>插图参考图</Badge>
+              <Badge tone={pageImageReferenceBlocker || selectedPageStaleReferenceRoles.length ? "warn" : selectedPageUsableReferenceRoles.length ? "good" : "neutral"}>插图参考图</Badge>
               <div>
-                <strong>{pageImageReferenceBlocker ? "先补齐本页角色参考图" : selectedPageReadyReferenceRoles.length ? "本页会引用角色参考图" : "本页未识别到需固定形象的角色"}</strong>
-                {selectedPageReadyReferenceRoles.length > 0 && (
-                  <span>已就绪：{selectedPageReadyReferenceRoles.map((role) => role.name).join("、")}。</span>
+                <strong>{pageImageReferenceBlocker ? "先补齐本页角色参考图" : selectedPageStaleReferenceRoles.length ? "本页已有参考图，建议更新" : selectedPageUsableReferenceRoles.length ? "本页会引用角色参考图" : "本页未识别到需固定形象的角色"}</strong>
+                {selectedPageUsableReferenceRoles.length > 0 && (
+                  <span>已有参考图：{selectedPageUsableReferenceRoles.map((role) => role.name).join("、")}。</span>
                 )}
                 {selectedPageMissingReferenceRoles.length > 0 && (
                   <span>缺少参考图：{selectedPageMissingReferenceRoles.map((role) => role.name).join("、")}。</span>
+                )}
+                {selectedPageStaleReferenceRoles.length > 0 && (
+                  <span>需更新参考图：{selectedPageStaleReferenceRoles.map((role) => role.name).join("、")}。当前已有图仍可用于生成，更新后跨页一致性更稳。</span>
                 )}
                 {!selectedPageReferencedRoles.length && (
                   <span>如果本页出现固定主角、老师或关键道具，请在插图描述中写出名称，系统才会带入对应参考图。</span>
@@ -1160,19 +1098,26 @@ export function StorybookDetailPage() {
               </div>
               {selectedPageMissingReferenceRoles[0] && (
                 <button className="button secondary" type="button" onClick={() => focusRoleReference(selectedPageMissingReferenceRoles[0])}>
-                  定位缺少的参考图
+                  管理角色参考图
                 </button>
               )}
             </div>
-            <div className="inline-actions">
-              <button className="button secondary" type="button" disabled={imageGenerating} onClick={generateIllustration}>
-                {imageGenerating ? "生成中..." : pageImageReferenceBlocker ? "先生成参考图" : selectedPage.status === "needs_regeneration" ? "重新生成插图" : "生成插图"}
+            {shouldShowImageGenerationAction && !pageEditorOpen && (
+              <button
+                className="button primary"
+                type="button"
+                disabled={imageGenerating || Boolean(pageImageReferenceBlocker)}
+                title={pageImageReferenceBlocker || undefined}
+                onClick={generateIllustration}
+              >
+                {imageGenerating ? "生成中..." : selectedPage.status === "needs_regeneration" ? "按当前描述重绘插图" : "按当前描述生成插图"}
               </button>
-              <button className="button primary" type="button" onClick={savePage}>保存本页</button>
-            </div>
+            )}
           </Card>
-        </aside>
+          </aside>
+        </div>
       </section>
+
       {shareOpen && (
         <Modal title="管理分享链接" onClose={() => setShareOpen(false)}>
           <p>分享范围：获得链接的人可查看当前绘本版本。</p>
@@ -1181,9 +1126,102 @@ export function StorybookDetailPage() {
             <div><span>当前可见性</span><strong>{visibilityLabel(book.visibility)}</strong></div>
             <div><span>导出状态</span><strong>{exportJobs.length ? exportStatusLabel(exportJobs[0].status) : "暂无记录"}</strong></div>
             <div><span>分享链接</span><strong>{shareLinks.length ? `${shareLinks.length} 个有效链接` : "未创建"}</strong></div>
+            <div><span>老师复核</span><strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong></div>
           </div>
+          <div className="delivery-status-main modal-delivery-status">
+            <div>
+              <p className="eyebrow">分享前检查</p>
+              <h3>{effectiveDeliveryBlocker ? "先处理阻断项，再分享" : book.teacherReviewStatus === "confirmed" ? "已复核，可以分享" : "建议老师复核后分享"}</h3>
+              <p>{effectiveDeliveryBlocker || deliveryWarnings[0] || reviewDeliveryReminder || "页面、角色和插图检查已通过，可以创建分享链接。"}</p>
+            </div>
+            {quality && (
+              <div className="delivery-status-actions">
+                <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>
+                <button
+                  className={book.teacherReviewStatus === "confirmed" ? "button secondary" : "button primary"}
+                  type="button"
+                  disabled={reviewSaving || (book.teacherReviewStatus !== "confirmed" && quality.status === "blocked")}
+                  title={book.teacherReviewStatus !== "confirmed" && quality.status === "blocked" ? "请先修正生成质量阻断项" : undefined}
+                  onClick={() => saveTeacherReview(book.teacherReviewStatus === "confirmed" ? "pending" : "confirmed")}
+                >
+                  {reviewSaving ? "保存中..." : book.teacherReviewStatus === "confirmed" ? "重新设为待复核" : quality.status === "blocked" ? "先修正阻断项" : "老师已复核"}
+                </button>
+              </div>
+            )}
+          </div>
+          {quality && (firstActionableQualityPage || firstRoleNeedingReference) && (
+            <div className="delivery-next-step">
+              <div>
+                <strong>{quality.status === "blocked" ? "需要处理" : "建议查看"}</strong>
+                <span>
+                  {firstActionableQualityPage
+                    ? `第 ${firstActionableQualityPage.pageNumber} 页：${firstActionableQualityPage.issues[0] || firstActionableQualityPage.suggestions[0] || "请核对分页内容。"}`
+                    : `${firstRoleNeedingReference?.name} 还没有可用参考图。`}
+                </span>
+              </div>
+              <div className="inline-actions">
+                {firstActionableQualityPage && (
+                  <button className="button secondary" type="button" onClick={() => { setShareOpen(false); focusQualityPage(firstActionableQualityPage); }}>
+                    定位问题页
+                  </button>
+                )}
+                {firstRoleNeedingReference && (
+                  <button className="button secondary" type="button" onClick={() => { setShareOpen(false); focusRoleReference(firstRoleNeedingReference); }}>
+                    定位角色参考图
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <div className="privacy-callout">
             分享前请确认不包含未授权儿童信息或家庭隐私。{reviewDeliveryReminder ? ` 分享弹窗提醒：${reviewDeliveryReminder}` : ""}
+          </div>
+          {quality && (
+            <details className="quality-details compact">
+              <summary>查看交付检查详情</summary>
+              <div className="quality-check-grid">
+                {quality.checks.map((check) => (
+                  <div className="quality-check-item" key={check.key}>
+                    <Badge tone={qualityTone(check.status)}>{qualityStatusLabel(check.status)}</Badge>
+                    <strong>{check.label}</strong>
+                    <span>{check.message}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="quality-page-list">
+                {quality.pages.map((page) => (
+                  <button className="quality-page-row" type="button" key={page.pageId} onClick={() => { setShareOpen(false); focusQualityPage(page); }}>
+                    <div>
+                      <strong>第 {page.pageNumber} 页</strong>
+                      <span>{qualityPageSummary(page)}</span>
+                      {(page.issues.length > 0 || page.suggestions.length > 0) && (
+                        <div className="quality-page-notes">
+                          {page.issues.map((issue) => (
+                            <small className="quality-page-note issue" key={`issue-${issue}`}>问题：{issue}</small>
+                          ))}
+                          {page.suggestions.map((suggestion) => (
+                            <small className="quality-page-note suggestion" key={`suggestion-${suggestion}`}>建议：{suggestion}</small>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Badge tone={qualityTone(page.status)}>{qualityStatusLabel(page.status)}</Badge>
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
+          <div className="form-grid">
+            <label>
+              整本绘本可见范围
+              <select value={visibilityValue} onChange={(event) => setVisibilityValue(event.target.value as Storybook["visibility"])}>
+                <option value="private">仅当前空间私有</option>
+                <option value="workspace">园所/空间内共享</option>
+              </select>
+            </label>
+            <button className="button secondary" type="button" disabled={visibilitySaving || visibilityValue === book.visibility} onClick={saveVisibility}>
+              {visibilitySaving ? "保存中..." : visibilityValue === book.visibility ? "可见范围已保存" : "保存可见范围"}
+            </button>
           </div>
           {shouldUseApi && (
             <div className="form-grid">
@@ -1268,7 +1306,7 @@ function teacherReviewLabel(status?: string) {
 }
 
 function buildLocalStorybookQuality(book: Storybook): StorybookQualityReport {
-  const consistencyRoles = book.roles.filter((role) => role.needsConsistency);
+  const consistencyRoles = book.roles.filter((role) => roleNeedsReference(book, role));
   const checks: StorybookQualityReport["checks"] = [
     {
       key: "structure",
@@ -1277,14 +1315,21 @@ function buildLocalStorybookQuality(book: Storybook): StorybookQualityReport {
       message: book.pages.length && book.roles.length ? "已包含分页内容和角色/道具设定。" : "分页或角色设定不完整。",
     },
   ];
-  const missingReferences = consistencyRoles.filter((role) => role.referenceStatus !== "ready" || !role.referenceImageUrl);
+  const missingReferences = consistencyRoles.filter((role) => !role.referenceImageUrl);
+  const staleReferences = consistencyRoles.filter((role) => role.referenceImageUrl && role.referenceStatus !== "ready");
   checks.push({
     key: "role_references",
     label: "角色参考图",
-    status: missingReferences.length ? "needs_review" : "passed",
-    message: missingReferences.length
-      ? `以下角色/道具还需要先生成或确认参考图：${missingReferences.map((role) => role.name).join("、")}。`
-      : "需要跨页一致的角色/道具都已有参考图。",
+    status: missingReferences.length || staleReferences.length ? "needs_review" : "passed",
+    message: !consistencyRoles.length
+      ? "没有跨页重复出现的角色或道具需要参考图；只出现一次的事物无需参考图。"
+      : missingReferences.length
+      ? staleReferences.length
+        ? `缺少参考图：${missingReferences.map((role) => role.name).join("、")}；建议更新参考图：${staleReferences.map((role) => role.name).join("、")}。`
+        : `以下跨页出现的角色/道具还需要先生成参考图：${missingReferences.map((role) => role.name).join("、")}。`
+      : staleReferences.length
+        ? `以下角色/道具已有参考图但建议更新：${staleReferences.map((role) => role.name).join("、")}；当前已有图仍可用于生成。`
+        : "跨页重复出现的角色/道具都已有参考图；只出现一次的事物无需参考图。",
   });
 
   let blockedPages = 0;
@@ -1292,13 +1337,15 @@ function buildLocalStorybookQuality(book: Storybook): StorybookQualityReport {
   const pages = book.pages.map((page) => {
     const issues: string[] = [];
     const suggestions: string[] = [];
-    const promptHasConfirmedRole = consistencyRoles.length === 0 || consistencyRoles.some((role) => page.illustrationPrompt.includes(role.name));
-    if (!promptHasConfirmedRole) issues.push("插图描述没有明确带入已确认角色/道具名称。");
+    const pageText = `${page.title} ${page.body}`;
+    const combinedText = `${pageText} ${page.illustrationPrompt}`;
+    const pageRoles = book.roles.filter((role) => combinedText.includes(role.name));
+    const promptHasConfirmedRole = pageRoles.some((role) => page.illustrationPrompt.includes(role.name));
+    if (pageRoles.length && !promptHasConfirmedRole) issues.push("插图描述没有明确带入已确认角色/道具名称。");
     if (page.status === "generating") issues.push("插图仍在生成中。");
     if (page.status === "failed") issues.push("插图生成失败，需要重新生成。");
     if (page.status === "needs_regeneration") suggestions.push("当前页标记为需重绘，建议重新生成插图。");
-    consistencyRoles.forEach((role) => {
-      const pageText = `${page.title} ${page.body}`;
+    pageRoles.forEach((role) => {
       if (pageText.includes(role.name) && !page.illustrationPrompt.includes(role.name)) {
         issues.push(`正文出现了「${role.name}」，但插图描述没有同步这个名称。`);
       }
@@ -1345,11 +1392,49 @@ function buildLocalStorybookQuality(book: Storybook): StorybookQualityReport {
   };
 }
 
+function customizationBlockerFor(book: Storybook, quality?: StorybookQualityReport) {
+  if (book.type !== "plain") return "只有普通绘本可以继续生成儿童定制版";
+  if (!book.pages.length) return "请先生成绘本分页";
+  if (!book.roles.length) return "请先确认角色与道具";
+  const generatingPages = book.pages.filter((page) => page.status === "generating");
+  if (generatingPages.length) return "仍有分页插图正在生成，请完成后再生成定制版";
+  const failedPages = book.pages.filter((page) => page.status === "failed");
+  if (failedPages.length) return "仍有分页插图生成失败，请修复后再生成定制版";
+  const redrawPages = book.pages.filter((page) => page.status === "needs_regeneration");
+  if (redrawPages.length) return `仍有 ${redrawPages.length} 页需要重绘，请先完成普通绘本`;
+  const missingReferences = book.roles.filter((role) => roleNeedsReference(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl));
+  if (missingReferences.length) return `跨页角色参考图未完成：${missingReferences.map((role) => role.name).join("、")}`;
+  if (quality?.status === "blocked") return "质量检查存在阻断项，请先修正";
+  if (book.status !== "exportable" && book.status !== "listed") return "请先将普通绘本标记为可交付";
+  return "";
+}
+
+function roleNeedsReference(book: Storybook, role: StorybookRole) {
+  return role.needsConsistency && rolePageUsageCount(book, role) >= 2;
+}
+
+function activeRoleReferenceJob(jobs: GenerationJob[], roleId: string) {
+  return jobs.find((job) => {
+    if (job.jobType !== "storybook_role_reference_image") return false;
+    if (job.status !== "queued" && job.status !== "running") return false;
+    const input = job.input;
+    if (!input || typeof input !== "object" || !("role_id" in input)) return false;
+    return (input as { role_id?: unknown }).role_id === roleId;
+  });
+}
+
+function rolePageUsageCount(book: Storybook, role: StorybookRole) {
+  return book.pages.filter((page) => {
+    const text = `${page.title} ${page.body} ${page.illustrationPrompt}`;
+    return text.includes(role.name);
+  }).length;
+}
+
 function roleLabelMap(roleType: string) {
   return {
     protagonist: "主角",
     supporting: "配角",
-    peer: "同伴儿童",
+    peer: "同伴角色",
     teacher: "老师形象",
     prop: "关键道具",
   }[roleType] || roleType;
@@ -1452,14 +1537,68 @@ function roleReferenceStatusLabel(status?: string) {
   }[status || "not_started"] || "参考图待确认";
 }
 
+function buildRoleReferencePrompt(role: Pick<StorybookRole, "name" | "roleType" | "appearance">) {
+  const name = role.name.trim() || "未命名角色";
+  const appearance = cleanVisualAppearance(role.appearance) || "请先补充外观设定";
+  return `${name}，${roleTypeLabel(role.roleType)}，${appearance}，温暖绘本风格，单一角色标准图，白底或简洁背景，清晰半身或全身，画面只有这个角色，无人类，无其他角色，保持跨页一致`;
+}
+
+function cleanVisualAppearance(value: string) {
+  const behaviorKeywords = [
+    "喜欢",
+    "总喜欢",
+    "经常",
+    "常常",
+    "总是",
+    "常和",
+    "离开队伍",
+    "交流",
+    "适合",
+    "带领",
+    "制定",
+    "强调",
+    "学习",
+    "代表",
+    "推动",
+    "帮助",
+    "引导",
+    "鼓励",
+    "提醒",
+    "跑",
+    "跳",
+    "蹦",
+    "玩",
+    "等待",
+    "分享",
+  ];
+  const parts = value
+    .split(/[，,。；;、]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !behaviorKeywords.some((keyword) => part.includes(keyword)));
+  return parts.join("，") || value.trim();
+}
+
+function roleTypeLabel(roleType: StorybookRole["roleType"]) {
+  return {
+    protagonist: "主角",
+    supporting: "配角",
+    peer: "同伴角色",
+    teacher: "老师形象",
+    prop: "关键道具",
+  }[roleType] || "角色";
+}
+
 function extractPageId(output: unknown) {
   const value = output as { image?: { page_id?: string; target_id?: string; target_type?: string } } | undefined;
   if (value?.image?.page_id) return value.image.page_id;
   return value?.image?.target_type === "page" ? value.image.target_id : undefined;
 }
 
-function extractImageResult(output: unknown): { imageUrl: string; altText?: string; prompt?: string; styleNotes: string[] } | null {
+function extractImageResult(output: unknown): { imageUrl: string; altText?: string; prompt?: string; styleNotes: string[]; provider?: string; message?: string } | null {
   const value = output as {
+    provider?: string;
+    message?: string;
     image?: {
       image_url?: string;
       alt_text?: string;
@@ -1474,6 +1613,8 @@ function extractImageResult(output: unknown): { imageUrl: string; altText?: stri
     altText: image.alt_text,
     prompt: image.prompt,
     styleNotes: image.style_notes || [],
+    provider: value?.provider,
+    message: value?.message,
   };
 }
 

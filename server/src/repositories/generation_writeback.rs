@@ -121,6 +121,7 @@ async fn replace_roles_from_generation(
 
     for role in roles {
         let id = Uuid::new_v4();
+        let role_type = normalized_role_type(&json_text(role, "role_type", "supporting"));
         db.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
@@ -133,12 +134,12 @@ async fn replace_roles_from_generation(
                 id.into(),
                 storybook_id.into(),
                 json_text(role, "name", "未命名角色").into(),
-                json_text(role, "role_type", "supporting").into(),
-                json_text(role, "appearance", "待确认外观").into(),
+                role_type.clone().into(),
+                clean_visual_appearance(&json_text(role, "appearance", "待确认外观")).into(),
                 json_text(role, "story_function", "参与故事推进").into(),
                 role.get("needs_consistency")
                     .and_then(|value| value.as_bool())
-                    .unwrap_or(true)
+                    .unwrap_or_else(|| default_needs_consistency(&role_type))
                     .into(),
                 json_optional_text(role, "reference_image_url").into(),
                 json_optional_text(role, "reference_image_prompt").into(),
@@ -225,4 +226,65 @@ fn json_optional_text(value: &JsonValue, key: &str) -> Option<String> {
         .and_then(|item| item.as_str())
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
+}
+
+fn clean_visual_appearance(value: &str) -> String {
+    let behavior_keywords = [
+        "喜欢",
+        "总喜欢",
+        "经常",
+        "常常",
+        "总是",
+        "常和",
+        "离开队伍",
+        "交流",
+        "适合",
+        "带领",
+        "制定",
+        "强调",
+        "学习",
+        "代表",
+        "推动",
+        "帮助",
+        "引导",
+        "鼓励",
+        "提醒",
+        "跑",
+        "跳",
+        "蹦",
+        "玩",
+        "等待",
+        "分享",
+    ];
+    let parts: Vec<&str> = value
+        .split(|ch| matches!(ch, '，' | ',' | '。' | '；' | ';' | '、'))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .filter(|part| {
+            !behavior_keywords
+                .iter()
+                .any(|keyword| part.contains(keyword))
+        })
+        .collect();
+    if parts.is_empty() {
+        value.trim().to_string()
+    } else {
+        parts.join("，")
+    }
+}
+
+fn normalized_role_type(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "protagonist" | "main" | "主角" => "protagonist",
+        "teacher" | "guide" | "老师" | "教师" | "引导者" | "向导" => "teacher",
+        "peer" | "companion" | "同伴" | "朋友" | "伙伴" => "peer",
+        "prop" | "tool" | "object" | "道具" | "关键道具" => "prop",
+        "supporting" | "配角" | "背景角色" => "supporting",
+        _ => "supporting",
+    }
+    .to_string()
+}
+
+fn default_needs_consistency(role_type: &str) -> bool {
+    matches!(role_type, "protagonist" | "teacher")
 }

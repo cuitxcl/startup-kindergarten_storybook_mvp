@@ -117,7 +117,7 @@ pub(crate) async fn seed_default_pages_and_roles(
             DbBackend::Postgres,
             r#"
             insert into storybook_pages (id, storybook_id, page_number, title, body, illustration_prompt, status)
-            values ($1, $2, 1, '第一页', '老师确认故事方案后，孩子们一起进入故事。', '温暖教室，老师和孩子围坐阅读。', 'ready')
+            values ($1, $2, 1, '故事从这里开始', '林老师带着孩子们翻开绘本，先一起确认今天要练习的小约定。', '温暖幼儿园教室，林老师温柔清楚，穿浅色围裙，和孩子们围坐阅读绘本。', 'draft')
             "#,
             [page_id.into(), storybook_id.into()],
         ))
@@ -140,13 +140,52 @@ pub(crate) async fn seed_default_pages_and_roles(
             r#"
             insert into storybook_roles
               (id, storybook_id, name, role_type, appearance, story_function, needs_consistency, reference_status)
-            values ($1, $2, '老师形象', 'teacher', '温柔、清楚、适合幼儿园场景', '引导故事推进', true, 'not_started')
+            values ($1, $2, '林老师', 'teacher', '温柔清楚，穿浅色围裙，常和孩子平视交流，适合幼儿园共读场景', '在故事中引导孩子理解规则、情绪或生活习惯', true, 'not_started')
             "#,
             [role_id.into(), storybook_id.into()],
         ))
         .await?;
     }
 
+    normalize_placeholder_page_and_role(db, storybook_id).await?;
+
+    Ok(())
+}
+
+async fn normalize_placeholder_page_and_role(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<(), DbErr> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_roles
+        set name = '林老师',
+            appearance = '温柔清楚，穿浅色围裙，常和孩子平视交流，适合幼儿园共读场景',
+            story_function = '在故事中引导孩子理解规则、情绪或生活习惯',
+            role_type = 'teacher'
+        where storybook_id = $1 and name = '老师形象'
+        "#,
+        [storybook_id.into()],
+    ))
+    .await?;
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_pages
+        set title = '故事从这里开始',
+            body = '林老师带着孩子们翻开绘本，先一起确认今天要练习的小约定。',
+            illustration_prompt = '温暖幼儿园教室，林老师温柔清楚，穿浅色围裙，和孩子们围坐阅读绘本。',
+            status = case when status = 'ready' then 'draft' else status end
+        where storybook_id = $1
+          and page_number = 1
+          and title = '第一页'
+          and body = '老师确认故事方案后，孩子们一起进入故事。'
+        "#,
+        [storybook_id.into()],
+    ))
+    .await?;
     Ok(())
 }
 

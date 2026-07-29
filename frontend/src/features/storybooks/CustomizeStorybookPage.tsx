@@ -313,6 +313,7 @@ export function CustomizeStorybookPage() {
         eyebrow="生成定制绘本"
         title={`从《${source.title}》生成定制绘本`}
         copy="系统会先展示定制方案，确认后创建独立副本，不会覆盖原普通绘本。"
+        actions={<Link className="button secondary" to={`/app/${workspace.id}/storybooks/${source.id}`}>返回普通绘本</Link>}
       />
       {selected && (
         <Card>
@@ -331,28 +332,12 @@ export function CustomizeStorybookPage() {
           </div>
         </Card>
       )}
-      {provider && (
-        <Card>
-          <div className="section-head">
-            <div>
-              <p className="eyebrow">生成状态</p>
-              <h2>{providerStatusTitle(provider)}</h2>
-              <p>{provider.diagnostic}</p>
-            </div>
-            <Badge tone={provider.realTextReady ? "good" : "warn"}>{provider.provider}</Badge>
-          </div>
-          <div className="review-list">
-            <div><span>文本真实可用</span><strong>{provider.realTextReady ? "是" : "否"}</strong></div>
-            <div><span>图片真实可用</span><strong>{provider.realImageReady ? "是" : "否"}</strong></div>
-            <div><span>缺失配置</span><strong>{provider.missingConfiguration.length ? provider.missingConfiguration.join(" · ") : "无"}</strong></div>
-            {provider.components.map((component) => (
-              <div key={`${component.kind}-${component.provider}`}>
-                <span>{componentKindLabel(component.kind)}组件</span>
-                <strong>{component.provider} · {component.ready ? "已就绪" : `缺少 ${component.requiredConfiguration.join(" · ")}`}</strong>
-              </div>
-            ))}
-          </div>
-        </Card>
+      {provider && !provider.realTextReady && (
+        <Notice
+          title="真实文本生成暂不可用"
+          copy={`${provider.diagnostic}${provider.missingConfiguration.length ? ` 缺少：${provider.missingConfiguration.join("、")}` : ""}`}
+          tone="warn"
+        />
       )}
       <div className="wizard-shell">
         <WizardSideNav
@@ -441,11 +426,11 @@ export function CustomizeStorybookPage() {
             ? <ReviewBlock title="定制方案" output={customizationPlan} items={batchCustomizationPlanItems(customizationPlan, selectedBatchChildren, intensity)} />
             : selected && <ReviewBlock title="定制方案" output={customizationPlan} items={customizationPlanItems(customizationPlan, selected, intensity)} />
           )}
-          {shouldUseApi && (
+          {shouldUseApi && generationJobs.length > 0 && step >= 3 && (
             <Card>
               <div className="section-head">
                 <div>
-                  <p className="eyebrow">Recent</p>
+                  <p className="eyebrow">最近任务</p>
                   <h2>最近定制任务</h2>
                 </div>
                 <Badge tone={generationJobs.some((job) => job.status === "failed") ? "danger" : generationJobs.length ? "good" : "neutral"}>
@@ -515,17 +500,6 @@ function generationErrorMessage(job: GenerationJob) {
 
 function generationStatusLabel(status: string) {
   return generationJobStatusLabel[status] || `状态：${status}`;
-}
-
-function providerStatusTitle(provider: GenerationProviderStatus) {
-  if (provider.productionReady) return "真实文本和图片生成已就绪";
-  if (provider.realTextReady) return "真实文本生成已就绪";
-  if (provider.realImageReady) return "真实图片生成已就绪";
-  return "当前使用本地演示生成";
-}
-
-function componentKindLabel(kind: string) {
-  return kind === "image" ? "图片" : kind === "text" ? "文本" : kind;
 }
 
 function generationOutputMeta(output: unknown) {

@@ -115,7 +115,7 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
     let consistency_roles: Vec<_> = book
         .roles
         .iter()
-        .filter(|role| role.needs_consistency)
+        .filter(|role| role_needs_reference(book, role))
         .collect();
 
     checks.push(quality_check(
@@ -137,27 +137,43 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
 
     let missing_reference_roles: Vec<_> = consistency_roles
         .iter()
-        .filter(|role| role.reference_status != "ready" || role.reference_image_url.is_none())
+        .filter(|role| role.reference_image_url.is_none())
+        .map(|role| role.name.clone())
+        .collect();
+    let stale_reference_roles: Vec<_> = consistency_roles
+        .iter()
+        .filter(|role| role.reference_image_url.is_some() && role.reference_status != "ready")
         .map(|role| role.name.clone())
         .collect();
     checks.push(quality_check(
         "role_references",
         "角色参考图",
         if consistency_roles.is_empty() {
-            StorybookQualityStatus::NeedsReview
-        } else if missing_reference_roles.is_empty() {
+            StorybookQualityStatus::Passed
+        } else if missing_reference_roles.is_empty() && stale_reference_roles.is_empty() {
             StorybookQualityStatus::Passed
         } else {
             StorybookQualityStatus::NeedsReview
         },
         if consistency_roles.is_empty() {
-            "没有设置需要跨页一致的角色或道具，建议至少确认主角。".to_string()
+            "没有跨页重复出现的角色或道具需要参考图；只出现一次的事物无需参考图。".to_string()
+        } else if missing_reference_roles.is_empty() && stale_reference_roles.is_empty() {
+            "跨页重复出现的角色/道具都已有参考图；只出现一次的事物无需参考图。".to_string()
         } else if missing_reference_roles.is_empty() {
-            "需要跨页一致的角色/道具都已有参考图。".to_string()
+            format!(
+                "以下角色/道具已有参考图但建议更新：{}；当前已有图仍可用于生成。",
+                stale_reference_roles.join("、")
+            )
+        } else if stale_reference_roles.is_empty() {
+            format!(
+                "以下跨页出现的角色/道具还需要先生成参考图：{}。",
+                missing_reference_roles.join("、")
+            )
         } else {
             format!(
-                "以下角色/道具还需要先生成或确认参考图：{}。",
-                missing_reference_roles.join("、")
+                "缺少参考图：{}；建议更新参考图：{}。",
+                missing_reference_roles.join("、"),
+                stale_reference_roles.join("、")
             )
         },
     ));
@@ -177,15 +193,21 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
             suggestions.push("当前页标记为需重绘，建议重新生成插图后再交付。".to_string());
         }
 
-        if !consistency_roles.is_empty()
-            && !consistency_roles
+        let page_roles: Vec<_> = book
+            .roles
+            .iter()
+            .filter(|role| text_contains(&combined_text, &role.name))
+            .collect();
+        let page_mentions_confirmed_role = !page_roles.is_empty();
+        if page_mentions_confirmed_role
+            && !page_roles
                 .iter()
                 .any(|role| text_contains(&page.illustration_prompt, &role.name))
         {
             issues.push("插图描述没有明确带入已确认角色/道具名称。".to_string());
         }
 
-        for role in &consistency_roles {
+        for role in &page_roles {
             if text_contains(&combined_text, &role.name)
                 && !text_contains(&page.illustration_prompt, &role.name)
             {
@@ -195,6 +217,7 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
                 ));
             }
             if text_contains(&page.illustration_prompt, &role.name)
+                && role.reference_image_url.is_none()
                 && !role_appearance_has_prompt_hint(role, &page.illustration_prompt)
             {
                 suggestions.push(format!(
@@ -329,6 +352,20 @@ fn quality_check(
 fn text_contains(text: &str, value: &str) -> bool {
     let value = value.trim();
     !value.is_empty() && text.contains(value)
+}
+
+fn role_needs_reference(book: &Storybook, role: &StorybookRole) -> bool {
+    role.needs_consistency && role_page_usage_count(book, role) >= 2
+}
+
+fn role_page_usage_count(book: &Storybook, role: &StorybookRole) -> usize {
+    book.pages
+        .iter()
+        .filter(|page| {
+            let text = format!("{} {} {}", page.title, page.body, page.illustration_prompt);
+            text_contains(&text, &role.name)
+        })
+        .count()
 }
 
 fn role_appearance_has_prompt_hint(role: &StorybookRole, prompt: &str) -> bool {
@@ -483,7 +520,9 @@ mod tests {
 
     #[test]
     fn quality_report_blocks_page_prompt_without_confirmed_role() {
-        let book = test_storybook();
+        let mut book = test_storybook();
+        book.pages[0].body = "林老师带孩子练习轮流等待。".to_string();
+        book.pages[0].illustration_prompt = "教室里摆着一辆红色小汽车。".to_string();
         let report = storybook_quality_report(&book);
 
         assert_eq!(report.status, StorybookQualityStatus::Blocked);
@@ -544,7 +583,9 @@ mod tests {
 
     #[test]
     fn teacher_review_check_rejects_blocked_quality() {
-        let book = test_storybook();
+        let mut book = test_storybook();
+        book.pages[0].body = "林老师带孩子练习轮流等待。".to_string();
+        book.pages[0].illustration_prompt = "教室里摆着一辆红色小汽车。".to_string();
 
         let err =
             ensure_teacher_review_ready(&book).expect_err("blocked quality should reject review");

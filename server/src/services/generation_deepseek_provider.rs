@@ -305,7 +305,9 @@ pub(crate) fn prompt_for(job_type: &str) -> &'static str {
         "storybook_plan" => {
             "根据 input.title、input.theme、input.use_scene、input.style 生成普通绘本方案。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。先给故事主线，再给分页节奏和老师审核点。"
         }
-        "storybook_roles" => "根据故事方案生成主角、同伴、老师形象和关键道具设定，强调跨页一致性。",
+        "storybook_roles" => {
+            "根据 input.plan 中已经确认的故事方案生成主角、同伴、老师形象和关键道具设定，必须紧扣 input.title、input.theme、input.plan.summary 和 input.plan.outline，不得沿用无关示例。role_type 只能使用英文枚举 protagonist、supporting、peer、teacher、prop；不要输出中文类型。appearance 只能写稳定可见的视觉特征，例如物种或身份、颜色、服装或材质、体型轮廓、发型/耳朵/配饰、表情和可跨页重复识别的小标记；禁止把动作、习惯、剧情行为或故事任务写入 appearance，例如“喜欢蹦跳”“离开队伍”“带领探险”“制定规则”。这些内容必须写入 story_function。needs_consistency 只给需要跨页重复出现并保持同一形象的主角、老师、重要同伴或反复出现关键道具设为 true；只出现一次的临时事物、背景动物、一次性道具必须设为 false，不需要参考图。"
+        }
         "storybook_pages" => {
             "根据已确认方案和角色生成分页图文，每页包含标题、正文和插图提示词。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角；插图提示词也必须复述这些角色一致性线索。"
         }
@@ -341,7 +343,7 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
             "message": "string",
             "roles": [{
                 "name": "string",
-                "role_type": "string",
+                "role_type": "protagonist | supporting | peer | teacher | prop",
                 "appearance": "string",
                 "story_function": "string",
                 "needs_consistency": "boolean"

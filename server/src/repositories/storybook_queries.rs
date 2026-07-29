@@ -298,7 +298,7 @@ async fn roles_for(
             Ok(StorybookRole {
                 id: row.try_get("", "id")?,
                 name: row.try_get("", "name")?,
-                role_type: row.try_get("", "role_type")?,
+                role_type: normalized_role_type(&row.try_get::<String>("", "role_type")?),
                 appearance: row.try_get("", "appearance")?,
                 story_function: row.try_get("", "story_function")?,
                 needs_consistency: row.try_get("", "needs_consistency")?,
@@ -312,6 +312,18 @@ async fn roles_for(
             })
         })
         .collect()
+}
+
+fn normalized_role_type(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "protagonist" | "main" | "主角" => "protagonist",
+        "teacher" | "guide" | "老师" | "教师" | "引导者" | "向导" => "teacher",
+        "peer" | "companion" | "同伴" | "朋友" | "伙伴" => "peer",
+        "prop" | "tool" | "object" | "道具" | "关键道具" => "prop",
+        "supporting" | "配角" | "背景角色" => "supporting",
+        _ => "supporting",
+    }
+    .to_string()
 }
 
 fn role_reference_image_url(

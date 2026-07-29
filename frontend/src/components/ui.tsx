@@ -45,20 +45,24 @@ export function PageHeader({
   title,
   copy,
   actions,
+  actionClassName,
+  className = "",
 }: {
   eyebrow?: string;
   title: string;
   copy: string;
   actions?: ReactNode;
+  actionClassName?: string;
+  className?: string;
 }) {
   return (
-    <header className="page-header">
+    <header className={`page-header${className ? ` ${className}` : ""}`}>
       <div>
         {eyebrow && <p className="eyebrow">{eyebrow}</p>}
         <h1>{title}</h1>
         <p>{copy}</p>
       </div>
-      {actions && <div className="page-actions">{actions}</div>}
+      {actions && <div className={`page-actions${actionClassName ? ` ${actionClassName}` : ""}`}>{actions}</div>}
     </header>
   );
 }
@@ -126,14 +130,16 @@ export function Modal({
   title,
   children,
   onClose,
+  className = "",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  className?: string;
 }) {
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="modal">
+      <div className={`modal ${className}`}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">

@@ -32,10 +32,46 @@ pub(crate) fn normalize_provider_output(
         object.insert("privacy_audit".to_string(), audit);
     }
     insert_if_missing(&mut object, "message", json!("生成任务已完成"));
+    normalize_provider_output_values(&mut object, job_type);
     validate_provider_output_shape(&object, job_type)?;
     validate_provider_output_content_safety(&JsonValue::Object(object.clone()), job_type)?;
 
     Ok(JsonValue::Object(object))
+}
+
+fn normalize_provider_output_values(object: &mut JsonMap<String, JsonValue>, job_type: &str) {
+    if job_type != "storybook_roles" {
+        return;
+    }
+    let Some(roles) = object
+        .get_mut("roles")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return;
+    };
+    for role in roles {
+        let Some(role_object) = role.as_object_mut() else {
+            continue;
+        };
+        let normalized = role_object
+            .get("role_type")
+            .and_then(|value| value.as_str())
+            .map(normalize_role_type)
+            .unwrap_or_else(|| "supporting".to_string());
+        role_object.insert("role_type".to_string(), json!(normalized));
+    }
+}
+
+fn normalize_role_type(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "protagonist" | "main" | "主角" => "protagonist",
+        "teacher" | "guide" | "老师" | "教师" | "引导者" | "向导" => "teacher",
+        "peer" | "companion" | "同伴" | "朋友" | "伙伴" => "peer",
+        "prop" | "tool" | "object" | "道具" | "关键道具" => "prop",
+        "supporting" | "配角" | "背景角色" => "supporting",
+        _ => "supporting",
+    }
+    .to_string()
 }
 
 fn insert_if_missing(object: &mut JsonMap<String, JsonValue>, key: &str, value: JsonValue) {

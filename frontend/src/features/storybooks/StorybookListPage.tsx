@@ -42,13 +42,6 @@ export function StorybookListPage() {
     ["exportable", "可导出"],
   ] as const;
   const pendingGenerationCount = generationJobs.filter((job) => job.status === "queued" || job.status === "running" || job.status === "failed").length;
-  const summaryItems = [
-    { label: "普通绘本", value: books.filter((book) => book.type === "plain").length, copy: "可作为定制绘本母本", tone: "info" as const },
-    { label: "定制绘本", value: books.filter((book) => book.type === "custom").length, copy: "服务单个儿童", tone: "good" as const },
-    { label: "可导出", value: books.filter((book) => book.status === "exportable").length, copy: "可分享或继续定制", tone: "good" as const },
-    { label: "待处理任务", value: pendingGenerationCount, copy: "排队、运行或失败任务", tone: pendingGenerationCount ? "warn" as const : "neutral" as const },
-  ];
-
   function recentTaskCopy(book: Storybook) {
     const recent = generationJobs
       .filter((job) => job.storybookId === book.id)
@@ -106,21 +99,15 @@ export function StorybookListPage() {
       <PageHeader
         eyebrow={workspace.type === "personal" ? "我的绘本" : "园所绘本"}
         title={workspace.type === "personal" ? "我的绘本" : "园所绘本"}
-        copy="查看普通绘本、定制绘本、生成状态、导出和市场投稿状态。"
-        actions={<Link className="button primary" to="new">新建普通绘本</Link>}
+        copy="普通绘本用于班级共读，也可以继续派生儿童定制绘本。"
+        actions={
+          <>
+            <Link className="button secondary" to="../marketplace">从市场复制</Link>
+            <Link className="button primary" to="new">新建普通绘本</Link>
+          </>
+        }
       />
       {error && filteredBooks.length > 0 && <Notice title="列表更新失败" copy={error} tone="danger" />}
-      <section className="list-hero">
-        <div>
-          <Badge tone="info">创作入口</Badge>
-          <h2>先创建普通绘本，再派生定制绘本</h2>
-          <p>普通绘本适合班级共读和主题活动；完成后可选择孩子生成独立定制副本。</p>
-        </div>
-        <div className="inline-actions">
-          <Link className="button primary" to="new">创建普通绘本</Link>
-          <Link className="button secondary" to="../marketplace">从市场复制</Link>
-        </div>
-      </section>
       <Card>
         <div className="filter-row">
           {filterItems.map(([value, label]) => (
@@ -146,15 +133,13 @@ export function StorybookListPage() {
           />
         </div>
       </Card>
-      <section className="metric-grid">
-        {summaryItems.map((item) => (
-          <Card key={item.label}>
-            <Badge tone={item.tone}>{item.label}</Badge>
-            <strong>{item.value}</strong>
-            <p>{item.copy}</p>
-          </Card>
-        ))}
-      </section>
+      {pendingGenerationCount > 0 && (
+        <Notice
+          title={`有 ${pendingGenerationCount} 条生成任务需要关注`}
+          copy="包含排队、运行中或失败的任务。打开对应绘本详情可以继续处理。"
+          tone="warn"
+        />
+      )}
       {initialLoading ? (
         <EmptyState title="正在读取绘本" copy="正在从后端加载当前空间的绘本列表。" />
       ) : error && filteredBooks.length === 0 ? (
@@ -182,7 +167,7 @@ export function StorybookListPage() {
           )}
           <section className="storybook-grid">
             {filteredBooks.map((book) => (
-              <Link className="storybook-card" to={book.id} key={book.id}>
+              <article className="storybook-card" key={book.id}>
                 <div className="cover-art"><span>{book.coverTone}</span><strong>{book.title.slice(0, 2)}</strong></div>
                 <div className="storybook-card-body">
                   <div className="card-line"><Badge tone={book.type === "plain" ? "info" : "good"}>{book.type === "plain" ? "普通绘本" : "定制绘本"}</Badge><Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge></div>
@@ -192,8 +177,21 @@ export function StorybookListPage() {
                   <p className="next-action">{storybookNextAction(book)}</p>
                   {shouldUseApi && recentTaskCopy(book) && <p className="task-summary">{recentTaskCopy(book)}</p>}
                   <div className="meta-line"><span>{book.ageGroup}</span><span>{book.useScene}</span><span>{book.updatedAt}</span></div>
+                  <div className="storybook-card-actions">
+                    {book.type === "plain" ? (
+                      <>
+                        <Link className="button primary" to={`${book.id}/customize`}>生成定制版</Link>
+                        <Link className="button secondary" to={book.id}>查看详情</Link>
+                      </>
+                    ) : (
+                      <>
+                        <Link className="button primary" to={book.id}>继续编辑</Link>
+                        <Link className="button secondary" to={book.id}>导出或分享</Link>
+                      </>
+                    )}
+                  </div>
                 </div>
-              </Link>
+              </article>
             ))}
           </section>
         </>

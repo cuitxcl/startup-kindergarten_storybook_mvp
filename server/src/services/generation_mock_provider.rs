@@ -82,7 +82,7 @@ fn storybook_plan(input: &JsonValue) -> JsonValue {
                 {"page_range": "4-5", "goal": "尝试练习", "beat": "孩子们轮流尝试，并说出自己的感受"},
                 {"page_range": "6", "goal": "收束迁移", "beat": "大家把新办法带回日常生活"}
             ],
-            "role_requirements": ["主角儿童", "同伴儿童", "老师引导者", "关键道具"],
+            "role_requirements": ["主角", "同伴角色", "老师引导者", "关键道具"],
             "review_points": ["教学目标是否准确", "故事冲突是否温和", "是否适合班级共读"]
         }
     })
@@ -107,7 +107,7 @@ fn storybook_roles(input: &JsonValue) -> JsonValue {
             {
                 "name": "乐乐",
                 "role_type": "peer",
-                "appearance": "蓝色上衣、喜欢提问、动作活泼",
+                "appearance": "圆脸，蓝色上衣，白色球鞋，眼睛明亮",
                 "story_function": "推动同伴互动和冲突出现",
                 "needs_consistency": true
             },
