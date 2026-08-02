@@ -11,13 +11,11 @@ import {
   listChildrenPage,
   listStorybookGenerationJobs,
   retryGenerationJob,
-  shouldUseApi,
   type GenerationJob,
   type GenerationProviderStatus,
   type PaginationMeta,
 } from "../../api/client";
 import { Badge, Card, EmptyState, Notice, PageHeader, WizardSideNav, statusTone } from "../../components/ui";
-import { children, storybooks } from "../../data/mock";
 import type { ChildProfile, Storybook, Workspace } from "../../types/domain";
 import {
   generationJobNextAction,
@@ -50,16 +48,16 @@ export function CustomizeStorybookPage() {
   const [retryJob, setRetryJob] = useState<GenerationJob | null>(null);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [customizationPlan, setCustomizationPlan] = useState<unknown>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [generatingPlan, setGeneratingPlan] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [provider, setProvider] = useState<GenerationProviderStatus | null>(null);
-  const source = shouldUseApi ? remoteSource : storybooks.find((item) => item.id === storybookId) || storybooks[0];
-  const childList = shouldUseApi ? remoteChildren : children.filter((item) => item.workspaceId === workspace.id);
+  const source = remoteSource;
+  const childList = remoteChildren;
   const selected = childList.find((child) => child.id === selectedChildId) || childList[0];
   const selectedBatchChildren = childList.filter((child) => selectedBatchChildIds.includes(child.id));
-  const generatedTarget = shouldUseApi ? generatedBookId : storybooks.find((item) => item.workspaceId === workspace.id && item.type === "custom")?.id || source?.id;
+  const generatedTarget = generatedBookId;
   const batchSelectionAtLimit = selectedBatchChildIds.length >= MAX_BATCH_CUSTOM_CHILDREN;
   const canContinueSelection = customMode === "batch" ? selectedBatchChildIds.length > 0 && selectedBatchChildIds.length <= MAX_BATCH_CUSTOM_CHILDREN : Boolean(selected);
   const primaryLabels = ["确认孩子", "确认档案", "生成定制方案", "生成定制副本", "已生成"];
@@ -76,16 +74,6 @@ export function CustomizeStorybookPage() {
   const createCustomizationPlan = async () => {
     const planChild = customMode === "batch" ? selectedBatchChildren[0] : selected;
     if (!source || !planChild) return;
-    if (!shouldUseApi) {
-      setNotice({
-        title: "定制方案已生成",
-        copy: customMode === "batch"
-          ? "当前为本地原型反馈；批量模式会按每个儿童资料创建独立定制副本。"
-          : "当前为本地原型反馈；接入 API 后会创建定制方案任务。",
-      });
-      goToStep(3);
-      return;
-    }
     setGeneratingPlan(true);
     setRetryJob(null);
     setNotice(null);
@@ -164,7 +152,7 @@ export function CustomizeStorybookPage() {
   };
 
   useEffect(() => {
-    if (!shouldUseApi || !storybookId) return;
+    if (!storybookId) return;
     let mounted = true;
     setLoading(true);
     setRemoteSource(null);
@@ -218,7 +206,6 @@ export function CustomizeStorybookPage() {
   }, [workspace.id, storybookId, location.search]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     getWorkspaceGenerationProvider(workspace.id).then(setProvider).catch(() => setProvider(null));
   }, [workspace.id]);
 
@@ -232,11 +219,6 @@ export function CustomizeStorybookPage() {
 
   const createCustomCopy = async () => {
     if (!source || (customMode === "single" && !selected) || (customMode === "batch" && selectedBatchChildIds.length === 0)) return;
-    if (!shouldUseApi) {
-      setNotice({ title: customMode === "batch" ? "批量定制副本已生成" : "定制副本已生成", copy: "原型模式：会创建独立副本并进入编辑状态。" });
-      goToStep(4);
-      return;
-    }
     setGenerating(true);
     setRetryJob(null);
     setNotice(null);
@@ -281,7 +263,7 @@ export function CustomizeStorybookPage() {
   };
 
   const loadMoreChildren = async () => {
-    if (!shouldUseApi || !childPageMeta?.has_more) return;
+    if (!childPageMeta?.has_more) return;
     setLoadingMoreChildren(true);
     setNotice(null);
     try {
@@ -404,7 +386,7 @@ export function CustomizeStorybookPage() {
                     );
                   })}
                 </div>
-                {shouldUseApi && childPageMeta?.has_more && (
+                {childPageMeta?.has_more && (
                   <button className="button secondary" type="button" disabled={loadingMoreChildren} onClick={loadMoreChildren}>
                     {loadingMoreChildren ? "加载中..." : "继续加载儿童"}
                   </button>
@@ -426,7 +408,7 @@ export function CustomizeStorybookPage() {
             ? <ReviewBlock title="定制方案" output={customizationPlan} items={batchCustomizationPlanItems(customizationPlan, selectedBatchChildren, intensity)} />
             : selected && <ReviewBlock title="定制方案" output={customizationPlan} items={customizationPlanItems(customizationPlan, selected, intensity)} />
           )}
-          {shouldUseApi && generationJobs.length > 0 && step >= 3 && (
+          {generationJobs.length > 0 && step >= 3 && (
             <Card>
               <div className="section-head">
                 <div>

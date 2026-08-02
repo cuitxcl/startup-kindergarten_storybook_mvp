@@ -2,11 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   listMarketplaceTemplatesPage,
-  shouldUseApi,
   type PaginationMeta,
 } from "../../api/client";
 import { Badge, Card, EmptyState, Notice, PageHeader } from "../../components/ui";
-import { marketplaceTemplates } from "../../data/mock";
 import type { MarketplaceTemplate } from "../../types/domain";
 
 const PAGE_SIZE = 12;
@@ -17,18 +15,11 @@ export function MarketplacePage() {
   const [offset, setOffset] = useState(0);
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
   const [remoteTemplates, setRemoteTemplates] = useState<MarketplaceTemplate[]>([]);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const templates = shouldUseApi ? remoteTemplates : marketplaceTemplates;
-  const initialLoading = loading && (!shouldUseApi || remoteTemplates.length === 0);
-  const filteredTemplates = shouldUseApi ? templates : templates.filter((template) => {
-    const matchesFilter =
-      filter === "all" ||
-      template.sourceType === filter ||
-      (filter === "customizable" && template.supportsCustomization);
-    const text = `${template.title} ${template.summary} ${template.ageGroup} ${template.useScene} ${template.tags.join(" ")}`.toLowerCase();
-    return matchesFilter && text.includes(query.trim().toLowerCase());
-  });
+  const templates = remoteTemplates;
+  const initialLoading = loading && remoteTemplates.length === 0;
+  const filteredTemplates = templates;
   const recommendedId = filteredTemplates[0]?.id || templates[0]?.id || "template-1";
   const summaryItems = [
     { label: "模板总数", value: templates.length, copy: "当前空间可见的绘本模板", tone: "info" as const },
@@ -44,7 +35,6 @@ export function MarketplacePage() {
   ] as const;
 
   const loadTemplates = () => {
-    if (!shouldUseApi) return;
     setLoading(true);
     if (offset === 0) {
       setRemoteTemplates([]);
@@ -139,7 +129,7 @@ export function MarketplacePage() {
         <EmptyState title="没有匹配的模板" copy="换一个筛选条件，或清空搜索关键词后再试。" action={<button className="button secondary" type="button" onClick={() => { setFilter("all"); setQuery(""); }}>清空筛选</button>} />
       ) : (
         <>
-          {shouldUseApi && pageMeta && (
+          {pageMeta && (
             <Card>
               <div className="section-head">
                 <div>

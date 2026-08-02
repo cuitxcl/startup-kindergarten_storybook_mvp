@@ -18,7 +18,6 @@ import {
   listStorybookExportsPage,
   revokeShareLink,
   retryGenerationJob,
-  shouldUseApi,
   updateStorybook,
   updateStorybookPage,
   updateStorybookRole,
@@ -27,7 +26,6 @@ import {
   type ShareLink,
 } from "../../api/client";
 import { Badge, Card, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
-import { storybooks } from "../../data/mock";
 import type { Storybook, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
 import {
   generationJobNextAction,
@@ -44,12 +42,11 @@ export function StorybookDetailPage() {
   const { storybookId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const fallbackBook = storybooks.find((item) => item.id === storybookId) || storybooks.find((item) => item.workspaceId === workspace.id) || storybooks[0];
   const [remoteBook, setRemoteBook] = useState<Storybook | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const book = shouldUseApi ? remoteBook : fallbackBook;
-  const [selectedPageId, setSelectedPageId] = useState<string | undefined>(shouldUseApi ? undefined : fallbackBook.pages[0]?.id);
+  const book = remoteBook;
+  const [selectedPageId, setSelectedPageId] = useState<string | undefined>(undefined);
   const [pageForm, setPageForm] = useState({ title: "", body: "", illustrationPrompt: "" });
   const [notice, setNotice] = useState<{ title: string; copy: string; tone?: "good" | "info" } | null>(null);
   const [retryImageJob, setRetryImageJob] = useState<GenerationJob | null>(null);
@@ -71,20 +68,20 @@ export function StorybookDetailPage() {
   const [metaOpen, setMetaOpen] = useState(false);
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaForm, setMetaForm] = useState({
-    title: shouldUseApi ? "" : fallbackBook.title,
-    ageGroup: shouldUseApi ? "4-5 岁" : fallbackBook.ageGroup,
-    useScene: shouldUseApi ? "" : fallbackBook.useScene,
-    teachingGoal: shouldUseApi ? "" : fallbackBook.teachingGoal,
-    coverTone: shouldUseApi ? "" : fallbackBook.coverTone,
+    title: "",
+    ageGroup: "4-5 岁",
+    useScene: "",
+    teachingGoal: "",
+    coverTone: "",
   });
   const [imageGenerating, setImageGenerating] = useState(false);
   const [currentImagePreviewUrl, setCurrentImagePreviewUrl] = useState("");
   const [currentImagePreviewError, setCurrentImagePreviewError] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
-  const [visibilityValue, setVisibilityValue] = useState<Storybook["visibility"]>(shouldUseApi ? "private" : fallbackBook.visibility);
+  const [visibilityValue, setVisibilityValue] = useState<Storybook["visibility"]>("private");
   const [pageEditorOpen, setPageEditorOpen] = useState(false);
   const [roleManagerOpen, setRoleManagerOpen] = useState(false);
-  const [selectedRoleId, setSelectedRoleId] = useState<string | undefined>(shouldUseApi ? undefined : fallbackBook.roles[0]?.id);
+  const [selectedRoleId, setSelectedRoleId] = useState<string | undefined>(undefined);
   const [roleForm, setRoleForm] = useState<{
     name: string;
     roleType: StorybookRole["roleType"];
@@ -152,7 +149,7 @@ export function StorybookDetailPage() {
   const visibleNotice = notice || routeResultNotice;
 
   useEffect(() => {
-    if (!shouldUseApi || !storybookId) return;
+    if (!storybookId) return;
     let mounted = true;
     setLoading(true);
     setRemoteBook(null);
@@ -266,22 +263,22 @@ export function StorybookDetailPage() {
   }
 
   async function refreshShareLinks(storybookId = book?.id) {
-    if (!shouldUseApi || !storybookId) return;
+    if (!storybookId) return;
     setShareLinks((await listShareLinksPage(workspace.id, storybookId, { limit: 8 })).data);
   }
 
   async function refreshExportJobs(storybookId = book?.id) {
-    if (!shouldUseApi || !storybookId) return;
+    if (!storybookId) return;
     setExportJobs((await listStorybookExportsPage(workspace.id, storybookId, { limit: 8 })).data);
   }
 
   async function refreshGenerationJobs(storybookId = book?.id) {
-    if (!shouldUseApi || !storybookId) return;
+    if (!storybookId) return;
     setGenerationJobs(await listStorybookGenerationJobs(workspace.id, storybookId, { limit: 8 }));
   }
 
   async function refreshStorybook(storybookId = book?.id) {
-    if (!shouldUseApi || !storybookId) return undefined;
+    if (!storybookId) return undefined;
     const updated = await getStorybook(workspace.id, storybookId);
     setRemoteBook(updated);
     setSelectedPageId((current) => current && updated.pages.some((page) => page.id === current) ? current : updated.pages[0]?.id);
@@ -291,14 +288,10 @@ export function StorybookDetailPage() {
   }
 
   const currentPageImageJob = latestPageImageJob(generationJobs, selectedPage?.id);
+  const activeCurrentPageImageJob = activePageImageJob(generationJobs, selectedPage?.id);
   const currentPageImage = extractImageResult(currentPageImageJob?.output);
-  const shouldShowImageGenerationAction = Boolean(selectedPage && (
-    selectedPage.status === "needs_regeneration"
-      || selectedPage.status === "failed"
-      || selectedPage.status === "generating"
-      || !currentPageImage
-      || pageForm.illustrationPrompt !== selectedPage.illustrationPrompt
-  ));
+  const imageActionBusy = imageGenerating || Boolean(activeCurrentPageImageJob);
+  const shouldShowImageGenerationAction = Boolean(selectedPage);
 
   useEffect(() => {
     if (!currentPageImage) {
@@ -306,7 +299,7 @@ export function StorybookDetailPage() {
       setCurrentImagePreviewError("");
       return;
     }
-    if (!shouldUseApi || !currentPageImageJob) {
+    if (!currentPageImageJob) {
       setCurrentImagePreviewUrl(currentPageImage.imageUrl);
       setCurrentImagePreviewError("");
       return;
@@ -334,13 +327,54 @@ export function StorybookDetailPage() {
   }, [currentPageImage?.imageUrl, currentPageImageJob?.id, workspace.id]);
 
   useEffect(() => {
+    if (!book?.id || !selectedPage?.id || !activeCurrentPageImageJob) return;
+
+    let active = true;
+    const currentPageId = selectedPage.id;
+    const poll = async () => {
+      try {
+        const job = await getGenerationJob(workspace.id, activeCurrentPageImageJob.id);
+        if (!active) return;
+        setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+        if (job.status === "queued" || job.status === "running") return;
+
+        await refreshGenerationJobs(book.id);
+        await refreshStorybook(book.id);
+        setSelectedPageId(currentPageId);
+        if (job.status === "failed") {
+          setRetryImageJob(job);
+          setNotice({ title: "插图生成失败", copy: `${generationErrorMessage(job)}。任务编号：${job.id.slice(0, 8)}。`, tone: "info" });
+          return;
+        }
+        setRetryImageJob(null);
+        const image = extractImageResult(job.output);
+        if (image?.provider === "mock") {
+          setNotice({
+            title: "没有生成真实插图",
+            copy: `任务已结束，但返回的是 mock 占位图，不是真实 Seedream 图片。请检查后端生图配置或稍后重试。任务编号：${job.id.slice(0, 8)}。`,
+            tone: "info",
+          });
+          return;
+        }
+        setNotice({ title: "真实插图已生成", copy: `任务${generationStatusLabel(job.status)}，当前页结果已刷新。`, tone: "good" });
+      } catch (err) {
+        if (active) {
+          setNotice({ title: "插图状态刷新失败", copy: err instanceof Error ? err.message : "请稍后手动刷新页面", tone: "info" });
+        }
+      }
+    };
+
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [activeCurrentPageImageJob?.id, book?.id, selectedPage?.id, workspace.id]);
+
+  useEffect(() => {
     if (!selectedRole?.referenceImageUrl) {
       setRoleReferencePreviewUrl("");
-      setRoleReferencePreviewError("");
-      return;
-    }
-    if (!shouldUseApi) {
-      setRoleReferencePreviewUrl(selectedRole.referenceImageUrl);
       setRoleReferencePreviewError("");
       return;
     }
@@ -375,12 +409,6 @@ export function StorybookDetailPage() {
 
   async function savePage() {
     if (!selectedPage || !storybookId) return;
-    if (!shouldUseApi) {
-      setNotice({ title: "当前页已保存", copy: `原型模式：第 ${selectedPage.pageNumber} 页修改已记录。`, tone: "good" });
-      setPageEditorOpen(false);
-      setRetryImageJob(null);
-      return;
-    }
     try {
       const updated = await updateStorybookPage(workspace.id, storybookId, selectedPage.id, {
         title: pageForm.title,
@@ -399,11 +427,6 @@ export function StorybookDetailPage() {
 
   async function saveVisibility() {
     if (!book) return;
-    if (!shouldUseApi) {
-      setNotice({ title: "共享设置已保存", copy: `当前绘本已设置为：${visibilityLabel(visibilityValue)}。`, tone: "good" });
-      setRetryImageJob(null);
-      return;
-    }
     setVisibilitySaving(true);
     try {
       const updated = await updateStorybook(workspace.id, book.id, { visibility: visibilityValue });
@@ -419,11 +442,6 @@ export function StorybookDetailPage() {
 
   async function saveRole() {
     if (!book || !selectedRole) return;
-    if (!shouldUseApi) {
-      setNotice({ title: "角色设定已保存", copy: `《${book.title}》中的 ${roleForm.name} 已更新。`, tone: "good" });
-      setRetryImageJob(null);
-      return;
-    }
     setRoleSaving(true);
     try {
       const updated = await updateStorybookRole(workspace.id, book.id, selectedRole.id, {
@@ -449,10 +467,6 @@ export function StorybookDetailPage() {
     if (!book || !selectedRole) return;
     if (!selectedRoleNeedsReference) {
       setNotice({ title: "无需生成参考图", copy: `${selectedRole.name} 当前只在 ${selectedRolePageCount} 页出现，不需要单独生成角色参考图。`, tone: "info" });
-      return;
-    }
-    if (!shouldUseApi) {
-      setNotice({ title: "角色参考图已生成", copy: "原型模式：角色参考图会用于后续分页插图。", tone: "good" });
       return;
     }
     setRoleImageGenerating(true);
@@ -511,11 +525,6 @@ export function StorybookDetailPage() {
       if (selectedPageMissingReferenceRoles[0]) focusRoleReference(selectedPageMissingReferenceRoles[0]);
       return;
     }
-    if (!shouldUseApi) {
-      setNotice({ title: "插图任务已完成", copy: "原型模式：图片生成任务会更新当前页插图状态。", tone: "good" });
-      setRetryImageJob(null);
-      return;
-    }
     setImageGenerating(true);
     setRetryImageJob(null);
     try {
@@ -526,6 +535,11 @@ export function StorybookDetailPage() {
         imageMode: referenceRoles.length ? "reference_image" : "text_to_image",
       });
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+      setNotice({
+        title: "真实插图生成已开始",
+        copy: `当前页已加入生图队列，按钮会保持生成中直到后端返回结果。任务编号：${job.id.slice(0, 8)}。`,
+        tone: "info",
+      });
       const settledJob = await waitForGenerationJob(job);
       await refreshGenerationJobs(book.id);
       await handleImageJob(settledJob);
@@ -582,6 +596,15 @@ export function StorybookDetailPage() {
     setRetryImageJob(null);
     await refreshStorybook(book?.id);
     setSelectedPageId(currentPageId);
+    const image = extractImageResult(job.output);
+    if (image?.provider === "mock") {
+      setNotice({
+        title: "没有生成真实插图",
+        copy: `任务已结束，但返回的是 mock 占位图，不是真实 Seedream 图片。请检查后端生图配置或稍后重试。任务编号：${job.id.slice(0, 8)}。`,
+        tone: "info",
+      });
+      return;
+    }
     setNotice({ title: "插图任务已完成", copy: `任务${generationStatusLabel(job.status)}，当前页插图和质量检查已刷新。`, tone: "good" });
   }
 
@@ -605,11 +628,6 @@ export function StorybookDetailPage() {
     }
     if (qualityDeliveryBlocker) {
       setNotice({ title: "暂不能导出", copy: qualityDeliveryBlocker, tone: "info" });
-      return;
-    }
-    if (!shouldUseApi) {
-      setNotice({ title: "PDF 导出已开始", copy: "原型模式：导出任务会显示下载状态。", tone: "good" });
-      setRetryImageJob(null);
       return;
     }
     setExporting(true);
@@ -642,11 +660,6 @@ export function StorybookDetailPage() {
       setNotice({ title: "副本名称不能为空", copy: "请先填写一个便于后续识别的副本名称。", tone: "info" });
       return;
     }
-    if (!shouldUseApi) {
-      setNotice({ title: "副本已创建", copy: "原型模式：会复制分页、角色和编辑内容，并进入新的私有草稿。", tone: "good" });
-      setDuplicateOpen(false);
-      return;
-    }
     setDuplicating(true);
     try {
       const duplicated = await duplicateStorybook(workspace.id, book.id, { title });
@@ -673,10 +686,6 @@ export function StorybookDetailPage() {
       setNotice({ title: "暂不能标记可交付", copy: deliveryBlockers.join("；"), tone: "info" });
       return;
     }
-    if (!shouldUseApi) {
-      setNotice({ title: "绘本已标记可交付", copy: "原型模式：列表和工作台会把它视为可导出绘本。", tone: "good" });
-      return;
-    }
     setDeliverySaving(true);
     try {
       const updated = await updateStorybook(workspace.id, book.id, { status: "exportable" });
@@ -693,14 +702,6 @@ export function StorybookDetailPage() {
     if (!book) return;
     if (status === "confirmed" && quality?.status === "blocked") {
       setNotice({ title: "暂不能确认复核", copy: "生成质量检查仍有阻断项，请先修正分页、角色或插图问题。", tone: "info" });
-      return;
-    }
-    if (!shouldUseApi) {
-      setNotice({
-        title: status === "confirmed" ? "老师复核已确认" : "已重新设为待复核",
-        copy: status === "confirmed" ? "原型模式：这本绘本已记录为老师复核通过。" : "原型模式：内容会回到待老师复核状态。",
-        tone: "good",
-      });
       return;
     }
     setReviewSaving(true);
@@ -724,11 +725,6 @@ export function StorybookDetailPage() {
   async function saveMetadata(event: FormEvent) {
     event.preventDefault();
     if (!book) return;
-    if (!shouldUseApi) {
-      setMetaOpen(false);
-      setNotice({ title: "绘本信息已保存", copy: `原型模式：绘本信息会更新为《${metaForm.title.trim()}》。`, tone: "good" });
-      return;
-    }
     setMetaSaving(true);
     try {
       const updated = await updateStorybook(workspace.id, book.id, {
@@ -750,10 +746,6 @@ export function StorybookDetailPage() {
 
   async function openExportPdf(job: ExportJob) {
     if (!book) return;
-    if (!shouldUseApi) {
-      if (job.fileUrl) window.open(job.fileUrl, "_blank", "noopener,noreferrer");
-      return;
-    }
     try {
       const file = await downloadStorybookExportFile(workspace.id, book.id, job.id);
       const url = window.URL.createObjectURL(file);
@@ -786,7 +778,6 @@ export function StorybookDetailPage() {
       setNotice({ title: "暂不能分享", copy: qualityDeliveryBlocker, tone: "info" });
       return;
     }
-    if (!shouldUseApi) return;
     setShareSaving(true);
     try {
       const link = await createShareLink(workspace.id, book.id, {
@@ -1020,8 +1011,8 @@ export function StorybookDetailPage() {
                   <button className="button secondary" type="button" onClick={cancelPageEdit}>取消编辑</button>
                   <button className="button primary" type="button" disabled={!pageHasUnsavedChanges} onClick={savePage}>保存本页修改</button>
                 </div>
-                {shouldShowImageGenerationAction && (
-                  <p className="form-hint">{pageHasUnsavedChanges ? "保存本页修改后，可在当前页检查中按新描述重绘插图。" : "没有文字修改时，可退出编辑后按当前描述重绘插图。"}</p>
+                {pageHasUnsavedChanges && (
+                  <p className="form-hint">保存本页修改后，可在当前页检查中按新描述重绘插图。</p>
                 )}
               </div>
             ) : (
@@ -1031,7 +1022,19 @@ export function StorybookDetailPage() {
                 <div className="privacy-callout">插图描述：{selectedPage.illustrationPrompt}</div>
               </>
             )}
-            {currentPageImage && (
+            {activeCurrentPageImageJob ? (
+              <div className="preview-image-block">
+                <Badge tone="info">当前页插图任务</Badge>
+                <div className="image-placeholder-note">
+                  <strong>正在生成真实插图</strong>
+                  <span>
+                    任务{generationStatusLabel(activeCurrentPageImageJob.status)}，请稍等。任务编号：{activeCurrentPageImageJob.id.slice(0, 8)}。
+                  </span>
+                </div>
+                <p>{pageForm.illustrationPrompt || selectedPage.illustrationPrompt}</p>
+                <small>完成后这里会自动刷新为真实插图，不会再回退成 mock 占位结果。</small>
+              </div>
+            ) : currentPageImage && (
               <div className="preview-image-block">
                 <Badge tone="info">当前页插图结果</Badge>
                 {currentPageImage.provider === "mock" ? (
@@ -1106,11 +1109,11 @@ export function StorybookDetailPage() {
               <button
                 className="button primary"
                 type="button"
-                disabled={imageGenerating || Boolean(pageImageReferenceBlocker)}
+                disabled={imageActionBusy || Boolean(pageImageReferenceBlocker)}
                 title={pageImageReferenceBlocker || undefined}
                 onClick={generateIllustration}
               >
-                {imageGenerating ? "生成中..." : selectedPage.status === "needs_regeneration" ? "按当前描述重绘插图" : "按当前描述生成插图"}
+                {pageImageActionLabel(selectedPage.status, currentPageImage?.provider, imageActionBusy)}
               </button>
             )}
           </Card>
@@ -1223,55 +1226,47 @@ export function StorybookDetailPage() {
               {visibilitySaving ? "保存中..." : visibilityValue === book.visibility ? "可见范围已保存" : "保存可见范围"}
             </button>
           </div>
-          {shouldUseApi && (
-            <div className="form-grid">
-              <div>
-                当前有效链接
-                {shareLinks.length ? (
-                  <div className="share-link-list">
-                    {shareLinks.map((link, index) => (
-                      <div className="share-link-row" key={link.id}>
-                        <div>
-                          <strong>分享链接 {index + 1}</strong>
-                          <span>{shareExpiryLabel(link.expiresAt)}</span>
-                          <span>{shareAccessLabel(link)}</span>
-                        </div>
-                        <div className="inline-actions">
-                          <a className="button secondary" href={link.url} target="_blank" rel="noreferrer">打开</a>
-                          <button className="button secondary" type="button" onClick={() => copyShareUrl(link)}>复制链接</button>
-                          <button className="button secondary" type="button" disabled={shareSaving} onClick={() => revokeShare(link)}>
-                            {revokingShareId === link.id ? "撤回中..." : "撤回"}
-                          </button>
-                        </div>
+          <div className="form-grid">
+            <div>
+              当前有效链接
+              {shareLinks.length ? (
+                <div className="share-link-list">
+                  {shareLinks.map((link, index) => (
+                    <div className="share-link-row" key={link.id}>
+                      <div>
+                        <strong>分享链接 {index + 1}</strong>
+                        <span>{shareExpiryLabel(link.expiresAt)}</span>
+                        <span>{shareAccessLabel(link)}</span>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <span>还没有有效分享链接。</span>
-                )}
-              </div>
-              <label>
-                链接有效期
-                <select value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value as "7d" | "30d" | "never")}>
-                  <option value="7d">7 天有效</option>
-                  <option value="30d">30 天有效</option>
-                  <option value="never">不过期</option>
-                </select>
-              </label>
+                      <div className="inline-actions">
+                        <a className="button secondary" href={link.url} target="_blank" rel="noreferrer">打开</a>
+                        <button className="button secondary" type="button" onClick={() => copyShareUrl(link)}>复制链接</button>
+                        <button className="button secondary" type="button" disabled={shareSaving} onClick={() => revokeShare(link)}>
+                          {revokingShareId === link.id ? "撤回中..." : "撤回"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span>还没有有效分享链接。</span>
+              )}
             </div>
-          )}
+            <label>
+              链接有效期
+              <select value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value as "7d" | "30d" | "never")}>
+                <option value="7d">7 天有效</option>
+                <option value="30d">30 天有效</option>
+                <option value="never">不过期</option>
+              </select>
+            </label>
+          </div>
           <div className="modal-actions">
             <button className="button secondary" type="button" onClick={() => setShareOpen(false)}>取消</button>
-            {shouldUseApi ? (
-              <>
-                {createdShareUrl && <a className="button secondary" href={createdShareUrl} target="_blank" rel="noreferrer">打开最新分享页</a>}
-                <button className="button primary" type="button" disabled={shareSaving || Boolean(qualityDeliveryBlocker)} title={qualityDeliveryBlocker || undefined} onClick={createShare}>
-                  {shareSaving ? "处理中..." : "创建新的分享链接"}
-                </button>
-              </>
-            ) : (
-              <Link className="button primary" to="/link/share/demo-token">确认并打开分享页</Link>
-            )}
+            {createdShareUrl && <a className="button secondary" href={createdShareUrl} target="_blank" rel="noreferrer">打开最新分享页</a>}
+            <button className="button primary" type="button" disabled={shareSaving || Boolean(qualityDeliveryBlocker)} title={qualityDeliveryBlocker || undefined} onClick={createShare}>
+              {shareSaving ? "处理中..." : "创建新的分享链接"}
+            </button>
           </div>
         </Modal>
       )}
@@ -1522,6 +1517,14 @@ function generationStatusLabel(status: string) {
   }[status] || `状态：${status}`;
 }
 
+function pageImageActionLabel(pageStatus: string, provider?: string, generating = false) {
+  if (generating) return "生成中...";
+  if (provider === "mock") return "重新生成真实插图";
+  if (pageStatus === "needs_regeneration" || pageStatus === "failed") return "按当前描述重绘插图";
+  if (pageStatus === "ready") return "不满意，重新生成插图";
+  return "按当前描述生成插图";
+}
+
 function generationErrorMessage(job: GenerationJob) {
   const output = job.output as { error?: { message?: string } } | undefined;
   return output?.error?.message || "生成任务失败，可稍后重试";
@@ -1595,6 +1598,12 @@ function extractPageId(output: unknown) {
   return value?.image?.target_type === "page" ? value.image.target_id : undefined;
 }
 
+function extractPageIdFromInput(input: unknown) {
+  const value = input as { page_id?: string; target_id?: string; target_type?: string } | undefined;
+  if (value?.page_id) return value.page_id;
+  return value?.target_type === "page" ? value.target_id : undefined;
+}
+
 function extractImageResult(output: unknown): { imageUrl: string; altText?: string; prompt?: string; styleNotes: string[]; provider?: string; message?: string } | null {
   const value = output as {
     provider?: string;
@@ -1622,6 +1631,17 @@ function latestPageImageJob(jobs: GenerationJob[], pageId?: string) {
   if (!pageId) return undefined;
   return jobs
     .filter((job) => job.jobType === "storybook_page_image" && job.output && extractPageId(job.output) === pageId)
+    .sort((a, b) => generationJobTimestamp(b) - generationJobTimestamp(a))[0];
+}
+
+function activePageImageJob(jobs: GenerationJob[], pageId?: string) {
+  if (!pageId) return undefined;
+  return jobs
+    .filter((job) => (
+      job.jobType === "storybook_page_image"
+      && (job.status === "queued" || job.status === "running")
+      && extractPageIdFromInput(job.input) === pageId
+    ))
     .sort((a, b) => generationJobTimestamp(b) - generationJobTimestamp(a))[0];
 }
 

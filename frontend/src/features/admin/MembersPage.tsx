@@ -1,18 +1,12 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { createMember, listClassroomsPage, listMembersPage, revokeMemberInvitation, shouldUseApi, type PaginationMeta } from "../../api/client";
+import { createMember, listClassroomsPage, listMembersPage, revokeMemberInvitation, type PaginationMeta } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader } from "../../components/ui";
 import type { Classroom, Workspace, WorkspaceMember } from "../../types/domain";
 import { memberStatusLabel, roleLabel } from "../../utils/labels";
 
 const PAGE_SIZE = 12;
 const CLASSROOM_PAGE_SIZE = 50;
-
-const members = [
-  { name: "王老师", contact: "wang@example.com", role: "school_teacher", status: "active", classes: "小一班" },
-  { name: "陈老师", contact: "chen@example.com", role: "school_teacher", status: "invited", classes: "中一班、小二班" },
-  { name: "园长李老师", contact: "admin@example.com", role: "school_admin", status: "active", classes: "全部" },
-];
 
 export function MembersPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
@@ -25,28 +19,19 @@ export function MembersPage() {
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [classroomMeta, setClassroomMeta] = useState<PaginationMeta | null>(null);
   const [classroomLoading, setClassroomLoading] = useState(false);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [revokingMemberId, setRevokingMemberId] = useState("");
   const [error, setError] = useState("");
   const [form, setForm] = useState({ name: "", email: "", classroom: "" });
-  const rows: WorkspaceMember[] = shouldUseApi ? remoteMembers : members.map((member, index) => ({
-    id: `mock-member-${index}`,
-    workspaceId: workspace.id,
-    name: member.name,
-    email: member.contact,
-    role: member.role as WorkspaceMember["role"],
-    status: member.status as WorkspaceMember["status"],
-    classes: member.classes.split("、"),
-  }));
-  const initialLoading = loading && (!shouldUseApi || remoteMembers.length === 0);
+  const rows: WorkspaceMember[] = remoteMembers;
+  const initialLoading = loading && remoteMembers.length === 0;
 
   useEffect(() => {
     setOffset(0);
   }, [workspace.id]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     setError("");
@@ -95,11 +80,6 @@ export function MembersPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!shouldUseApi) {
-      setOpen(false);
-      setNotice({ title: "邀请已发送", copy: "原型模式：老师会收到邀请链接，接受后成为园所老师。" });
-      return;
-    }
     setSubmitting(true);
     setNotice(null);
     try {
@@ -144,10 +124,6 @@ export function MembersPage() {
   }
 
   async function revokeInvitation(member: WorkspaceMember) {
-    if (!shouldUseApi) {
-      setNotice({ title: "邀请已撤回", copy: "原型模式：待接受邀请会被停用。" });
-      return;
-    }
     setRevokingMemberId(member.id);
     setNotice(null);
     try {
@@ -162,7 +138,7 @@ export function MembersPage() {
   }
 
   const loadMoreClassrooms = async () => {
-    if (!shouldUseApi || !classroomMeta?.has_more) return;
+    if (!classroomMeta?.has_more) return;
     setClassroomLoading(true);
     setNotice(null);
     try {
@@ -199,12 +175,12 @@ export function MembersPage() {
       <Card>
         <div className="section-head">
           <div><p className="eyebrow">成员列表</p><h2>协作成员与授权范围</h2></div>
-          {shouldUseApi && pageMeta?.has_more ? (
+          {pageMeta?.has_more ? (
             <button className="button secondary" type="button" disabled={loading} onClick={() => setOffset((value) => value + PAGE_SIZE)}>
               {loading ? "加载中..." : "继续加载成员"}
             </button>
           ) : (
-            <Badge tone="info">{shouldUseApi && pageMeta ? `${rows.length}/${pageMeta.total}` : rows.length} 位成员</Badge>
+            <Badge tone="info">{pageMeta ? `${rows.length}/${pageMeta.total}` : rows.length} 位成员</Badge>
           )}
         </div>
         <div className="table-list">
@@ -234,7 +210,7 @@ export function MembersPage() {
             <label>老师姓名<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：陈老师" /></label>
             <label>老师邮箱<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="teacher@example.com" /></label>
             <label>授权班级<select value={form.classroom} onChange={(event) => setForm({ ...form, classroom: event.target.value })}><option value="">暂不授权班级</option>{classrooms.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>
-            {shouldUseApi && classroomMeta?.has_more && (
+            {classroomMeta?.has_more && (
               <button className="button secondary" type="button" disabled={classroomLoading} onClick={loadMoreClassrooms}>
                 {classroomLoading ? "加载中..." : "继续加载班级选项"}
               </button>

@@ -6,11 +6,9 @@ import {
   isApiClientError,
   listStorybooksPage,
   listSubmissionsPage,
-  shouldUseApi,
   type PaginationMeta,
 } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
-import { submissions } from "../../data/mock";
 import type { MarketplaceSubmission, Storybook, Workspace } from "../../types/domain";
 import { submissionStatusLabel } from "../../utils/labels";
 
@@ -30,19 +28,14 @@ export function SubmissionsPage() {
   const [plainBooks, setPlainBooks] = useState<Storybook[]>([]);
   const [plainBookMeta, setPlainBookMeta] = useState<PaginationMeta | null>(null);
   const [plainBookLoading, setPlainBookLoading] = useState(false);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const rows = shouldUseApi ? remoteSubmissions : submissions.filter((item) => item.workspaceId === workspace.id);
-  const initialLoading = loading && (!shouldUseApi || remoteSubmissions.length === 0);
+  const rows = remoteSubmissions;
+  const initialLoading = loading && remoteSubmissions.length === 0;
   const selectableBooks = useMemo(() => {
     const submittedTitles = new Set(rows.map((item) => item.sourceStorybookTitle));
-    return (shouldUseApi
-      ? plainBooks
-      : [
-          { id: "storybook-3", title: "午睡小小约定" },
-          { id: "storybook-1", title: "排队像小火车" },
-        ]).filter((book) => !submittedTitles.has(book.title));
+    return plainBooks.filter((book) => !submittedTitles.has(book.title));
   }, [plainBooks, rows]);
   const selectedSubmission = rows.find((item) => item.id === selectedSubmissionId);
   const nextPrivacySubmission = rows.find((item) => !item.privacyConfirmed);
@@ -56,7 +49,6 @@ export function SubmissionsPage() {
   }, [statusFilter]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     setError("");
@@ -117,11 +109,6 @@ export function SubmissionsPage() {
       setNotice({ title: "无法创建投稿", copy: "请先选择一本普通绘本。" });
       return;
     }
-    if (!shouldUseApi) {
-      setOpen(null);
-      setNotice({ title: "投稿草稿已创建", copy: "原型模式：下一步会进入投稿预览和隐私确认流程。" });
-      return;
-    }
     setSubmitting(true);
     setNotice(null);
     try {
@@ -141,11 +128,6 @@ export function SubmissionsPage() {
 
   const confirmPrivacy = async () => {
     if (!selectedSubmission) return;
-    if (!shouldUseApi) {
-      setOpen(null);
-      setNotice({ title: "隐私确认已保存", copy: "原型模式：投稿会继续进入平台审核。" });
-      return;
-    }
     setSubmitting(true);
     setNotice(null);
     try {
@@ -181,7 +163,7 @@ export function SubmissionsPage() {
   };
 
   const loadMorePlainBooks = async () => {
-    if (!shouldUseApi || !plainBookMeta?.has_more) return;
+    if (!plainBookMeta?.has_more) return;
     setPlainBookLoading(true);
     setNotice(null);
     try {
@@ -220,10 +202,10 @@ export function SubmissionsPage() {
                 <option value="rejected">已退回</option>
               </select>
             </label>
-            <Badge tone="warn">{shouldUseApi && pageMeta ? `已显示 ${rows.length} / 共 ${pageMeta.total} 条` : "优先处理隐私风险"}</Badge>
+            <Badge tone="warn">{pageMeta ? `已显示 ${rows.length} / 共 ${pageMeta.total} 条` : "优先处理隐私风险"}</Badge>
           </div>
         </div>
-        {shouldUseApi && pageMeta?.has_more && (
+        {pageMeta?.has_more && (
           <div className="inline-actions">
             <button className="button secondary" type="button" disabled={loading} onClick={() => setOffset((value) => value + PAGE_SIZE)}>
               {loading ? "加载中..." : "继续加载投稿"}
@@ -257,10 +239,6 @@ export function SubmissionsPage() {
           className="button primary"
           type="button"
           onClick={() => {
-            if (!shouldUseApi) {
-              setNotice({ title: "隐私检查已确认", copy: "原型模式：系统会记录确认人、时间和检查项。" });
-              return;
-            }
             if (!nextPrivacySubmission) {
               setNotice({ title: "暂无待确认投稿", copy: "当前投稿都已完成隐私确认；新建投稿后再进行检查。" });
               return;
@@ -279,7 +257,7 @@ export function SubmissionsPage() {
           ) : (
             <label>选择普通绘本<select value={selectedStorybookId} onChange={(event) => setSelectedStorybookId(event.target.value)}>{selectableBooks.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
           )}
-          {shouldUseApi && plainBookMeta?.has_more && (
+          {plainBookMeta?.has_more && (
             <button className="button secondary" type="button" disabled={plainBookLoading} onClick={loadMorePlainBooks}>
               {plainBookLoading ? "加载中..." : "继续加载普通绘本"}
             </button>

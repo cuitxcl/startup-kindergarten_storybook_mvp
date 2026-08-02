@@ -482,8 +482,17 @@ button.compact-row.active {
   gap: 14px;
 }
 
-.storybook-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.storybook-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: 0 8px 22px rgba(73, 58, 33, 0.06); }
+.storybook-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.storybook-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(73, 58, 33, 0.06);
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
 .cover-art, .storybook-preview-art {
   min-height: 160px;
   display: grid;
@@ -497,13 +506,20 @@ button.compact-row.active {
 .cover-art.market { background: linear-gradient(135deg, rgba(199, 102, 88, 0.16), rgba(182, 90, 82, 0.14)), #f7ece6; }
 .cover-art strong, .storybook-preview-art strong { font-size: 34px; letter-spacing: 0; }
 .cover-art span, .storybook-preview-art span { font-size: 12px; font-weight: 900; }
-.storybook-card-body { display: grid; gap: 8px; padding: 14px; }
+.storybook-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+}
 .storybook-card-body p { margin-bottom: 0; }
 .storybook-card-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 4px;
+  margin-top: auto;
+  padding-top: 8px;
 }
 .card-line, .meta-line, .tag-list, .inline-actions, .modal-actions, .wizard-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .meta-line { color: var(--muted); font-size: 12px; }
@@ -1057,7 +1073,7 @@ button.compact-row.active {
   align-items: center;
   justify-self: end;
 }
-.mock-window {
+.product-window {
   min-height: 430px;
   display: grid;
   grid-template-columns: minmax(150px, 0.34fr) minmax(0, 1fr);
@@ -1067,7 +1083,7 @@ button.compact-row.active {
   background: rgba(255, 253, 248, 0.94);
   box-shadow: 0 28px 80px rgba(18, 37, 31, 0.26);
 }
-.mock-sidebar {
+.product-sidebar {
   display: grid;
   align-content: start;
   gap: 12px;
@@ -1075,21 +1091,21 @@ button.compact-row.active {
   color: #fff;
   background: #763b37;
 }
-.mock-sidebar span {
+.product-sidebar span {
   border-radius: var(--radius);
   padding: 10px;
   background: rgba(255, 255, 255, 0.1);
 }
-.mock-main { display: grid; gap: 18px; padding: 22px; }
-.mock-toolbar {
+.product-main { display: grid; gap: 18px; padding: 22px; }
+.product-toolbar {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   color: var(--muted);
   font-weight: 850;
 }
-.mock-launch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.mock-launch div, .mock-book {
+.product-launch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.product-launch div, .product-book {
   display: grid;
   gap: 8px;
   border: 1px solid var(--line);
@@ -1097,9 +1113,9 @@ button.compact-row.active {
   padding: 16px;
   background: #fff;
 }
-.mock-launch svg { color: var(--brand); }
-.mock-launch small { color: var(--muted); line-height: 1.45; }
-.mock-book {
+.product-launch svg { color: var(--brand); }
+.product-launch small { color: var(--muted); line-height: 1.45; }
+.product-book {
   min-height: 220px;
   align-content: end;
   color: #422d2a;
@@ -1107,7 +1123,7 @@ button.compact-row.active {
     linear-gradient(135deg, rgba(182, 90, 82, 0.14), rgba(120, 94, 69, 0.08)),
     linear-gradient(180deg, #f4ead8, #dfd2bc);
 }
-.mock-book strong { font-size: 32px; }
+.product-book strong { font-size: 32px; }
 .home-hero-copy {
   width: min(660px, 100%);
   display: grid;
@@ -1338,10 +1354,10 @@ button.compact-row.active {
   .home-hero-copy { gap: 14px; }
   .home-hero-copy h1 { font-size: 38px; line-height: 1.06; }
   .home-hero-copy p { font-size: 16px; }
-  .mock-window { min-height: auto; grid-template-columns: 1fr; }
-  .mock-sidebar { display: none; }
-  .mock-launch { grid-template-columns: 1fr; }
-  .mock-main { padding: 14px; }
+  .product-window { min-height: auto; grid-template-columns: 1fr; }
+  .product-sidebar { display: none; }
+  .product-launch { grid-template-columns: 1fr; }
+  .product-main { padding: 14px; }
   .home-band, .home-proof, .home-final { padding: 38px 14px; }
   .home-steps article, .home-scenarios article { min-height: auto; }
   .proof-list div, .privacy-grid div { grid-template-columns: auto minmax(0, 1fr); }

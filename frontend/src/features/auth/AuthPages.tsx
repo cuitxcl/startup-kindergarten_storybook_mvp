@@ -1,7 +1,6 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { login, register, shouldUseApi } from "../../api/client";
-import { workspaces } from "../../data/mock";
+import { login, register } from "../../api/client";
 import { pickPrimaryWorkspace } from "../../utils/workspace";
 
 export function LoginPage() {
@@ -13,10 +12,6 @@ export function LoginPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!shouldUseApi) {
-      navigate(`/app/${pickPrimaryWorkspace(workspaces).id}/dashboard`);
-      return;
-    }
     setLoading(true);
     setError("");
     try {
@@ -41,7 +36,6 @@ export function LoginPage() {
         <button className="button primary" type="submit" disabled={loading}>{loading ? "登录中..." : "登录并进入个人空间"}</button>
         <div className="auth-links">
           <Link to="/register">注册新账号</Link>
-          {!shouldUseApi && <Link to="/invite/demo-token">我有老师邀请</Link>}
         </div>
       </form>
     </main>
@@ -58,10 +52,6 @@ export function RegisterPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!shouldUseApi) {
-      navigate(`/app/${pickPrimaryWorkspace(workspaces).id}/dashboard`);
-      return;
-    }
     setLoading(true);
     setError("");
     try {

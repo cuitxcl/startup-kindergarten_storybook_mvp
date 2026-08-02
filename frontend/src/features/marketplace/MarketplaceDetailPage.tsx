@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { copyMarketplaceTemplate, getMarketplaceTemplate, shouldUseApi } from "../../api/client";
+import { copyMarketplaceTemplate, getMarketplaceTemplate } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader } from "../../components/ui";
-import { marketplaceTemplates } from "../../data/mock";
 import type { MarketplaceTemplate, Workspace } from "../../types/domain";
 
 export function MarketplaceDetailPage() {
@@ -11,14 +10,14 @@ export function MarketplaceDetailPage() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [remoteTemplate, setRemoteTemplate] = useState<MarketplaceTemplate | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copying, setCopying] = useState(false);
   const [notice, setNotice] = useState<{ title: string; copy: string } | null>(null);
-  const template = shouldUseApi ? remoteTemplate : marketplaceTemplates.find((item) => item.id === templateId) || marketplaceTemplates[0];
+  const template = remoteTemplate;
 
   useEffect(() => {
-    if (!shouldUseApi || !templateId) return;
+    if (!templateId) return;
     let mounted = true;
     setLoading(true);
     setRemoteTemplate(null);
@@ -45,11 +44,6 @@ export function MarketplaceDetailPage() {
 
   const confirmCopy = async () => {
     if (!template) return;
-    if (!shouldUseApi) {
-      setOpen(false);
-      setNotice({ title: "复制已在原型模式完成", copy: "真实 API 模式下会创建独立普通绘本副本，并自动打开副本详情。" });
-      return;
-    }
     setCopying(true);
     setNotice(null);
     try {

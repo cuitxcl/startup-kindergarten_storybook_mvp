@@ -10,11 +10,9 @@ import {
   listParentIntakesPage,
   revokeActiveParentIntakeLinks,
   revokeParentIntakeLink,
-  shouldUseApi,
   type PaginationMeta,
 } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader } from "../../components/ui";
-import { children } from "../../data/mock";
 import type { ChildProfile, Classroom, ParentIntake, ParentIntakeLink, Workspace } from "../../types/domain";
 
 const PAGE_SIZE = 12;
@@ -43,7 +41,7 @@ export function ChildrenPage() {
   const [intakeLinkLoading, setIntakeLinkLoading] = useState(false);
   const [intakeLinkStatus, setIntakeLinkStatus] = useState<"" | "active" | "revoked" | "expired">("");
   const [classroomFilter, setClassroomFilter] = useState("");
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [confirmingId, setConfirmingId] = useState("");
   const [creatingLink, setCreatingLink] = useState(false);
@@ -57,12 +55,12 @@ export function ChildrenPage() {
     traits: "",
     focus: "",
   });
-  const rows = shouldUseApi ? remoteRows : children.filter((item) => item.workspaceId === workspace.id);
-  const initialLoading = loading && (!shouldUseApi || remoteRows.length === 0);
+  const rows = remoteRows;
+  const initialLoading = loading && remoteRows.length === 0;
   const canManageParentIntakes = workspace.type === "school" && workspace.role === "school_admin";
   const pendingIntakeCount = intakes.filter((item) => item.status === "submitted").length;
   const summaryItems = [
-    { label: "儿童总数", value: shouldUseApi ? pageMeta?.total ?? rows.length : rows.length, copy: "当前空间可用于定制的儿童资料", tone: "info" as const },
+    { label: "儿童总数", value: pageMeta?.total ?? rows.length, copy: "当前空间可用于定制的儿童资料", tone: "info" as const },
     { label: "待确认提交", value: pendingIntakeCount, copy: "家长提交后等待老师确认", tone: pendingIntakeCount ? "warn" as const : "neutral" as const },
     { label: "高完整度", value: rows.filter((item) => item.completeness >= 80).length, copy: "足够支撑稳定定制", tone: "good" as const },
     { label: "可继续补充", value: rows.filter((item) => item.completeness < 80).length, copy: "需要补齐兴趣或关注点", tone: "neutral" as const },
@@ -82,7 +80,6 @@ export function ChildrenPage() {
   }, [classroomFilter, intakeLinkStatus]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     if (offset === 0) {
@@ -159,11 +156,6 @@ export function ChildrenPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!shouldUseApi) {
-      setOpen(false);
-      setNotice("原型模式：已创建资料，并进入老师确认流程。");
-      return;
-    }
     try {
       const child = await createChild(workspace.id, {
         nickname: form.nickname,
@@ -183,10 +175,6 @@ export function ChildrenPage() {
   }
 
   async function confirmIntake(intake: ParentIntake) {
-    if (!shouldUseApi) {
-      setNotice(`已确认 ${intake.childNickname} 的家长提交资料。`);
-      return;
-    }
     setConfirmingId(intake.id);
     try {
       const child = await confirmParentIntake(workspace.id, intake.id, {
@@ -208,10 +196,6 @@ export function ChildrenPage() {
   }
 
   async function createIntakeLink() {
-    if (!shouldUseApi) {
-      setNotice("原型模式：已生成一条家长资料收集链接。");
-      return;
-    }
     setCreatingLink(true);
     try {
       const expiresAt = linkExpiry === "7d"
@@ -247,7 +231,7 @@ export function ChildrenPage() {
   }
 
   async function loadMoreIntakeLinks() {
-    if (!shouldUseApi || !intakeLinkMeta?.has_more) return;
+    if (!intakeLinkMeta?.has_more) return;
     setIntakeLinkLoading(true);
     setNotice(null);
     try {
@@ -272,10 +256,6 @@ export function ChildrenPage() {
   }
 
   async function revokeIntakeLink(link: ParentIntakeLink) {
-    if (!shouldUseApi) {
-      setNotice("原型模式：已撤回这条资料收集链接。");
-      return;
-    }
     setRevokingLinkId(link.id);
     try {
       const updated = await revokeParentIntakeLink(workspace.id, link.id);
@@ -296,10 +276,6 @@ export function ChildrenPage() {
   }
 
   async function revokeAllActiveIntakeLinks() {
-    if (!shouldUseApi) {
-      setNotice("原型模式：已停用当前所有可填写家长资料链接。");
-      return;
-    }
     setRevokingActiveLinks(true);
     try {
       const result = await revokeActiveParentIntakeLinks(workspace.id, { classroom: classroomFilter || undefined });
@@ -360,7 +336,7 @@ export function ChildrenPage() {
               <h2>收集家长补充资料</h2>
               <p>
                 生成链接后发给家长填写，提交内容会进入当前园所的待确认资料队列。
-                {shouldUseApi && intakeLinkMeta ? ` 已显示 ${intakeLinks.length} / 共 ${intakeLinkMeta.total} 条链接。` : ""}
+                {intakeLinkMeta ? ` 已显示 ${intakeLinks.length} / 共 ${intakeLinkMeta.total} 条链接。` : ""}
               </p>
             </div>
             <div className="inline-actions">
@@ -429,7 +405,7 @@ export function ChildrenPage() {
               ))}
             </div>
           )}
-          {shouldUseApi && intakeLinkMeta?.has_more && (
+          {intakeLinkMeta?.has_more && (
             <div className="inline-actions">
               <button className="button secondary" type="button" disabled={intakeLinkLoading} onClick={loadMoreIntakeLinks}>
                 {intakeLinkLoading ? "加载中..." : "继续加载链接"}
@@ -447,10 +423,10 @@ export function ChildrenPage() {
               <p>
                 确认后会写入当前园所空间的儿童档案，之后可用于生成定制绘本。
                 {classroomFilter ? ` 当前只看 ${classroomFilter}。` : ""}
-                {shouldUseApi && intakeMeta ? ` 已显示 ${intakes.length} / 共 ${intakeMeta.total} 条。` : ""}
+                {intakeMeta ? ` 已显示 ${intakes.length} / 共 ${intakeMeta.total} 条。` : ""}
               </p>
             </div>
-            {shouldUseApi && intakeMeta?.has_more && (
+            {intakeMeta?.has_more && (
               <button className="button secondary" type="button" disabled={loading} onClick={() => setIntakeOffset((value) => value + PAGE_SIZE)}>
                 {loading ? "加载中..." : "继续加载提交"}
               </button>
@@ -490,7 +466,7 @@ export function ChildrenPage() {
       ) : (
         <>
           {error && <Notice title="儿童档案更新失败" copy={error} tone="danger" />}
-          {shouldUseApi && pageMeta && (
+          {pageMeta && (
             <Card>
               <div className="section-head">
                 <div>

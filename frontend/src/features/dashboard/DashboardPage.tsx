@@ -21,10 +21,8 @@ import {
   type GenerationJob,
   type UserStorageQuota,
   type WorkspaceStorageQuota,
-  shouldUseApi,
 } from "../../api/client";
 import { Badge, Card, EmptyState, PageHeader, statusTone } from "../../components/ui";
-import { children, storybooks, submissions } from "../../data/mock";
 import type { ChildProfile, MarketplaceSubmission, Storybook, Workspace } from "../../types/domain";
 import {
   generationJobNextAction,
@@ -340,11 +338,11 @@ export function DashboardPage() {
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [storageQuota, setStorageQuota] = useState<WorkspaceStorageQuota>(() => defaultStorageQuota(workspace));
   const [userStorageQuota, setUserStorageQuota] = useState<UserStorageQuota>(() => defaultUserStorageQuota());
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const books = shouldUseApi ? remoteData?.storybooks ?? [] : storybooks.filter((item) => item.workspaceId === workspace.id);
-  const childItems = shouldUseApi ? remoteData?.children ?? [] : children.filter((item) => item.workspaceId === workspace.id);
-  const submissionItems = shouldUseApi ? remoteData?.submissions ?? [] : submissions;
+  const books = remoteData?.storybooks ?? [];
+  const childItems = remoteData?.children ?? [];
+  const submissionItems = remoteData?.submissions ?? [];
   const primary = getPrimary(workspace, books, childItems);
   const tasks = getTasks(workspace, books, childItems, submissionItems).slice(0, 4);
   const metrics = getMetrics(workspace, books, childItems, submissionItems);
@@ -353,7 +351,6 @@ export function DashboardPage() {
   const showCreationLaunch = workspace.type === "school";
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     setRemoteData(null);

@@ -9,13 +9,11 @@ import {
   listMembersPage,
   recoverGenerationJobs,
   retryGenerationJob,
-  shouldUseApi,
   type DashboardData,
   type GenerationJob,
   type PaginationMeta,
 } from "../../api/client";
 import { Badge, Card, Notice, PageHeader } from "../../components/ui";
-import { children, storybooks, submissions } from "../../data/mock";
 import type { Workspace } from "../../types/domain";
 import { generationJobNextAction, generationJobStatusLabel, generationJobTypeLabel, generationPrivacyAuditSummary } from "../../utils/labels";
 
@@ -24,12 +22,12 @@ const JOB_PAGE_SIZE = 8;
 export function AdminPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const [remoteData, setRemoteData] = useState<DashboardData | null>(null);
-  const [memberCount, setMemberCount] = useState(shouldUseApi ? 0 : 3);
-  const [classCount, setClassCount] = useState(shouldUseApi ? 0 : 0);
+  const [memberCount, setMemberCount] = useState(0);
+  const [classCount, setClassCount] = useState(0);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [jobOffset, setJobOffset] = useState(0);
   const [jobMeta, setJobMeta] = useState<PaginationMeta | null>(null);
-  const [generationLoading, setGenerationLoading] = useState(shouldUseApi);
+  const [generationLoading, setGenerationLoading] = useState(true);
   const [generationError, setGenerationError] = useState("");
   const [overviewError, setOverviewError] = useState("");
   const [recovering, setRecovering] = useState(false);
@@ -44,7 +42,6 @@ export function AdminPage() {
   const [jobNotice, setJobNotice] = useState<{ title: string; copy: string; tone: "good" | "danger" | "info" } | null>(null);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setGenerationLoading(true);
     if (jobOffset === 0) {
@@ -97,9 +94,9 @@ export function AdminPage() {
     setJobOffset(0);
   }, [workspace.id]);
 
-  const childCount = shouldUseApi ? remoteData?.children.length ?? 0 : children.filter((item) => item.workspaceId === workspace.id).length;
-  const storybookCount = shouldUseApi ? remoteData?.storybooks.length ?? 0 : storybooks.filter((item) => item.workspaceId === workspace.id).length;
-  const submissionCount = shouldUseApi ? remoteData?.submissions.length ?? 0 : submissions.filter((item) => item.workspaceId === workspace.id).length;
+  const childCount = remoteData?.children.length ?? 0;
+  const storybookCount = remoteData?.storybooks.length ?? 0;
+  const submissionCount = remoteData?.submissions.length ?? 0;
   const initialGenerationLoading = generationLoading && generationJobs.length === 0;
   const failedJobs = generationJobs.filter((job) => job.status === "failed");
   const runningJobs = generationJobs.filter((job) => job.status === "running");
@@ -110,11 +107,6 @@ export function AdminPage() {
     setJobLoading(true);
     setJobNotice(null);
     try {
-      if (!shouldUseApi) {
-        const job = generationJobs.find((item) => item.id === jobId) || null;
-        setSelectedJob(job);
-        return;
-      }
       const job = await getGenerationJob(workspace.id, jobId);
       setSelectedJob(job);
     } catch (err) {
@@ -125,10 +117,6 @@ export function AdminPage() {
   }
 
   async function recoverJobs() {
-    if (!shouldUseApi) {
-      setRecoverNotice({ title: "已触发恢复", copy: "原型模式：系统会模拟扫描积压生成任务并尝试恢复。", tone: "good" });
-      return;
-    }
     setRecovering(true);
     setRecoverNotice(null);
     try {
@@ -221,10 +209,10 @@ export function AdminPage() {
             最大批次
             <input type="number" min={1} max={50} value={recoverLimit} onChange={(event) => setRecoverLimit(Number(event.target.value) || 10)} />
           </label>
-          <button className="button secondary" type="button" disabled={!shouldUseApi || recovering} onClick={recoverJobs}>
+          <button className="button secondary" type="button" disabled={recovering} onClick={recoverJobs}>
             {recovering ? "恢复中..." : "恢复生成队列"}
           </button>
-          {shouldUseApi && jobMeta?.has_more && (
+          {jobMeta?.has_more && (
             <button className="button secondary" type="button" disabled={generationLoading} onClick={() => setJobOffset((value) => value + JOB_PAGE_SIZE)}>
               {generationLoading ? "加载中..." : "继续加载任务"}
             </button>

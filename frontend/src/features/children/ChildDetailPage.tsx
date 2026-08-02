@@ -1,8 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useOutletContext, useParams } from "react-router-dom";
-import { archiveChild, getChild, listStorybooksPage, restoreChild, shouldUseApi, updateChild } from "../../api/client";
+import { archiveChild, getChild, listStorybooksPage, restoreChild, updateChild } from "../../api/client";
 import { Badge, Card, Modal, Notice, PageHeader } from "../../components/ui";
-import { children, storybooks } from "../../data/mock";
 import type { ChildProfile, Storybook, Workspace } from "../../types/domain";
 
 function splitTags(value: string) {
@@ -17,34 +16,31 @@ export function ChildDetailPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState<{ title: string; copy: string; tone?: "good" | "info" } | null>(null);
-  const fallbackChild = children.find((item) => item.id === childId) || children[0];
   const [remoteChild, setRemoteChild] = useState<ChildProfile | null>(null);
   const [remoteRelatedBooks, setRemoteRelatedBooks] = useState<Storybook[]>([]);
   const [remoteSourceBooks, setRemoteSourceBooks] = useState<Storybook[]>([]);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [archiving, setArchiving] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState("");
-  const child = shouldUseApi ? remoteChild : fallbackChild;
-  const related = shouldUseApi
-    ? remoteRelatedBooks
-    : storybooks.filter((item) => item.targetChildId === child?.id);
-  const preferredSource = (shouldUseApi ? remoteSourceBooks : storybooks)
+  const child = remoteChild;
+  const related = remoteRelatedBooks;
+  const preferredSource = remoteSourceBooks
     .filter((item) => item.workspaceId === workspace.id && item.type === "plain")
     .find((item) => item.status === "exportable")
-    || (shouldUseApi ? remoteSourceBooks : storybooks).find((item) => item.workspaceId === workspace.id && item.type === "plain");
+    || remoteSourceBooks.find((item) => item.workspaceId === workspace.id && item.type === "plain");
   const customizeTarget = preferredSource ? `/app/${workspace.id}/storybooks/${preferredSource.id}/customize?childId=${child?.id || ""}` : `/app/${workspace.id}/storybooks`;
   const customizeActionLabel = preferredSource ? `从《${preferredSource.title}》生成定制绘本` : "先选择普通绘本";
   const [form, setForm] = useState({
-    nickname: shouldUseApi ? "" : fallbackChild.nickname,
-    ageGroup: shouldUseApi ? "3-4 岁" : fallbackChild.ageGroup,
-    focus: shouldUseApi ? "" : fallbackChild.focus,
-    interests: shouldUseApi ? "" : fallbackChild.interests.join("、"),
-    traits: shouldUseApi ? "" : fallbackChild.traits.join("、"),
+    nickname: "",
+    ageGroup: "3-4 岁",
+    focus: "",
+    interests: "",
+    traits: "",
   });
 
   useEffect(() => {
-    if (!shouldUseApi || !childId) return;
+    if (!childId) return;
     let mounted = true;
     setLoading(true);
     setRemoteChild(null);
@@ -89,11 +85,6 @@ export function ChildDetailPage() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!child) return;
-    if (!shouldUseApi) {
-      setOpen(false);
-      setNotice({ title: "儿童资料已保存", copy: "原型模式：资料完整度和更新时间会同步更新。", tone: "good" });
-      return;
-    }
     try {
       const updated = await updateChild(workspace.id, child.id, {
         nickname: form.nickname,
@@ -112,10 +103,6 @@ export function ChildDetailPage() {
 
   async function archiveCurrentChild() {
     if (!child) return;
-    if (!shouldUseApi) {
-      setNotice({ title: "儿童资料已归档", copy: "原型模式：该档案会从可定制儿童列表中移除。", tone: "good" });
-      return;
-    }
     try {
       setArchiving(true);
       const archived = await archiveChild(workspace.id, child.id);
@@ -130,10 +117,6 @@ export function ChildDetailPage() {
 
   async function restoreCurrentChild() {
     if (!child) return;
-    if (!shouldUseApi) {
-      setNotice({ title: "儿童资料已恢复", copy: "原型模式：该档案会重新出现在可定制儿童列表中。", tone: "good" });
-      return;
-    }
     try {
       setRestoring(true);
       const restored = await restoreChild(workspace.id, child.id);

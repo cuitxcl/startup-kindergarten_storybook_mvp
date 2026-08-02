@@ -1,17 +1,11 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { archiveClassroom, createClassroom, listClassroomsPage, shouldUseApi, type PaginationMeta } from "../../api/client";
+import { archiveClassroom, createClassroom, listClassroomsPage, type PaginationMeta } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader } from "../../components/ui";
 import type { Classroom, Workspace } from "../../types/domain";
 import { classroomStatusLabel } from "../../utils/labels";
 
 const PAGE_SIZE = 12;
-
-const classes = [
-  { name: "小一班", age: "3-4 岁", teachers: 2, children: 18, status: "active" },
-  { name: "中一班", age: "4-5 岁", teachers: 2, children: 21, status: "active" },
-  { name: "大二班", age: "5-6 岁", teachers: 1, children: 19, status: "archived" },
-];
 
 export function ClassesPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
@@ -20,28 +14,19 @@ export function ClassesPage() {
   const [remoteClasses, setRemoteClasses] = useState<Classroom[]>([]);
   const [offset, setOffset] = useState(0);
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [archivingId, setArchivingId] = useState("");
   const [error, setError] = useState("");
   const [form, setForm] = useState({ name: "", ageGroup: "3-4 岁" });
-  const rows = shouldUseApi ? remoteClasses : classes.map((item, index) => ({
-    id: `mock-class-${index}`,
-    workspaceId: workspace.id,
-    name: item.name,
-    ageGroup: item.age,
-    teachers: item.teachers,
-    children: item.children,
-    status: item.status as Classroom["status"],
-  }));
-  const initialLoading = loading && (!shouldUseApi || remoteClasses.length === 0);
+  const rows = remoteClasses;
+  const initialLoading = loading && remoteClasses.length === 0;
 
   useEffect(() => {
     setOffset(0);
   }, [workspace.id]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     setError("");
@@ -77,11 +62,6 @@ export function ClassesPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!shouldUseApi) {
-      setOpen(false);
-      setNotice({ title: "班级已创建", copy: "原型模式：可以继续邀请老师并导入儿童档案。" });
-      return;
-    }
     setSubmitting(true);
     setNotice(null);
     try {
@@ -99,10 +79,6 @@ export function ClassesPage() {
   };
 
   async function archive(item: Classroom) {
-    if (!shouldUseApi) {
-      setNotice({ title: "班级已归档", copy: "原型模式：该班级会从授权选项中移除。" });
-      return;
-    }
     setArchivingId(item.id);
     setNotice(null);
     try {
@@ -127,12 +103,12 @@ export function ClassesPage() {
       <Card>
         <div className="section-head">
           <div><p className="eyebrow">班级列表</p><h2>班级资料与儿童数量</h2></div>
-          {shouldUseApi && pageMeta?.has_more ? (
+          {pageMeta?.has_more ? (
             <button className="button secondary" type="button" disabled={loading} onClick={() => setOffset((value) => value + PAGE_SIZE)}>
               {loading ? "加载中..." : "继续加载班级"}
             </button>
           ) : (
-            <Badge tone="info">{shouldUseApi && pageMeta ? `${rows.length}/${pageMeta.total}` : rows.length} 个班级</Badge>
+            <Badge tone="info">{pageMeta ? `${rows.length}/${pageMeta.total}` : rows.length} 个班级</Badge>
           )}
         </div>
         <div className="table-list">

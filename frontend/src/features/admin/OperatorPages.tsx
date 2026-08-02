@@ -9,7 +9,6 @@ import {
   listMarketplaceTemplatesPage,
   listOperatorSubmissionsPage,
   rejectOperatorSubmission,
-  shouldUseApi,
   type GenerationCostReport,
   type GenerationProviderStatus,
   type OperatorReadiness,
@@ -18,7 +17,6 @@ import {
   updateOperatorMarketplaceTemplate,
 } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
-import { marketplaceTemplates, submissions } from "../../data/mock";
 import type { MarketplaceSubmission, MarketplaceTemplate } from "../../types/domain";
 import { generationJobTypeLabel, submissionStatusLabel } from "../../utils/labels";
 
@@ -34,7 +32,7 @@ const GENERATION_COST_JOB_TYPES = [
 
 export function OperatorMarketplacePage() {
   const [notice, setNotice] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<MarketplaceTemplate[]>(shouldUseApi ? [] : marketplaceTemplates);
+  const [templates, setTemplates] = useState<MarketplaceTemplate[]>([]);
   const [editingTemplate, setEditingTemplate] = useState<MarketplaceTemplate | null>(null);
   const [templateForm, setTemplateForm] = useState({
     title: "",
@@ -47,41 +45,23 @@ export function OperatorMarketplacePage() {
   const [templateOffset, setTemplateOffset] = useState(0);
   const [templateReloadTick, setTemplateReloadTick] = useState(0);
   const [templateMeta, setTemplateMeta] = useState<PaginationMeta | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [error, setError] = useState("");
   const [provider, setProvider] = useState<GenerationProviderStatus | null>(null);
-  const [providerLoading, setProviderLoading] = useState(shouldUseApi);
+  const [providerLoading, setProviderLoading] = useState(true);
   const [readiness, setReadiness] = useState<OperatorReadiness | null>(null);
-  const [readinessLoading, setReadinessLoading] = useState(shouldUseApi);
+  const [readinessLoading, setReadinessLoading] = useState(true);
   const [readinessError, setReadinessError] = useState("");
-  const [storage, setStorage] = useState<StorageStatus | null>(
-    shouldUseApi
-      ? null
-      : {
-        backend: "local",
-        exportsDir: "tmp/exports",
-        generatedImagesDir: "tmp/generated-images",
-        exportMaxBytes: 52_428_800,
-        generatedImageMaxBytes: 15_728_640,
-        filenameValidation: true,
-        sizeLimitEnabled: true,
-        downloadStrategy: "authenticated_api",
-        publicDirectAccess: false,
-        userStorageQuotaBytes: 209_715_200,
-        personalStorageQuotaBytes: 209_715_200,
-        schoolStorageQuotaBytes: 5_368_709_120,
-        storageQuotaWarningPercent: 80,
-      },
-  );
-  const [storageLoading, setStorageLoading] = useState(shouldUseApi);
+  const [storage, setStorage] = useState<StorageStatus | null>(null);
+  const [storageLoading, setStorageLoading] = useState(true);
   const [storageError, setStorageError] = useState("");
   const [costReport, setCostReport] = useState<GenerationCostReport | null>(null);
   const [costMeta, setCostMeta] = useState<PaginationMeta | null>(null);
-  const [costLoading, setCostLoading] = useState(shouldUseApi);
+  const [costLoading, setCostLoading] = useState(true);
   const [costError, setCostError] = useState("");
   const [costFilters, setCostFilters] = useState({ provider: "", jobType: "", status: "" });
-  const initialLoading = loading && (!shouldUseApi || templates.length === 0);
+  const initialLoading = loading && templates.length === 0;
 
   const refreshTemplates = () => {
     setTemplateOffset(0);
@@ -118,24 +98,14 @@ export function OperatorMarketplacePage() {
 
     setSavingTemplate(true);
     try {
-      const updated = shouldUseApi
-        ? await updateOperatorMarketplaceTemplate(editingTemplate.id, {
+      const updated = await updateOperatorMarketplaceTemplate(editingTemplate.id, {
           title,
           summary,
           ageGroup,
           useScene,
           supportsCustomization: templateForm.supportsCustomization,
           tags,
-        })
-        : {
-          ...editingTemplate,
-          title,
-          summary,
-          ageGroup,
-          useScene,
-          supportsCustomization: templateForm.supportsCustomization,
-          tags,
-        };
+        });
       setTemplates((items) => items.map((item) => item.id === updated.id ? updated : item));
       setEditingTemplate(null);
       setNotice(`《${updated.title}》的市场展示信息已保存。`);
@@ -147,7 +117,6 @@ export function OperatorMarketplacePage() {
   }
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     if (templateOffset === 0) {
@@ -183,7 +152,6 @@ export function OperatorMarketplacePage() {
   }, [templateOffset, templateReloadTick]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     setReadinessLoading(true);
     setReadinessError("");
     getOperatorReadiness()
@@ -200,7 +168,6 @@ export function OperatorMarketplacePage() {
   }, []);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     setProviderLoading(true);
     getOperatorGenerationProvider()
       .then(setProvider)
@@ -209,7 +176,6 @@ export function OperatorMarketplacePage() {
   }, []);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     setStorageLoading(true);
     setStorageError("");
     getOperatorStorage()
@@ -222,7 +188,6 @@ export function OperatorMarketplacePage() {
   }, []);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setCostLoading(true);
     setCostError("");
@@ -484,7 +449,7 @@ export function OperatorMarketplacePage() {
                 ))}
               </div>
             ) : (
-              <EmptyState title="暂无成本记录" copy={shouldUseApi ? "当前筛选条件下还没有生成成本日志。" : "连接后端后会显示真实生成成本。"} />
+              <EmptyState title="暂无成本记录" copy="当前筛选条件下还没有生成成本日志。" />
             )}
             {costMeta && costMeta.total > costReport.items.length && (
               <p className="task-summary">当前显示最近 {costReport.items.length} 条，共 {costMeta.total} 条；更多分页可在后续运营页展开。</p>
@@ -506,9 +471,9 @@ export function OperatorMarketplacePage() {
             <div className="section-head">
               <div>
                 <p className="eyebrow">模板库</p>
-                <h2>已显示 {templates.length}{shouldUseApi && templateMeta ? ` / 共 ${templateMeta.total}` : ""} 个模板</h2>
+                <h2>已显示 {templates.length}{templateMeta ? ` / 共 ${templateMeta.total}` : ""} 个模板</h2>
               </div>
-              {shouldUseApi && templateMeta?.has_more ? (
+              {templateMeta?.has_more ? (
                 <button className="button secondary" type="button" disabled={loading} onClick={() => setTemplateOffset((value) => value + OPERATOR_PAGE_SIZE)}>
                   {loading ? "加载中..." : "继续加载模板"}
                 </button>
@@ -580,24 +545,23 @@ function downloadStrategyLabel(value: string) {
 export function OperatorSubmissionsPage() {
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ title: string; copy: string; tone: "good" | "danger" } | null>(null);
-  const [rows, setRows] = useState<MarketplaceSubmission[]>(shouldUseApi ? [] : submissions);
+  const [rows, setRows] = useState<MarketplaceSubmission[]>([]);
   const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState("");
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [reviewing, setReviewing] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [error, setError] = useState("");
   const [approvedTemplateId, setApprovedTemplateId] = useState<string | null>(null);
   const reviewItem = rows.find((item) => item.id === reviewId);
-  const initialLoading = loading && (!shouldUseApi || rows.length === 0);
+  const initialLoading = loading && rows.length === 0;
 
   useEffect(() => {
     setOffset(0);
   }, [statusFilter]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     if (offset === 0) {
@@ -634,12 +598,6 @@ export function OperatorSubmissionsPage() {
 
   async function approve() {
     if (!reviewItem) return;
-    if (!shouldUseApi) {
-      setRows((items) => items.map((item) => item.id === reviewItem.id ? { ...item, status: "listed" } : item));
-      setReviewId(null);
-      setNotice({ title: "审核动作已记录", copy: "投稿已通过审核，并进入市场上架流程。", tone: "good" });
-      return;
-    }
     setReviewing(true);
     setNotice(null);
     setApprovedTemplateId(null);
@@ -666,12 +624,6 @@ export function OperatorSubmissionsPage() {
 
   async function reject() {
     if (!reviewItem) return;
-    if (!shouldUseApi) {
-      setRows((items) => items.map((item) => item.id === reviewItem.id ? { ...item, status: "rejected", updatedAt: "刚刚" } : item));
-      setReviewId(null);
-      setNotice({ title: "已要求修改", copy: "投稿已标记为需要修改。", tone: "good" });
-      return;
-    }
     setRejecting(true);
     setNotice(null);
     try {
@@ -713,7 +665,7 @@ export function OperatorSubmissionsPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">审核队列</p>
-              <h2>已显示 {rows.length}{shouldUseApi && pageMeta ? ` / 共 ${pageMeta.total}` : ""} 条投稿</h2>
+              <h2>已显示 {rows.length}{pageMeta ? ` / 共 ${pageMeta.total}` : ""} 条投稿</h2>
             </div>
             <div className="inline-actions">
               <label>
@@ -725,7 +677,7 @@ export function OperatorSubmissionsPage() {
                   <option value="rejected">已退回</option>
                 </select>
               </label>
-              {shouldUseApi && pageMeta?.has_more ? (
+              {pageMeta?.has_more ? (
                 <button className="button secondary" type="button" disabled={loading} onClick={() => setOffset((value) => value + OPERATOR_PAGE_SIZE)}>
                   {loading ? "加载中..." : "继续加载审核队列"}
                 </button>

@@ -1,8 +1,7 @@
 import { BookOpen, Building2, LayoutDashboard, Library, Settings, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
-import { currentSession, isApiClientError, shouldUseApi } from "../api/client";
-import { currentUser, workspaces } from "../data/mock";
+import { currentSession, isApiClientError } from "../api/client";
 import type { User, Workspace } from "../types/domain";
 import { appWorkspaces, pathWithWorkspace, pickPrimaryWorkspace, resolveWorkspaceAlias } from "../utils/workspace";
 
@@ -19,16 +18,15 @@ export function AppShell() {
   const { workspaceId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const [availableWorkspaces, setAvailableWorkspaces] = useState<Workspace[]>(shouldUseApi ? [] : workspaces);
-  const [user, setUser] = useState<User | null>(shouldUseApi ? null : currentUser);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [availableWorkspaces, setAvailableWorkspaces] = useState<Workspace[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const workspace = resolveWorkspaceAlias(workspaceId, availableWorkspaces) || availableWorkspaces[0];
   const isSchool = workspace?.type === "school";
   const isAdmin = workspace?.role === "school_admin";
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     currentSession()

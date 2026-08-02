@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { createShareExport, downloadShareExportFile, getPublicParentIntakeLink, getShareExport, getSharedStorybook, shouldUseApi, submitParentIntake, type ExportJob } from "../../api/client";
+import { createShareExport, downloadShareExportFile, getPublicParentIntakeLink, getShareExport, getSharedStorybook, submitParentIntake, type ExportJob } from "../../api/client";
 import { Badge, Card, EmptyState, Notice } from "../../components/ui";
 import type { PublicParentIntakeLink, Storybook } from "../../types/domain";
 
@@ -16,9 +16,9 @@ export function IntakeLinkPage() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   const workspaceId = params.get("workspaceId") || undefined;
-  const queryWorkspaceName = params.get("workspaceName") || (!shouldUseApi && token === "demo-token" ? "星星幼儿园" : "当前园所");
+  const queryWorkspaceName = params.get("workspaceName") || "当前园所";
   const [link, setLink] = useState<PublicParentIntakeLink | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<{ title: string; copy: string; tone: "good" | "danger" } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -27,10 +27,9 @@ export function IntakeLinkPage() {
     ageGroup: "4-5 岁",
     interests: "",
   });
-  const workspaceName = shouldUseApi ? link?.workspaceName || "当前园所" : queryWorkspaceName;
+  const workspaceName = link?.workspaceName || queryWorkspaceName;
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     if (!token) {
       setLink(null);
       setError("缺少家长资料链接 token。");
@@ -52,10 +51,6 @@ export function IntakeLinkPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!shouldUseApi) {
-      setNotice({ title: "资料已提交", copy: "老师会先确认资料，再用于生成定制绘本。", tone: "good" });
-      return;
-    }
     setSubmitting(true);
     setNotice(null);
     try {
@@ -79,16 +74,16 @@ export function IntakeLinkPage() {
     return <main className="link-page"><EmptyState title="正在检查资料链接" copy="正在确认这条家长资料链接是否仍可填写。" /></main>;
   }
 
-  if (error || (shouldUseApi && !link)) {
+  if (error || !link) {
     return <main className="link-page"><EmptyState title="家长资料链接不可用" copy={error || "没有找到这条资料收集链接。"} /></main>;
   }
 
-  if (shouldUseApi && link?.status !== "active") {
+  if (link.status !== "active") {
     return (
       <main className="link-page">
         <EmptyState
-          title={link?.status === "revoked" ? "家长资料链接已撤回" : "家长资料链接已过期"}
-          copy={link?.status === "revoked" ? "老师已经撤回这条资料收集链接，请联系老师获取新的链接。" : "这条资料收集链接已超过有效期，请联系老师重新生成。"}
+          title={link.status === "revoked" ? "家长资料链接已撤回" : "家长资料链接已过期"}
+          copy={link.status === "revoked" ? "老师已经撤回这条资料收集链接，请联系老师获取新的链接。" : "这条资料收集链接已超过有效期，请联系老师重新生成。"}
         />
       </main>
     );
@@ -100,9 +95,9 @@ export function IntakeLinkPage() {
         <Badge tone="info">{workspaceName}</Badge>
         <h1>填写孩子资料</h1>
         <p>这些资料将提交给老师确认，确认后才会写入儿童档案。</p>
-        {shouldUseApi && link?.expiresAt && <p className="task-summary">链接有效期至：{link.expiresAt}</p>}
+        {link.expiresAt && <p className="task-summary">链接有效期至：{link.expiresAt}</p>}
         {(workspaceId || link?.workspaceId) && <p className="task-summary">提交目标空间：{workspaceName}</p>}
-        {shouldUseApi && link?.classroom && <p className="task-summary">提交目标班级：{link.classroom}</p>}
+        {link.classroom && <p className="task-summary">提交目标班级：{link.classroom}</p>}
         {notice && <Notice title={notice.title} copy={notice.copy} tone={notice.tone} />}
         <form onSubmit={submit}>
           <label>孩子称呼<input required value={form.childNickname} onChange={(event) => setForm({ ...form, childNickname: event.target.value })} placeholder="例如：乐乐" /></label>
@@ -118,32 +113,14 @@ export function IntakeLinkPage() {
 export function ShareLinkPage() {
   const { token } = useParams();
   const [book, setBook] = useState<Storybook | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<{ title: string; copy: string; tone: "good" | "danger" } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportFileUrl, setExportFileUrl] = useState("");
   const [exportBlobUrl, setExportBlobUrl] = useState("");
-  const displayBook = shouldUseApi ? book : {
-    id: "mock-share",
-    workspaceId: "school-1",
-    title: "乐乐学会一起玩",
-    type: "custom",
-    status: "exportable",
-    visibility: "private",
-    source: "derived",
-    creatorName: "林老师",
-    updatedAt: "刚刚",
-    ageGroup: "4-5 岁",
-    useScene: "家庭共读",
-    teachingGoal: "学习轮流和分享",
-    coverTone: "温暖、柔和",
-    pages: [],
-    roles: [],
-  } as Storybook;
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     if (!token) {
       setBook(null);
       setError("缺少分享链接 token。");
@@ -170,11 +147,7 @@ export function ShareLinkPage() {
   }, [exportBlobUrl]);
 
   const download = async () => {
-    if (!displayBook || !token) return;
-    if (!shouldUseApi) {
-      setNotice({ title: "PDF 已准备下载", copy: "原型模式：会下载当前分享版本。", tone: "good" });
-      return;
-    }
+    if (!book || !token) return;
     setExporting(true);
     setNotice(null);
     setExportFileUrl("");
@@ -222,7 +195,7 @@ export function ShareLinkPage() {
     return <main className="link-page"><EmptyState title="正在加载绘本" copy="正在打开老师分享的绘本链接。" /></main>;
   }
 
-  if (error || !displayBook) {
+  if (error || !book) {
     return <main className="link-page"><EmptyState title="分享链接不可用" copy={error || "没有找到这本分享绘本。"} /></main>;
   }
 
@@ -230,13 +203,13 @@ export function ShareLinkPage() {
     <main className="link-page">
       <Card className="link-card">
         <Badge tone="good">家庭分享版</Badge>
-        <h1>{displayBook.title}</h1>
-        <div className="storybook-preview-art"><span>{displayBook.coverTone}</span><strong>{displayBook.title.slice(0, 6)}</strong></div>
+        <h1>{book.title}</h1>
+        <div className="storybook-preview-art"><span>{book.coverTone}</span><strong>{book.title.slice(0, 6)}</strong></div>
         <p>这是一份由老师分享的当前版本绘本。获得链接的人可以查看并下载这本书对应的 PDF，看到的就是老师导出的那一版。</p>
         <div className="review-list">
-          <div><span>适用年龄</span><strong>{displayBook.ageGroup}</strong></div>
-          <div><span>使用场景</span><strong>{displayBook.useScene}</strong></div>
-          <div><span>教学目标</span><strong>{displayBook.teachingGoal}</strong></div>
+          <div><span>适用年龄</span><strong>{book.ageGroup}</strong></div>
+          <div><span>使用场景</span><strong>{book.useScene}</strong></div>
+          <div><span>教学目标</span><strong>{book.teachingGoal}</strong></div>
         </div>
         <section className="shared-story-pages" aria-label="绘本正文">
           <div className="section-head compact">
@@ -244,10 +217,10 @@ export function ShareLinkPage() {
               <p className="eyebrow">绘本正文</p>
               <h2>老师分享的当前版本</h2>
             </div>
-            <Badge tone="neutral">{displayBook.pages.length || 0} 页</Badge>
+            <Badge tone="neutral">{book.pages.length || 0} 页</Badge>
           </div>
-          {displayBook.pages.length ? (
-            displayBook.pages.map((page) => (
+          {book.pages.length ? (
+            book.pages.map((page) => (
               <article className="shared-story-page" key={page.id}>
                 <span>第 {page.pageNumber} 页</span>
                 <h3>{page.title}</h3>

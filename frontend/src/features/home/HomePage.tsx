@@ -1,8 +1,7 @@
 import { ArrowRight, BookOpen, CheckCircle2, Library, LockKeyhole, Sparkles, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { currentSession, shouldUseApi } from "../../api/client";
-import { workspaces } from "../../data/mock";
+import { currentSession } from "../../api/client";
 import { pickPrimaryWorkspace } from "../../utils/workspace";
 
 const steps = [
@@ -21,16 +20,10 @@ const scenarios = [
 const safety = ["儿童资料按空间隔离", "分享链接可控", "园所投稿先脱敏", "公开内容需审核"];
 
 export function HomePage() {
-  const mockDemoWorkspaceId = pickPrimaryWorkspace(workspaces)?.id || workspaces[0].id;
-  const [demoPath, setDemoPath] = useState(shouldUseApi ? "/app" : `/app/${mockDemoWorkspaceId}/dashboard`);
-  const [marketPath, setMarketPath] = useState(shouldUseApi ? "/app" : `/app/${mockDemoWorkspaceId}/marketplace`);
+  const [demoPath, setDemoPath] = useState("/app");
+  const [marketPath, setMarketPath] = useState("/app");
 
   useEffect(() => {
-    if (!shouldUseApi) {
-      setDemoPath(`/app/${mockDemoWorkspaceId}/dashboard`);
-      setMarketPath(`/app/${mockDemoWorkspaceId}/marketplace`);
-      return;
-    }
     currentSession()
       .then((session) => {
         const workspaceId = pickPrimaryWorkspace(session.workspaces)?.id || session.workspaces[0]?.id;
@@ -41,7 +34,7 @@ export function HomePage() {
         setDemoPath("/app");
         setMarketPath("/app");
       });
-  }, [mockDemoWorkspaceId]);
+  }, []);
 
   return (
     <main className="home-page">
@@ -71,20 +64,20 @@ export function HomePage() {
           </div>
         </div>
         <div className="hero-visual" aria-hidden="true">
-          <div className="mock-window">
-            <div className="mock-sidebar">
+          <div className="product-window">
+            <div className="product-sidebar">
               <strong>园所工作台</strong>
               <span>绘本生产入口</span>
               <span>班级儿童</span>
               <span>绘本市场</span>
             </div>
-            <div className="mock-main">
-              <div className="mock-toolbar"><span>星星幼儿园</span><span>老师协作</span></div>
-              <div className="mock-launch">
+            <div className="product-main">
+              <div className="product-toolbar"><span>星星幼儿园</span><span>老师协作</span></div>
+              <div className="product-launch">
                 <div><BookOpen size={22} /><strong>创建普通绘本</strong><small>从教学目标生成班级共读绘本</small></div>
                 <div><UsersRound size={22} /><strong>生成定制绘本</strong><small>选择孩子并生成独立副本</small></div>
               </div>
-              <div className="mock-book">
+              <div className="product-book">
                 <span>第 1 页</span>
                 <strong>一起玩小汽车</strong>
                 <p>老师先确认故事方案，再生成稳定角色和插图。</p>

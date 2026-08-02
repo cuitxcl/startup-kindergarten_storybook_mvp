@@ -7,7 +7,6 @@ import {
   getStorybook,
   getWorkspaceGenerationProvider,
   retryGenerationJob,
-  shouldUseApi,
   updateStorybook,
   updateStorybookPage,
   updateStorybookRole,
@@ -15,7 +14,6 @@ import {
   type GenerationProviderStatus,
 } from "../../api/client";
 import { Badge, Card, Notice, PageHeader, WizardSideNav } from "../../components/ui";
-import { storybooks } from "../../data/mock";
 import type { Storybook, StorybookPage, StorybookRole, Workspace } from "../../types/domain";
 import {
   generationJobStatusLabel,
@@ -79,7 +77,7 @@ export function NewStorybookPage() {
     useScene: "规则引导",
     style: "温暖、生活化，有清晰的老师引导。",
   });
-  const targetBook = shouldUseApi ? createdBookId : storybooks.find((item) => item.workspaceId === workspace.id)?.id || "storybook-1";
+  const targetBook = createdBookId;
   const generatedRoles = rolesFromOutput(generationOutputs.storybook_roles);
   const generatedPages = pagesFromOutput(generationOutputs.storybook_pages);
   const currentRoles = editableRoles.length ? editableRoles : generatedRoles;
@@ -115,11 +113,10 @@ export function NewStorybookPage() {
   };
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     getWorkspaceGenerationProvider(workspace.id).then(setProvider).catch(() => setProvider(null));
   }, [workspace.id]);
   const ensureStorybookCreated = async () => {
-    if (!shouldUseApi || createdBookId) return createdBookId;
+    if (createdBookId) return createdBookId;
     setCreating(true);
     try {
       const book = await createStorybook(workspace.id, {
@@ -135,10 +132,6 @@ export function NewStorybookPage() {
     }
   };
   const runGeneration = async (jobType: string, title: string) => {
-    if (!shouldUseApi) {
-      showNotice(title, "当前为本地原型反馈；接入 API 后会创建生成任务。");
-      return true;
-    }
     setGeneratingStep(jobType);
     setRetryJob(null);
     setNotice(null);
@@ -205,16 +198,16 @@ export function NewStorybookPage() {
     if (job.output) {
       setGenerationOutputs((outputs) => ({ ...outputs, [job.jobType]: job.output }));
       if (job.jobType === "storybook_plan") {
-        setPlanDraft(planDraftFromOutput(job.output, form));
+      setPlanDraft(planDraftFromOutput(job.output, form));
       }
       if (job.jobType === "storybook_roles") {
-        const roles = shouldUseApi && job.storybookId
+        const roles = job.storybookId
           ? rolesFromStorybook((await getStorybook(workspace.id, job.storybookId)).roles)
           : rolesFromOutput(job.output);
         setEditableRoles(roles.length ? roles : rolesFromOutput(job.output));
       }
       if (job.jobType === "storybook_pages") {
-        const pages = shouldUseApi && job.storybookId
+        const pages = job.storybookId
           ? pagesFromStorybook((await getStorybook(workspace.id, job.storybookId)).pages)
           : pagesFromOutput(job.output);
         setEditablePages(pages.length ? pages : pagesFromOutput(job.output));
@@ -224,7 +217,7 @@ export function NewStorybookPage() {
     return true;
   };
   const persistRoles = async (bookId: string, rolesToPersist = currentRoles) => {
-    if (!shouldUseApi || !rolesToPersist.length) return;
+    if (!rolesToPersist.length) return;
     const book = await getStorybook(workspace.id, bookId);
     const updated = await Promise.all(rolesToPersist.map(async (role, index) => {
       const existing = role.id
@@ -244,7 +237,7 @@ export function NewStorybookPage() {
     setEditableRoles(updated);
   };
   const persistPages = async (bookId: string, pagesToPersist = currentPages) => {
-    if (!shouldUseApi || !pagesToPersist.length) return;
+    if (!pagesToPersist.length) return;
     const book = await getStorybook(workspace.id, bookId);
     const updated = await Promise.all(pagesToPersist.map(async (page, index) => {
       const existing = page.id
@@ -261,7 +254,6 @@ export function NewStorybookPage() {
     setEditablePages(updated);
   };
   const persistStorybookMeta = async (bookId: string) => {
-    if (!shouldUseApi) return;
     await updateStorybook(workspace.id, bookId, {
       title: form.title.trim() || form.theme.trim() || "新建普通绘本",
       ageGroup: form.ageGroup,
@@ -277,7 +269,7 @@ export function NewStorybookPage() {
       }
       return;
     }
-    if (shouldUseApi && step === 1 && !createdBookId) {
+    if (step === 1 && !createdBookId) {
       try {
         const bookId = await ensureStorybookCreated();
         if (bookId) await persistStorybookMeta(bookId);
@@ -286,7 +278,7 @@ export function NewStorybookPage() {
         setNotice({ title: "创建失败", copy: err instanceof Error ? err.message : "请稍后重试" });
         return;
       }
-    } else if (shouldUseApi && step === 1 && createdBookId) {
+    } else if (step === 1 && createdBookId) {
       await persistStorybookMeta(createdBookId);
     }
     if (step === 2) {
@@ -300,7 +292,7 @@ export function NewStorybookPage() {
         await persistRoles(bookId, currentRoles);
       }
       if (await runGeneration("storybook_pages", "分页图文已生成并写入绘本")) {
-        if (shouldUseApi && bookId) {
+        if (bookId) {
           await updateStorybook(workspace.id, bookId, { status: "roles_pending" });
         }
         goToStep(3);
@@ -316,8 +308,8 @@ export function NewStorybookPage() {
         return;
       }
       try {
-        const bookId = shouldUseApi ? createdBookId : targetBook;
-        if (shouldUseApi && bookId) {
+        const bookId = createdBookId;
+        if (bookId) {
           await persistPages(bookId);
           await updateStorybook(workspace.id, bookId, { status: "editing" });
           await updateStorybook(workspace.id, bookId, { status: "exportable" });

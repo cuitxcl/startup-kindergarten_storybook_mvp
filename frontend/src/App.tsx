@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useOutletContext } from "react-router-dom";
-import { currentSession, isApiClientError, shouldUseApi } from "./api/client";
+import { currentSession, isApiClientError } from "./api/client";
 import { AppShell } from "./layout/AppShell";
 import { HomePage } from "./features/home/HomePage";
 import { LoginPage, RegisterPage } from "./features/auth/AuthPages";
@@ -22,7 +22,6 @@ import { AuditLogsPage } from "./features/admin/AuditLogsPage";
 import { OperatorMarketplacePage, OperatorSubmissionsPage } from "./features/admin/OperatorPages";
 import { IntakeLinkPage, ShareLinkPage } from "./features/links/LinkPages";
 import { EmptyState } from "./components/ui";
-import { workspaces } from "./data/mock";
 import { pickPrimaryWorkspace } from "./utils/workspace";
 import type { Workspace } from "./types/domain";
 
@@ -31,10 +30,6 @@ function AppRedirect() {
 
   useEffect(() => {
     let mounted = true;
-    if (!shouldUseApi) {
-      setTarget(`/app/${pickPrimaryWorkspace(workspaces).id}/dashboard`);
-      return;
-    }
 
     currentSession()
       .then((session) => {

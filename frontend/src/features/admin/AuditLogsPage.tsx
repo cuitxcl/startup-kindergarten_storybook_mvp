@@ -1,33 +1,10 @@
 import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { listAuditLogsPage, shouldUseApi, type PaginationMeta } from "../../api/client";
+import { listAuditLogsPage, type PaginationMeta } from "../../api/client";
 import { Badge, Card, EmptyState, Notice, PageHeader } from "../../components/ui";
 import type { AuditLog, Workspace } from "../../types/domain";
 
 const PAGE_SIZE = 20;
-
-const mockLogs: AuditLog[] = [
-  {
-    id: "audit-1",
-    workspaceId: "prototype-school-space",
-    actorName: "林老师",
-    action: "marketplace_submission.privacy_confirmed",
-    resourceType: "marketplace_submission",
-    resourceId: "submission-1",
-    metadata: { status: "submitted", privacy_confirmed: true },
-    createdAt: "刚刚",
-  },
-  {
-    id: "audit-2",
-    workspaceId: "prototype-school-space",
-    actorName: "林老师",
-    action: "storybook.share_link_created",
-    resourceType: "share_link",
-    resourceId: "share-1",
-    metadata: { status: "active" },
-    createdAt: "10 分钟前",
-  },
-];
 
 const actionLabel: Record<string, string> = {
   "child.created": "创建儿童档案",
@@ -100,19 +77,18 @@ function metadataSummary(metadata: Record<string, unknown>) {
 
 export function AuditLogsPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
-  const [logs, setLogs] = useState<AuditLog[]>(shouldUseApi ? [] : mockLogs);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
   const [offset, setOffset] = useState(0);
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const initialLoading = loading && (!shouldUseApi || logs.length === 0);
+  const initialLoading = loading && logs.length === 0;
 
   useEffect(() => {
     setOffset(0);
   }, [workspace.id]);
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     if (offset === 0) {
@@ -162,9 +138,9 @@ export function AuditLogsPage() {
             <div className="section-head">
               <div>
                 <p className="eyebrow">操作追踪</p>
-                <h2>已显示 {logs.length}{shouldUseApi && pageMeta ? ` / 共 ${pageMeta.total}` : ""} 条记录</h2>
+                <h2>已显示 {logs.length}{pageMeta ? ` / 共 ${pageMeta.total}` : ""} 条记录</h2>
               </div>
-              {shouldUseApi && pageMeta?.has_more ? (
+              {pageMeta?.has_more ? (
                 <button className="button secondary" type="button" disabled={loading} onClick={() => setOffset((value) => value + PAGE_SIZE)}>
                   {loading ? "加载中..." : "继续加载日志"}
                 </button>

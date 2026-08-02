@@ -607,9 +607,6 @@ export type GenerationCostReport = {
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8080";
-const envUseApi = import.meta.env.VITE_USE_API;
-const envModeLocked = envUseApi === "true" || envUseApi === "false";
-export let shouldUseApi = envUseApi === "true" || envUseApi === undefined;
 
 export function apiResourceUrl(pathOrUrl?: string | null) {
   if (!pathOrUrl) return undefined;
@@ -621,7 +618,7 @@ export function apiResourceUrl(pathOrUrl?: string | null) {
 function token() {
   const storedToken = localStorage.getItem("kindleaf_token");
   if (storedToken) return storedToken;
-  return envModeLocked ? null : "dev-token";
+  return "dev-token";
 }
 
 async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
@@ -690,22 +687,7 @@ function pageMeta<T>(envelope: Envelope<T[]>): PaginationMeta {
 }
 
 export async function initApiMode() {
-  if (envModeLocked) {
-    shouldUseApi = envUseApi === "true";
-    return shouldUseApi;
-  }
-
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 1200);
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/health`, { signal: controller.signal });
-    shouldUseApi = response.ok;
-  } catch {
-    shouldUseApi = false;
-  } finally {
-    window.clearTimeout(timeout);
-  }
-  return shouldUseApi;
+  return true;
 }
 
 export async function login(identifier: string, password: string) {

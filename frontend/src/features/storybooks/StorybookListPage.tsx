@@ -3,13 +3,11 @@ import { Link, useOutletContext } from "react-router-dom";
 import {
   listGenerationJobsPage,
   listStorybooksPage,
-  shouldUseApi,
   type GenerationJob,
   type PaginationMeta,
 } from "../../api/client";
 import { Badge, Card, EmptyState, Notice, PageHeader, statusTone } from "../../components/ui";
-import { storybooks } from "../../data/mock";
-import type { Storybook, Workspace } from "../../types/domain";
+import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
 import { generationJobStatusLabel, generationJobTypeLabel, storybookNextAction, storybookSourceLabel, storybookStatusLabel } from "../../utils/labels";
 
 const PAGE_SIZE = 12;
@@ -22,19 +20,11 @@ export function StorybookListPage() {
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
   const [remoteBooks, setRemoteBooks] = useState<Storybook[]>([]);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
-  const [loading, setLoading] = useState(shouldUseApi);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const books = shouldUseApi ? remoteBooks : storybooks.filter((item) => item.workspaceId === workspace.id);
-  const initialLoading = loading && (!shouldUseApi || remoteBooks.length === 0);
-  const filteredBooks = shouldUseApi ? books : books.filter((book) => {
-    const matchesFilter =
-      filter === "all" ||
-      (filter === "plain" && book.type === "plain") ||
-      (filter === "custom" && book.type === "custom") ||
-      (filter === "exportable" && book.status === "exportable");
-    const text = `${book.title} ${book.teachingGoal} ${book.useScene} ${book.ageGroup}`.toLowerCase();
-    return matchesFilter && text.includes(query.trim().toLowerCase());
-  });
+  const books = remoteBooks;
+  const initialLoading = loading && remoteBooks.length === 0;
+  const filteredBooks = books;
   const filterItems = [
     ["all", "全部"],
     ["plain", "普通绘本"],
@@ -51,7 +41,6 @@ export function StorybookListPage() {
   }
 
   useEffect(() => {
-    if (!shouldUseApi) return;
     let mounted = true;
     setLoading(true);
     if (offset === 0) {
@@ -150,7 +139,7 @@ export function StorybookListPage() {
         <EmptyState title="没有匹配的绘本" copy="换一个筛选条件，或清空搜索关键词后再试。" action={<button className="button secondary" type="button" onClick={() => { setFilter("all"); setQuery(""); }}>清空筛选</button>} />
       ) : (
         <>
-          {shouldUseApi && pageMeta && (
+          {pageMeta && (
             <Card>
               <div className="section-head">
                 <div>
@@ -166,36 +155,85 @@ export function StorybookListPage() {
             </Card>
           )}
           <section className="storybook-grid">
-            {filteredBooks.map((book) => (
-              <article className="storybook-card" key={book.id}>
-                <div className="cover-art"><span>{book.coverTone}</span><strong>{book.title.slice(0, 2)}</strong></div>
-                <div className="storybook-card-body">
-                  <div className="card-line"><Badge tone={book.type === "plain" ? "info" : "good"}>{book.type === "plain" ? "普通绘本" : "定制绘本"}</Badge><Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge></div>
-                  <h3>{book.title}</h3>
-                  <p>{book.teachingGoal}</p>
-                  <p className="next-action">{storybookSourceLabel(book)}</p>
-                  <p className="next-action">{storybookNextAction(book)}</p>
-                  {shouldUseApi && recentTaskCopy(book) && <p className="task-summary">{recentTaskCopy(book)}</p>}
-                  <div className="meta-line"><span>{book.ageGroup}</span><span>{book.useScene}</span><span>{book.updatedAt}</span></div>
-                  <div className="storybook-card-actions">
-                    {book.type === "plain" ? (
-                      <>
-                        <Link className="button primary" to={`${book.id}/customize`}>生成定制版</Link>
-                        <Link className="button secondary" to={book.id}>查看详情</Link>
-                      </>
-                    ) : (
-                      <>
-                        <Link className="button primary" to={book.id}>继续编辑</Link>
-                        <Link className="button secondary" to={book.id}>导出或分享</Link>
-                      </>
-                    )}
+            {filteredBooks.map((book) => {
+              const customizationBlocker = book.type === "plain" ? customizationBlockerForList(book, generationJobs) : "";
+              const exportBlocker = exportBlockerForList(book, generationJobs);
+
+              return (
+                <article className="storybook-card" key={book.id}>
+                  <div className="cover-art"><span>{book.coverTone}</span><strong>{book.title.slice(0, 2)}</strong></div>
+                  <div className="storybook-card-body">
+                    <div className="card-line"><Badge tone={book.type === "plain" ? "info" : "good"}>{book.type === "plain" ? "普通绘本" : "定制绘本"}</Badge><Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge></div>
+                    <h3>{book.title}</h3>
+                    <p>{book.teachingGoal}</p>
+                    <p className="next-action">{storybookSourceLabel(book)}</p>
+                    <p className="next-action">{storybookNextAction(book)}</p>
+                    {recentTaskCopy(book) && <p className="task-summary">{recentTaskCopy(book)}</p>}
+                    {customizationBlocker && <p className="task-summary">定制条件：{customizationBlocker}</p>}
+                    {book.type === "custom" && exportBlocker && <p className="task-summary">导出条件：{exportBlocker}</p>}
+                    <div className="meta-line"><span>{book.ageGroup}</span><span>{book.useScene}</span><span>{book.updatedAt}</span></div>
+                    <div className="storybook-card-actions">
+                      {book.type === "plain" ? (
+                        <>
+                          {customizationBlocker ? (
+                            <Link className="button primary" to={book.id}>继续完成</Link>
+                          ) : (
+                            <Link className="button primary" to={`${book.id}/customize`}>生成定制版</Link>
+                          )}
+                          <Link className="button secondary" to={book.id}>查看详情</Link>
+                        </>
+                      ) : (
+                        <>
+                          <Link className="button primary" to={book.id}>继续编辑</Link>
+                          <Link className="button secondary" to={book.id}>{exportBlocker ? "查看详情" : "导出或分享"}</Link>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </section>
         </>
       )}
     </div>
   );
+}
+
+function customizationBlockerForList(book: Storybook, jobs: GenerationJob[]) {
+  if (book.type !== "plain") return "";
+  return exportBlockerForList(book, jobs);
+}
+
+function exportBlockerForList(book: Storybook, jobs: GenerationJob[]) {
+  if (!book.pages.length) return "请先生成绘本分页";
+  if (!book.roles.length) return "请先确认角色与道具";
+
+  const activeJob = jobs.find((job) => (
+    job.storybookId === book.id && (job.status === "queued" || job.status === "running")
+  ));
+  if (activeJob) return `${generationJobTypeLabel[activeJob.jobType] || activeJob.jobType}仍在生成，请完成后再定制`;
+
+  const failedPages = book.pages.filter((page) => page.status === "failed");
+  if (failedPages.length) return `仍有 ${failedPages.length} 页插图生成失败，请先处理`;
+
+  const generatingPages = book.pages.filter((page) => page.status === "generating");
+  if (generatingPages.length) return "仍有分页插图正在生成，请完成后再生成定制版";
+
+  const redrawPages = book.pages.filter((page) => page.status === "needs_regeneration");
+  if (redrawPages.length) return `仍有 ${redrawPages.length} 页需要重绘，请先完成普通绘本`;
+
+  const missingReferences = book.roles.filter((role) => roleNeedsReferenceForList(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl));
+  if (missingReferences.length) return `跨页角色参考图未完成：${missingReferences.map((role) => role.name).join("、")}`;
+
+  if (book.quality?.status === "blocked") return "质量检查存在阻断项，请先修正";
+  if (book.status !== "exportable" && book.status !== "listed") return `当前状态为「${storybookStatusLabel[book.status] || "未完成"}」，完成后才能继续`;
+  return "";
+}
+
+function roleNeedsReferenceForList(book: Storybook, role: StorybookRole) {
+  return role.needsConsistency && book.pages.filter((page) => {
+    const text = `${page.title} ${page.body} ${page.illustrationPrompt}`;
+    return text.includes(role.name);
+  }).length >= 2;
 }
