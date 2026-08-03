@@ -1007,6 +1007,7 @@ fn provider_output_assembles_illustration_slots_into_prompt() {
                     "camera": "中近景，画面紧凑，一群小动物挤在木门口相互遮挡。",
                     "scene_state": "早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口",
                     "contact_chain": "橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背",
+                    "crowd": "门口还有五六只小动物踮脚张望排在后面",
                     "action": "小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤",
                     "expression": "小猫眉头紧皱、胡须绷直",
                     "prop_detail": "地上有一只被挤掉的粉色书包。"
@@ -1048,6 +1049,7 @@ fn provider_output_requires_every_illustration_slot() {
                     "camera": "中近景，画面紧凑",
                     "scene_state": "早晨送园高峰，小动物们挤在门口",
                     "contact_chain": "小猫被夹在人群中间",
+                    "crowd": "后排还有几只小动物排队等待",
                     "action": "",
                     "expression": "小猫眉头紧皱"
                 }
@@ -1079,6 +1081,7 @@ fn provider_output_rejects_forbidden_illustration_wording() {
                     "camera": "中近景，画面紧凑",
                     "scene_state": "早晨送园高峰，小动物们挤在门口，背景虚化",
                     "contact_chain": "小猫被夹在人群中间",
+                    "crowd": "后排还有几只小动物排队等待",
                     "action": "小猫踮起脚尖往门缝里挤",
                     "expression": "小猫眉头紧皱"
                 }
@@ -1359,4 +1362,195 @@ fn valid_plan_output() -> JsonValue {
             "review_points": ["教学目标是否准确"]
         }
     })
+}
+
+#[test]
+fn provider_output_assembles_single_page_prompt_from_slots() {
+    let output = normalize_provider_output(
+        json!({
+            "message": "已重写",
+            "page": {
+                "page_number": 2,
+                "illustration": {
+                    "camera": "中近景，画面紧凑，小动物们挤在门口",
+                    "scene_state": "早晨送园高峰，大家身体紧紧挨着卡成一团",
+                    "contact_chain": "小猫被夹在中间，身后的小熊贴上他的背",
+                    "crowd": "门口还有五六只小动物踮脚张望排在后面",
+                    "action": "小猫踮起脚尖、肩膀前倾扒着门把手",
+                    "expression": "小猫眉头紧皱、眼睛瞪圆",
+                    "prop_detail": "地上有一只被挤掉的粉色书包"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect("single page prompt should assemble");
+
+    let prompt = output["page"]["illustration_prompt"]
+        .as_str()
+        .expect("page.illustration_prompt should be text");
+    assert!(prompt.contains("儿童绘本插图"));
+    assert!(prompt.contains("中近景"));
+    assert!(prompt.contains("粉色书包"));
+    assert!(prompt.contains("柔和水彩绘本风格"));
+}
+
+#[test]
+fn provider_output_rejects_missing_slot_in_single_page_prompt() {
+    let err = normalize_provider_output(
+        json!({
+            "page": {
+                "page_number": 2,
+                "illustration": {
+                    "camera": "中近景",
+                    "scene_state": "大家挤在门口",
+                    "contact_chain": "小猫被夹在中间",
+                    "crowd": "后排还有几只小动物排队",
+                    "action": "小猫踮起脚尖"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect_err("missing expression slot should fail");
+
+    assert!(err.safe_message().contains("expression"));
+    assert!(err.safe_message().contains("storybook_page_prompt.page"));
+}
+
+#[test]
+fn provider_output_rejects_forbidden_wording_in_single_page_prompt() {
+    let err = normalize_provider_output(
+        json!({
+            "page": {
+                "page_number": 1,
+                "illustration": {
+                    "camera": "中近景",
+                    "scene_state": "孩子们略显拥挤，背景柔焦",
+                    "contact_chain": "小猫被夹在中间",
+                    "crowd": "后排还有几只小动物排队",
+                    "action": "小猫踮起脚尖",
+                    "expression": "小猫眉头紧皱"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect_err("forbidden wording should fail");
+
+    assert!(err.safe_message().contains("禁止写法"));
+}
+
+#[test]
+fn single_page_prompt_output_requires_confirmed_role_reference() {
+    let output = normalize_provider_output(
+        json!({
+            "page": {
+                "page_number": 2,
+                "illustration": {
+                    "camera": "中近景",
+                    "scene_state": "小动物们挤在门口",
+                    "contact_chain": "一个角色被夹在中间",
+                    "crowd": "后排还有几只小动物排队",
+                    "action": "一个角色踮起脚尖",
+                    "expression": "一个角色眉头紧皱"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect("normalize should succeed");
+    let input = json!({
+        "page": {"page_id": "x", "page_number": 2, "title": "入园高峰", "body": "小猫米米去上学。", "illustration_prompt": "旧描述"},
+        "confirmed_roles": [{"name": "米米", "role_type": "protagonist", "appearance": "橘色条纹小猫", "story_function": "主角"}]
+    });
+    let err = validate_output_against_input(&output, &input, "storybook_page_prompt")
+        .expect_err("prompt without confirmed role name should fail");
+
+    assert!(err.safe_message().contains("未包含已确认角色姓名"));
+}
+
+#[test]
+fn deepseek_page_prompt_payload_uses_lower_temperature() {
+    let provider = DeepSeekTextProvider {
+        api_key: Some("test-key".to_string()),
+        base_url: "https://api.deepseek.com".to_string(),
+        endpoint_path: "/chat/completions".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        timeout_seconds: 45,
+        max_tokens: 4096,
+    };
+    let payload = provider
+        .build_chat_payload(&GenerationRequest {
+            job_type: "storybook_page_prompt",
+            input: &json!({"page_id": "p1"}),
+        })
+        .expect("page prompt payload should be built");
+    assert_eq!(payload["temperature"], json!(0.35));
+}
+
+#[test]
+fn provider_output_requires_crowd_slot() {
+    let err = normalize_provider_output(
+        json!({
+            "page": {
+                "page_number": 2,
+                "illustration": {
+                    "camera": "中近景",
+                    "scene_state": "小动物们挤在门口",
+                    "contact_chain": "小猫被夹在中间",
+                    "action": "小猫踮起脚尖",
+                    "expression": "小猫眉头紧皱"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect_err("missing crowd slot should fail");
+
+    assert!(err.safe_message().contains("crowd"));
+}
+
+#[test]
+fn single_page_prompt_rejects_crowd_disappearing_between_pages() {
+    let input = json!({
+        "page": {"page_id": "x", "page_number": 2, "title": "老师来帮忙", "body": "长颈鹿老师来了。", "illustration_prompt": "旧描述"},
+        "confirmed_roles": [{"name": "米米", "role_type": "protagonist", "appearance": "橘色条纹小猫", "story_function": "主角"}],
+        "neighbor_pages": [
+            {"page_number": 1, "title": "门口挤成一团", "illustration_prompt": "儿童绘本插图，一群小动物挤在幼儿园门口，身体紧紧挨着你推我搡"}
+        ]
+    });
+    let vanished = json!({
+        "page": {
+            "page_number": 2,
+            "illustration_prompt": "儿童绘本插图，米米仰头看着长颈鹿老师，老师弯腰示范。"
+        }
+    });
+    let err = validate_output_against_input(&vanished, &input, "storybook_page_prompt")
+        .expect_err("crowd vanishing between pages should fail");
+    assert!(err.safe_message().contains("未交代在场群体"));
+
+    let kept = json!({
+        "page": {
+            "page_number": 2,
+            "illustration_prompt": "儿童绘本插图，米米仰头看着长颈鹿老师，小动物们在后排排成一列等待。"
+        }
+    });
+    validate_output_against_input(&kept, &input, "storybook_page_prompt")
+        .expect("prompt keeping the crowd should pass");
 }

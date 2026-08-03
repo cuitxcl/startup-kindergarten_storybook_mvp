@@ -3,6 +3,7 @@ import { ChangeEvent, FormEvent, type ReactNode, useEffect, useState } from "rea
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   cancelGenerationJob,
+  createGenerationJob,
   createPageImageTask,
   createRoleReferenceImageTask,
   createShareLink,
@@ -82,6 +83,7 @@ export function StorybookDetailPage() {
     coverTone: "",
   });
   const [imageGenerating, setImageGenerating] = useState(false);
+  const [promptRewriting, setPromptRewriting] = useState(false);
   const [currentImagePreviewUrl, setCurrentImagePreviewUrl] = useState("");
   const [currentImagePreviewError, setCurrentImagePreviewError] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
@@ -526,6 +528,65 @@ export function StorybookDetailPage() {
       setNotice({ title: "角色参考图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
       setRoleImageGenerating(false);
+    }
+  }
+
+  async function rewritePagePrompt() {
+    if (!book || !selectedPage) return;
+    if (pageHasUnsavedChanges
+      && !window.confirm("本页还有未保存的修改，AI 重写会基于已保存的正文生成新插图描述，未保存的修改可能被覆盖。仍要继续吗？")) {
+      return;
+    }
+    setPromptRewriting(true);
+    try {
+      const job = await createGenerationJob(workspace.id, {
+        jobType: "storybook_page_prompt",
+        storybookId: book.id,
+        input: { page_id: selectedPage.id },
+      });
+      setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+      const settledJob = await pollGenerationJob(workspace.id, job, {
+        timeoutMs: 240_000,
+        onUpdate: (current) => setGenerationJobs((jobs) => [current, ...jobs.filter((item) => item.id !== current.id)]),
+      });
+      await refreshGenerationJobs(book.id);
+      if (settledJob.status === "queued" || settledJob.status === "running") {
+        setNotice({
+          title: "插图描述仍在重写",
+          copy: `任务${generationStatusLabel(settledJob.status)}，完成后可刷新查看。任务编号：${settledJob.id.slice(0, 8)}。`,
+          tone: "info",
+        });
+        return;
+      }
+      if (settledJob.status === "failed") {
+        setNotice({
+          title: "插图描述重写失败",
+          copy: `${generationErrorMessage(settledJob)}。任务编号：${settledJob.id.slice(0, 8)}。`,
+          tone: "info",
+        });
+        return;
+      }
+      const updated = await getStorybook(workspace.id, book.id);
+      setRemoteBook(updated);
+      const updatedPage = updated.pages.find((page) => page.id === selectedPage.id);
+      if (updatedPage) {
+        setPageForm({
+          title: updatedPage.title,
+          body: updatedPage.body,
+          illustrationPrompt: updatedPage.illustrationPrompt,
+        });
+      }
+      setNotice({
+        title: "插图描述已重写",
+        copy: updatedPage?.status === "needs_regeneration"
+          ? "新的插图描述已写回本页，本页插图已标记为待重新生成，确认后点击重绘插图即可。"
+          : "新的插图描述已写回本页，确认后可生成插图。",
+        tone: "good",
+      });
+    } catch (err) {
+      setNotice({ title: "插图描述重写失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+    } finally {
+      setPromptRewriting(false);
     }
   }
 
@@ -1079,15 +1140,26 @@ export function StorybookDetailPage() {
               )}
             </div>
             {shouldShowImageGenerationAction && !pageEditorOpen && (
-              <button
-                className="button primary"
-                type="button"
-                disabled={imageActionBusy || Boolean(pageImageReferenceBlocker)}
-                title={pageImageReferenceBlocker || undefined}
-                onClick={generateIllustration}
-              >
-                {pageImageActionLabel(selectedPage.status, imageActionBusy)}
-              </button>
+              <div className="inline-actions">
+                <button
+                  className="button primary"
+                  type="button"
+                  disabled={imageActionBusy || promptRewriting || Boolean(pageImageReferenceBlocker)}
+                  title={pageImageReferenceBlocker || undefined}
+                  onClick={generateIllustration}
+                >
+                  {pageImageActionLabel(selectedPage.status, imageActionBusy)}
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={promptRewriting || imageActionBusy}
+                  title="让 AI 基于本页正文重新创作插图描述"
+                  onClick={rewritePagePrompt}
+                >
+                  {promptRewriting ? "AI 重写中..." : "AI 重写插图描述"}
+                </button>
+              </div>
             )}
           </Card>
           </aside>

@@ -21,6 +21,7 @@ const ALLOWED_JOB_TYPES: &[&str] = &[
     "storybook_plan",
     "storybook_roles",
     "storybook_pages",
+    "storybook_page_prompt",
     "storybook_page_image",
     "storybook_role_reference_image",
     "customization_plan",
@@ -201,7 +202,96 @@ async fn enriched_generation_input(
             }
         }
     }
+    if job_type == "storybook_page_prompt" {
+        let Some(storybook_id) = storybook_id else {
+            return Err(DbErr::Custom(
+                "插图描述重写任务需要关联绘本（storybook_id）".to_string(),
+            ));
+        };
+        let page_id = input_json
+            .get("page_id")
+            .and_then(|value| value.as_str())
+            .and_then(|value| Uuid::parse_str(value).ok())
+            .ok_or_else(|| {
+                DbErr::Custom("插图描述重写任务需要有效页面 ID（page_id）".to_string())
+            })?;
+        let page = storybook_page_for_prompt(db, storybook_id, page_id).await?;
+        let page_number = page
+            .get("page_number")
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0) as i32;
+        let neighbor_pages = neighbor_pages_for_prompt(db, storybook_id, page_number).await?;
+        input_json["neighbor_pages"] = json!(neighbor_pages);
+        input_json["page"] = page;
+        if input_json.get("confirmed_roles").is_none() {
+            let confirmed_roles = confirmed_roles_for_storybook(db, storybook_id).await?;
+            if !confirmed_roles.is_empty() {
+                input_json["confirmed_roles"] = json!(confirmed_roles);
+            }
+        }
+    }
     Ok(input_json)
+}
+
+async fn storybook_page_for_prompt(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    page_id: Uuid,
+) -> Result<JsonValue, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select page_number, title, body, illustration_prompt
+            from storybook_pages
+            where storybook_id = $1 and id = $2
+            limit 1
+            "#,
+            [storybook_id.into(), page_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("storybook_page".to_string()))?;
+    Ok(json!({
+        "page_id": page_id.to_string(),
+        "page_number": row.try_get::<i32>("", "page_number")?,
+        "title": row.try_get::<String>("", "title")?,
+        "body": row.try_get::<String>("", "body")?,
+        "illustration_prompt": row.try_get::<String>("", "illustration_prompt")?,
+    }))
+}
+
+/// 单页重写需要看到前后相邻页的插图描述，保证跨页场景连续。
+async fn neighbor_pages_for_prompt(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    page_number: i32,
+) -> Result<Vec<JsonValue>, DbErr> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select page_number, title, illustration_prompt
+            from storybook_pages
+            where storybook_id = $1 and page_number in ($2, $3)
+            order by page_number asc
+            "#,
+            [
+                storybook_id.into(),
+                (page_number - 1).into(),
+                (page_number + 1).into(),
+            ],
+        ))
+        .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(json!({
+                "page_number": row.try_get::<i32>("", "page_number")?,
+                "title": row.try_get::<String>("", "title")?,
+                "illustration_prompt": row.try_get::<String>("", "illustration_prompt")?,
+            }))
+        })
+        .collect()
 }
 
 async fn confirmed_roles_for_storybook(

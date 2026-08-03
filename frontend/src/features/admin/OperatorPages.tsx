@@ -25,6 +25,7 @@ const GENERATION_COST_JOB_TYPES = [
   "storybook_plan",
   "storybook_roles",
   "storybook_pages",
+  "storybook_page_prompt",
   "customization_plan",
   "storybook_role_reference_image",
   "storybook_page_image",

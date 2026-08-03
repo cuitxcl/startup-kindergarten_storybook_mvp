@@ -16,6 +16,7 @@ const TEXT_JOB_TYPES: &[&str] = &[
     "storybook_plan",
     "storybook_roles",
     "storybook_pages",
+    "storybook_page_prompt",
     "customization_plan",
 ];
 
@@ -95,7 +96,10 @@ impl DeepSeekTextProvider {
             None => base_user_content,
         };
         // 分页图文需要严格按槽位模板输出，降低采样温度提升格式遵循度；方案/角色保留创造力空间。
-        let temperature = if request.job_type == "storybook_pages" {
+        let temperature = if matches!(
+            request.job_type,
+            "storybook_pages" | "storybook_page_prompt"
+        ) {
             0.35
         } else {
             0.7
@@ -273,7 +277,7 @@ pub(crate) fn validate_output_against_input(
     input: &JsonValue,
     job_type: &str,
 ) -> Result<(), GenerationProviderError> {
-    if job_type != "storybook_pages" {
+    if !matches!(job_type, "storybook_pages" | "storybook_page_prompt") {
         return Ok(());
     }
     let confirmed_roles = input
@@ -293,35 +297,67 @@ pub(crate) fn validate_output_against_input(
         return Ok(());
     }
 
-    let pages = output
-        .get("pages")
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| {
-            GenerationProviderError::new("provider 输出 storybook_pages.pages 必须是 array")
-        })?;
-    for (index, page) in pages.iter().enumerate() {
-        let title = page
-            .get("title")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let body = page
-            .get("body")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
+    // 收集待检查的 (定位标签, 标题, 正文, 插图提示词)：分页任务逐页检查，单页重写只检查重写页。
+    let mut targets: Vec<(String, String, String, String)> = Vec::new();
+    if job_type == "storybook_pages" {
+        let pages = output
+            .get("pages")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| {
+                GenerationProviderError::new("provider 输出 storybook_pages.pages 必须是 array")
+            })?;
+        for (index, page) in pages.iter().enumerate() {
+            targets.push((
+                format!("{job_type}.pages[{index}]"),
+                page.get("title")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                page.get("body")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                page.get("illustration_prompt")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            ));
+        }
+    } else {
+        let page = output.get("page").and_then(|value| value.as_object());
         let prompt = page
-            .get("illustration_prompt")
+            .and_then(|page| page.get("illustration_prompt"))
             .and_then(|value| value.as_str())
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_string();
+        let input_page = input.get("page");
+        targets.push((
+            format!("{job_type}.page"),
+            input_page
+                .and_then(|page| page.get("title"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string(),
+            input_page
+                .and_then(|page| page.get("body"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string(),
+            prompt,
+        ));
+    }
+
+    for (location, title, body, prompt) in &targets {
         let combined = format!("{title} {body} {prompt}");
         if !confirmed_roles.iter().any(|name| combined.contains(name)) {
             return Err(GenerationProviderError::new(format!(
-                "provider 输出 storybook_pages.pages[{index}] 未引用已确认角色：{}",
+                "provider 输出 {location} 未引用已确认角色：{}",
                 confirmed_roles.join("、")
             )));
         }
         if !confirmed_roles.iter().any(|name| prompt.contains(name)) {
             return Err(GenerationProviderError::new(format!(
-                "provider 输出 storybook_pages.pages[{index}].illustration_prompt 未包含已确认角色姓名"
+                "provider 输出 {location} 插图提示词未包含已确认角色姓名"
             )));
         }
         let unexpected_animals = [
@@ -343,8 +379,39 @@ pub(crate) fn validate_output_against_input(
             .find(|animal| combined.contains(**animal) && !role_text.contains(**animal))
         {
             return Err(GenerationProviderError::new(format!(
-                "provider 输出 storybook_pages.pages[{index}] 出现未确认替代角色：{animal}"
+                "provider 输出 {location} 出现未确认替代角色：{animal}"
             )));
+        }
+    }
+
+    // 单页重写：相邻页存在群体场景时，新描述必须交代在场群体，防止人群跨页凭空消失。
+    if job_type == "storybook_page_prompt" {
+        let crowd_markers = [
+            "一群", "挤", "人群", "大家", "小动物们", "孩子们", "排队", "簇拥", "涌",
+        ];
+        let neighbor_text = input
+            .get("neighbor_pages")
+            .and_then(|value| value.as_array())
+            .map(|pages| {
+                pages
+                    .iter()
+                    .filter_map(|page| {
+                        page.get("illustration_prompt")
+                            .and_then(|value| value.as_str())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        let neighbor_has_crowd = !neighbor_text.is_empty()
+            && crowd_markers.iter().any(|marker| neighbor_text.contains(marker));
+        if neighbor_has_crowd {
+            let new_prompt = targets.first().map(|(_, _, _, prompt)| prompt.as_str()).unwrap_or("");
+            if !crowd_markers.iter().any(|marker| new_prompt.contains(marker)) {
+                return Err(GenerationProviderError::new(format!(
+                    "provider 输出 {job_type}.page 插图提示词未交代在场群体：相邻页存在人群场景，本页人群可以退到后排但不能凭空消失，请在 crowd 槽位写明人在哪里（或说明人群为何散去）"
+                )));
+            }
         }
     }
     Ok(())
@@ -362,21 +429,30 @@ pub(crate) fn format_deepseek_endpoint(base_url: &str, endpoint_path: &str) -> S
     format!("{trimmed_base}/{}", trimmed_path.trim_start_matches('/'))
 }
 
-pub(crate) fn prompt_for(job_type: &str) -> &'static str {
+/// 分页图文与单页重写的插图槽位写法指引，保持同一套标准。
+const ILLUSTRATION_SLOT_GUIDE: &str = "每页的插图设定必须输出为 illustration 对象，按以下 7 个槽位分别填写，槽位之间不要重复内容：\n- camera：镜头与构图，一句话，例如“中近景，画面紧凑，角色相互遮挡”；角色多或画面拥挤时优先中近景。\n- scene_state：场景此刻正在发生什么，必须写状态而不是场景名词；有群体时必须写出密度（身体紧紧挨着、你推我搡、卡成一团）。\n- contact_chain：主角与周围角色之间的接触和遮挡关系，例如“身后的小熊被人群推着贴上小猫的背”；主角必须被写进关系里，不能孤立在人群之外。\n- crowd：在场群体交代，必须写明画面里除主要角色外还有哪些人、在画面什么位置（例如“后排还有五六只小动物踮脚张望，门口小路上仍有人赶来”）；如果故事此刻处于人群场景中（拥挤、排队、一群），本页人群必须仍在场，可以退到后排或让出画面中心，但不能凭空消失；确实只剩少量角色时，必须写明原因（例如“其他小动物已经进教室了，门口只剩小猫和小兔”）。\n- action：主要角色的动作，必须写成身体语言（踮起脚尖、肩膀前倾、扒着门框、踉跄后仰），不能只写动作名称。\n- expression：主要角色的表情，必须写成具体五官细节（眉头紧皱、眼睛瞪圆、嘴巴张成 O 形），禁止只写“慌张”“着急”“开心”这类总结词。\n- prop_detail：一个增强现场感的小道具细节，例如“地上有一只被挤掉的小书包”；没有合适的就填空字符串。\n\n跨页连续性：同一事件内，地点、时间和在场群体规模不得突变；前一页出现的人群在后一页必须仍在场（可以换位置、退到后排），次要角色可以换位但不能整群蒸发。\n\n情绪翻译词库（必须先把情绪翻译成身体语言再写）：着急=踮脚+身体前倾+眉头紧锁；慌张=眼睛瞪圆+耳朵后压+后仰失衡+手脚乱挥；开心=眯起笑眼+嘴角上扬+蹦跳离地；拥挤=身体紧挨+相互遮挡+你推我搡。\n\n禁止写法（出现即视为不合格）：“背景虚化”“背景模糊”“柔焦”“略显”“并排站”“面无表情”“人群最前面”“证件照”；禁止只写场景名词而不写场景状态。风格不用你写，由系统统一拼接，不要在任何槽位里写风格描述或“绘本风格”字样。\n\n合格示例（仅作写法示范，实际输出必须使用 input.confirmed_roles 里的角色）：\ncamera：中近景，画面紧凑，一群小动物挤在木门口相互遮挡\nscene_state：早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口，小路上还有人赶来\ncontact_chain：橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背；白色小兔紧挨着小猫，长耳朵被旁边的小动物压歪\ncrowd：门口还有五六只小动物踮脚张望排在后面，小路上仍有两三只小动物赶来\naction：小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤；小兔被挤得踉跄前倾、前爪慌乱挥舞\nexpression：小猫眉头紧皱、胡须绷直；小兔眼睛瞪圆、嘴巴张成 O 形\nprop_detail：地上有一只被挤掉的粉色书包";
+
+pub(crate) fn prompt_for(job_type: &str) -> String {
     match job_type {
         "storybook_plan" => {
             "根据 input.title、input.theme、input.use_scene、input.style 生成普通绘本方案。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。先给故事主线，再给分页节奏和老师审核点。"
+                .to_string()
         }
         "storybook_roles" => {
             "根据 input.plan 中已经确认的故事方案生成主角、同伴、老师形象和关键道具设定，必须紧扣 input.title、input.theme、input.plan.summary 和 input.plan.outline，不得沿用无关示例。role_type 只能使用英文枚举 protagonist、supporting、peer、teacher、prop；不要输出中文类型。appearance 只能写稳定可见的视觉特征，例如物种或身份、颜色、服装或材质、体型轮廓、发型/耳朵/配饰、表情和可跨页重复识别的小标记；禁止把动作、习惯、剧情行为或故事任务写入 appearance，例如“喜欢蹦跳”“离开队伍”“带领探险”“制定规则”。这些内容必须写入 story_function。needs_consistency 只给需要跨页重复出现并保持同一形象的主角、老师、重要同伴或反复出现关键道具设为 true；只出现一次的临时事物、背景动物、一次性道具必须设为 false，不需要参考图。"
+                .to_string()
         }
         "storybook_pages" => {
-            "根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角。\n\n每页的插图设定必须输出为 illustration 对象，按以下 6 个槽位分别填写，槽位之间不要重复内容：\n- camera：镜头与构图，一句话，例如“中近景，画面紧凑，角色相互遮挡”；角色多或画面拥挤时优先中近景。\n- scene_state：场景此刻正在发生什么，必须写状态而不是场景名词；有群体时必须写出密度（身体紧紧挨着、你推我搡、卡成一团）。\n- contact_chain：主角与周围角色之间的接触和遮挡关系，例如“身后的小熊被人群推着贴上小猫的背”；主角必须被写进关系里，不能孤立在人群之外。\n- action：主要角色的动作，必须写成身体语言（踮起脚尖、肩膀前倾、扒着门框、踉跄后仰），不能只写动作名称。\n- expression：主要角色的表情，必须写成具体五官细节（眉头紧皱、眼睛瞪圆、嘴巴张成 O 形），禁止只写“慌张”“着急”“开心”这类总结词。\n- prop_detail：一个增强现场感的小道具细节，例如“地上有一只被挤掉的小书包”；没有合适的就填空字符串。\n\n情绪翻译词库（必须先把情绪翻译成身体语言再写）：着急=踮脚+身体前倾+眉头紧锁；慌张=眼睛瞪圆+耳朵后压+后仰失衡+手脚乱挥；开心=眯起笑眼+嘴角上扬+蹦跳离地；拥挤=身体紧挨+相互遮挡+你推我搡。\n\n禁止写法（出现即视为不合格）：“背景虚化”“背景模糊”“柔焦”“略显”“并排站”“面无表情”“人群最前面”“证件照”；禁止只写场景名词而不写场景状态。风格不用你写，由系统统一拼接，不要在任何槽位里写风格描述或“绘本风格”字样。\n\n合格示例（仅作写法示范，实际输出必须使用 input.confirmed_roles 里的角色）：\ncamera：中近景，画面紧凑，一群小动物挤在木门口相互遮挡\nscene_state：早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口，小路上还有人赶来\ncontact_chain：橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背；白色小兔紧挨着小猫，长耳朵被旁边的小动物压歪\naction：小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤；小兔被挤得踉跄前倾、前爪慌乱挥舞\nexpression：小猫眉头紧皱、胡须绷直；小兔眼睛瞪圆、嘴巴张成 O 形\nprop_detail：地上有一只被挤掉的粉色书包"
+            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角。\n\n{ILLUSTRATION_SLOT_GUIDE}")
+        }
+        "storybook_page_prompt" => {
+            format!("根据 input.page 的标题（title）和正文（body），为这一页重新创作插图设定，替换现有插图描述。正文必须忠于 input.page.body，不要改动剧情。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角。\n\ninput.neighbor_pages 包含前后相邻页的插图描述（可能为空）：本页必须与相邻页保持场景连续，相邻页出现的人群在本页必须仍在场（可以退到后排或让出画面中心，但不能消失）；如果剧情确实让人群散去了，必须在 crowd 槽位写明人群去了哪里。\n\n{ILLUSTRATION_SLOT_GUIDE}")
         }
         "customization_plan" => {
             "基于普通绘本和儿童档案生成定制方案，只输出可审核的改写点和风险检查。"
+                .to_string()
         }
-        _ => "生成结构化绘本内容。",
+        _ => "生成结构化绘本内容。".to_string(),
     }
 }
 
@@ -425,6 +501,7 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
                     "camera": "string（镜头与构图，角色多时优先中近景）",
                     "scene_state": "string（场景正在发生什么，群体必须写出密度）",
                     "contact_chain": "string（主角与周围角色的接触和遮挡关系）",
+                    "crowd": "string（在场群体交代，人群场景必须写人在哪，人少必须写原因）",
                     "action": "string（动作的身体语言，不是动作名称）",
                     "expression": "string（表情的具体五官细节，不是情绪总结词）",
                     "prop_detail": "string（一个氛围道具细节，可为空字符串）"
@@ -444,6 +521,24 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
                 "strategy": "string",
                 "rewrite_points": [{"scope": "string", "action": "string"}],
                 "risk_checks": ["string"]
+            }
+        }),
+        "storybook_page_prompt" => json!({
+            "schema_version": "generation.provider.v1",
+            "provider": "string",
+            "mode": "storybook_page_prompt",
+            "message": "string",
+            "page": {
+                "page_number": "number",
+                "illustration": {
+                    "camera": "string（镜头与构图，角色多时优先中近景）",
+                    "scene_state": "string（场景正在发生什么，群体必须写出密度）",
+                    "contact_chain": "string（主角与周围角色的接触和遮挡关系）",
+                    "crowd": "string（在场群体交代，人群场景必须写人在哪，人少必须写原因）",
+                    "action": "string（动作的身体语言，不是动作名称）",
+                    "expression": "string（表情的具体五官细节，不是情绪总结词）",
+                    "prop_detail": "string（一个氛围道具细节，可为空字符串）"
+                }
             }
         }),
         _ => json!({}),

@@ -50,11 +50,67 @@ pub async fn apply_completed_generation(
     match job.job_type.as_str() {
         "storybook_roles" => replace_roles_from_generation(db, storybook_id, output).await,
         "storybook_pages" => replace_pages_from_generation(db, storybook_id, output).await,
+        "storybook_page_prompt" => {
+            apply_page_prompt_rewrite(db, storybook_id, job, output).await
+        }
         "storybook_role_reference_image" => {
             apply_role_reference_image(db, storybook_id, job, output).await
         }
         _ => Ok(()),
     }
+}
+
+/// 单页插图描述重写：写回 illustration_prompt，并把已有插图的页面标记为待重新生成。
+async fn apply_page_prompt_rewrite(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    job: &GenerationJob,
+    output: &JsonValue,
+) -> Result<(), DbErr> {
+    let page_id = job
+        .input_json
+        .get("page_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| DbErr::Custom("插图描述重写任务缺少 page_id，无法写回".to_string()))?;
+    let prompt = output
+        .get("page")
+        .and_then(|value| value.get("illustration_prompt"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| DbErr::Custom("插图描述重写输出缺少 illustration_prompt".to_string()))?;
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_pages
+        set illustration_prompt = $3,
+            status = case
+                when status = 'ready' then 'needs_regeneration'
+                else status
+            end
+        where storybook_id = $1 and id = $2
+        "#,
+        [storybook_id.into(), page_id.into(), prompt.to_string().into()],
+    ))
+    .await?;
+
+    // 内容发生变化，重置老师审核状态。
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybooks
+        set updated_at = now(),
+            teacher_review_status = 'pending',
+            teacher_reviewed_by = null,
+            teacher_reviewed_at = null
+        where id = $1
+        "#,
+        [storybook_id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 async fn apply_role_reference_image(

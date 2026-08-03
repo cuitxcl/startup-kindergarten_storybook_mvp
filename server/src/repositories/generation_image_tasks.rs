@@ -38,11 +38,28 @@ pub async fn page_image_job_input(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(page_prompt);
-    let reference_images = page_image_reference_images(db, storybook_id, &payload).await?;
+    let mut reference_images = page_image_reference_images(db, storybook_id, &payload).await?;
+    // 第三档场景延续：上一页已有插图时，把它作为场景参考图带上；没有则静默降级。
+    let scene_reference = previous_page_scene_reference(db, storybook_id, page_id).await?;
+    let has_scene_reference = scene_reference.is_some();
+    if let Some(scene) = scene_reference {
+        if !reference_images.iter().any(|item| item.url == scene.url) {
+            reference_images.push(scene);
+        }
+    }
+    let prompt = if has_scene_reference {
+        format!("{prompt} 参考上一页画面保持场景布局与在场人群连续，动作与构图以文字描述为准。")
+    } else {
+        prompt
+    };
     let image_mode =
         normalize_image_mode(payload.image_mode.as_deref(), !reference_images.is_empty());
     let edit_instruction = clean_optional_text(payload.edit_instruction);
-    let strength = payload.strength.map(|value| value.clamp(0.0, 1.0));
+    // 场景参考图容易把构图拉得过于雷同，带场景参考且未显式指定强度时收敛到 0.5。
+    let strength = payload
+        .strength
+        .map(|value| value.clamp(0.0, 1.0))
+        .or(has_scene_reference.then_some(0.5));
 
     Ok(json!({
         "page_id": page_id,
@@ -240,6 +257,49 @@ fn clean_optional_text(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+/// 查找上一页最近一次成功插图的图片地址，作为本页的场景参考图。
+/// 上一页没有已生成插图时返回 None，调用方静默降级为普通生成。
+async fn previous_page_scene_reference(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    page_id: Uuid,
+) -> Result<Option<ImageReference>, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select gj.output_json->'image'->>'image_url' as image_url
+            from storybook_pages current_page
+            join storybook_pages prev_page
+              on prev_page.storybook_id = current_page.storybook_id
+             and prev_page.page_number = current_page.page_number - 1
+            join generation_jobs gj
+              on gj.storybook_id = current_page.storybook_id
+             and gj.job_type = 'storybook_page_image'
+             and gj.status = 'succeeded'
+             and gj.input_json->>'page_id' = prev_page.id::text
+            where current_page.storybook_id = $1 and current_page.id = $2
+            order by gj.created_at desc
+            limit 1
+            "#,
+            [storybook_id.into(), page_id.into()],
+        ))
+        .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let Some(url) = clean_optional_text(row.try_get::<Option<String>>("", "image_url")?) else {
+        return Ok(None);
+    };
+    Ok(Some(ImageReference {
+        url,
+        source: "previous_page".to_string(),
+        role_id: None,
+        label: Some("上一页画面".to_string()),
+    }))
 }
 
 async fn page_prompt(

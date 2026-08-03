@@ -46,9 +46,82 @@ fn normalize_provider_output_values(
     match job_type {
         "storybook_roles" => normalize_storybook_roles_values(object),
         "storybook_pages" => normalize_storybook_pages_values(object)?,
+        "storybook_page_prompt" => normalize_storybook_page_prompt_values(object)?,
         _ => {}
     }
     Ok(())
+}
+
+/// storybook_page_prompt 的插图设定从结构化槽位拼装为 page.illustration_prompt。
+fn normalize_storybook_page_prompt_values(
+    object: &mut JsonMap<String, JsonValue>,
+) -> Result<(), GenerationProviderError> {
+    let Some(page_object) = object.get_mut("page").and_then(|value| value.as_object_mut()) else {
+        return Ok(());
+    };
+    let Some(assembled) = assemble_illustration_prompt(page_object, "storybook_page_prompt.page")?
+    else {
+        // 缺失插图字段的情况交给结构校验统一报错。
+        return Ok(());
+    };
+    page_object.insert("illustration_prompt".to_string(), json!(assembled));
+    Ok(())
+}
+
+/// 从 page 对象的 illustration 槽位拼装插图提示词；旧格式 illustration_prompt 直接透传。
+/// 返回 None 表示两个字段都缺失，交给结构校验统一报错。
+fn assemble_illustration_prompt(
+    page_object: &JsonMap<String, JsonValue>,
+    location: &str,
+) -> Result<Option<String>, GenerationProviderError> {
+    let assembled = if let Some(illustration) = page_object
+        .get("illustration")
+        .and_then(|value| value.as_object())
+    {
+        let mut parts = Vec::new();
+        for slot in REQUIRED_ILLUSTRATION_SLOTS {
+            let text = illustration
+                .get(*slot)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .unwrap_or("");
+            if text.is_empty() {
+                return Err(GenerationProviderError::new(format!(
+                    "provider 输出 {location}.illustration.{slot} 必须是非空文本"
+                )));
+            }
+            parts.push(clean_illustration_slot_text(text));
+        }
+        let prop_detail = illustration
+            .get("prop_detail")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        if !prop_detail.is_empty() {
+            parts.push(clean_illustration_slot_text(prop_detail));
+        }
+        format!(
+            "儿童绘本插图，{}。{}",
+            parts.join("，"),
+            ILLUSTRATION_STYLE_SUFFIX
+        )
+    } else if let Some(prompt) = page_object
+        .get("illustration_prompt")
+        .and_then(|value| value.as_str())
+    {
+        prompt.trim().to_string()
+    } else {
+        return Ok(None);
+    };
+    if let Some(word) = FORBIDDEN_ILLUSTRATION_WORDING
+        .iter()
+        .find(|word| assembled.contains(**word))
+    {
+        return Err(GenerationProviderError::new(format!(
+            "provider 输出 {location} 插图提示词含有禁止写法：{word}（会让画面呆板或丢失叙事信息）"
+        )));
+    }
+    Ok(Some(assembled))
 }
 
 fn normalize_storybook_roles_values(object: &mut JsonMap<String, JsonValue>) {
@@ -76,7 +149,7 @@ const ILLUSTRATION_STYLE_SUFFIX: &str =
     "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，暖色调，画面充满动感和童趣。画面中不要出现文字。";
 
 const REQUIRED_ILLUSTRATION_SLOTS: &[&str] =
-    &["camera", "scene_state", "contact_chain", "action", "expression"];
+    &["camera", "scene_state", "contact_chain", "crowd", "action", "expression"];
 
 /// 这些写法会让画面呆板或把叙事关键信息抹掉，出现在任何插图提示词里都视为不合格输出。
 const FORBIDDEN_ILLUSTRATION_WORDING: &[&str] = &[
@@ -105,54 +178,11 @@ fn normalize_storybook_pages_values(
         let Some(page_object) = page.as_object_mut() else {
             continue;
         };
-        let assembled = if let Some(illustration) = page_object
-            .get("illustration")
-            .and_then(|value| value.as_object())
-        {
-            let mut parts = Vec::new();
-            for slot in REQUIRED_ILLUSTRATION_SLOTS {
-                let text = illustration
-                    .get(*slot)
-                    .and_then(|value| value.as_str())
-                    .map(str::trim)
-                    .unwrap_or("");
-                if text.is_empty() {
-                    return Err(GenerationProviderError::new(format!(
-                        "provider 输出 storybook_pages.pages[{index}].illustration.{slot} 必须是非空文本"
-                    )));
-                }
-                parts.push(clean_illustration_slot_text(text));
-            }
-            let prop_detail = illustration
-                .get("prop_detail")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .unwrap_or("");
-            if !prop_detail.is_empty() {
-                parts.push(clean_illustration_slot_text(prop_detail));
-            }
-            format!(
-                "儿童绘本插图，{}。{}",
-                parts.join("，"),
-                ILLUSTRATION_STYLE_SUFFIX
-            )
-        } else if let Some(prompt) = page_object
-            .get("illustration_prompt")
-            .and_then(|value| value.as_str())
-        {
-            prompt.trim().to_string()
-        } else {
+        let location = format!("storybook_pages.pages[{index}]");
+        let Some(assembled) = assemble_illustration_prompt(page_object, &location)? else {
             // 缺失插图字段的情况交给结构校验统一报错。
             continue;
         };
-        if let Some(word) = FORBIDDEN_ILLUSTRATION_WORDING
-            .iter()
-            .find(|word| assembled.contains(**word))
-        {
-            return Err(GenerationProviderError::new(format!(
-                "provider 输出 storybook_pages.pages[{index}] 插图提示词含有禁止写法：{word}（会让画面呆板或丢失叙事信息）"
-            )));
-        }
         page_object.insert("illustration_prompt".to_string(), json!(assembled));
     }
     Ok(())
@@ -257,6 +287,10 @@ fn validate_provider_output_shape(
                     &format!("pages[{index}]"),
                 )?;
             }
+        }
+        "storybook_page_prompt" => {
+            let page = required_object(object, "page", job_type)?;
+            required_text(page, "illustration_prompt", job_type)?;
         }
         "customization_plan" => {
             let customization = required_object(object, "customization", job_type)?;
