@@ -3,7 +3,6 @@
 use crate::services::generation_deepseek_provider::{
     DeepSeekTextProvider, format_deepseek_endpoint, validate_output_against_input,
 };
-use crate::services::generation_mock_provider::MockGenerationProvider;
 use crate::services::generation_output_validator::normalize_provider_output;
 use crate::services::generation_privacy::{
     provider_input_privacy_audit, sanitize_image_prompt_with_audit,
@@ -26,65 +25,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration as StdDuration;
 use uuid::Uuid;
-
-#[tokio::test]
-async fn mock_provider_generates_structured_storybook_plan() {
-    let provider = ConfiguredGenerationProvider::Mock(MockGenerationProvider);
-    let output = provider
-        .generate(GenerationRequest {
-            job_type: "storybook_plan",
-            input: &json!({"theme": "排队洗手"}),
-        })
-        .await
-        .expect("mock plan should be generated");
-
-    assert_eq!(output["schema_version"], "generation.mock.v1");
-    assert_eq!(output["provider"], "mock");
-    assert!(
-        output["plan"]["outline"]
-            .as_array()
-            .is_some_and(|items| !items.is_empty())
-    );
-}
-
-#[tokio::test]
-async fn mock_provider_generates_structured_image_result() {
-    let provider = ConfiguredGenerationProvider::Mock(MockGenerationProvider);
-    let image_id = Uuid::new_v4().to_string();
-    let output = provider
-        .generate_image(ImageGenerationRequest {
-            image_id: &image_id,
-            target_id: "page-1",
-            target_type: "page",
-            mode: "storybook_page_image",
-            prompt: "明亮教室",
-            reference_images: vec![],
-            edit_instruction: None,
-            image_mode: ImageGenerationMode::TextToImage,
-            strength: None,
-        })
-        .await
-        .expect("mock image should be generated");
-
-    assert_eq!(
-        output["image"]["image_url"],
-        format!("/generated-images/mock-{image_id}.png")
-    );
-    assert_eq!(output["image"]["page_id"], "page-1");
-    assert_eq!(output["image"]["prompt"], "明亮教室");
-}
-
-#[test]
-fn mock_summary_reports_not_production_ready() {
-    let provider = ConfiguredGenerationProvider::Mock(MockGenerationProvider);
-    let summary = provider.summary();
-
-    assert_eq!(summary.provider, "mock");
-    assert!(!summary.real_text_ready);
-    assert!(!summary.real_image_ready);
-    assert!(!summary.production_ready);
-    assert!(!summary.diagnostic.is_empty());
-}
 
 #[test]
 fn provider_config_uses_first_non_empty_value() {
@@ -1053,6 +993,182 @@ fn provider_output_validates_every_page() {
 
     assert!(!err.retryable);
     assert!(err.safe_message().contains("storybook_pages.pages[1].body"));
+}
+
+#[test]
+fn provider_output_assembles_illustration_slots_into_prompt() {
+    let normalized = normalize_provider_output(
+        json!({
+            "pages": [{
+                "page_number": 1,
+                "title": "门口挤成一团",
+                "body": "小猫和小兔都想先进去。",
+                "illustration": {
+                    "camera": "中近景，画面紧凑，一群小动物挤在木门口相互遮挡。",
+                    "scene_state": "早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口",
+                    "contact_chain": "橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背",
+                    "action": "小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤",
+                    "expression": "小猫眉头紧皱、胡须绷直",
+                    "prop_detail": "地上有一只被挤掉的粉色书包。"
+                },
+                "status": "draft"
+            }]
+        }),
+        "deepseek",
+        "storybook_pages",
+        None,
+        None,
+    )
+    .expect("structured illustration slots should assemble");
+
+    let prompt = normalized["pages"][0]["illustration_prompt"]
+        .as_str()
+        .expect("assembled illustration_prompt should exist");
+    assert!(prompt.contains("中近景，画面紧凑"));
+    assert!(prompt.contains("身体紧紧挨着"));
+    assert!(prompt.contains("贴上他的背"));
+    assert!(prompt.contains("踮起脚尖"));
+    assert!(prompt.contains("眉头紧皱"));
+    assert!(prompt.contains("粉色书包"));
+    assert!(prompt.contains("柔和水彩绘本风格"));
+    assert!(prompt.contains("不要出现文字"));
+    // 槽位首尾标点要被清理，避免重复句号。
+    assert!(!prompt.contains("。。"));
+}
+
+#[test]
+fn provider_output_requires_every_illustration_slot() {
+    let err = normalize_provider_output(
+        json!({
+            "pages": [{
+                "page_number": 1,
+                "title": "门口挤成一团",
+                "body": "小猫和小兔都想先进去。",
+                "illustration": {
+                    "camera": "中近景，画面紧凑",
+                    "scene_state": "早晨送园高峰，小动物们挤在门口",
+                    "contact_chain": "小猫被夹在人群中间",
+                    "action": "",
+                    "expression": "小猫眉头紧皱"
+                }
+            }]
+        }),
+        "deepseek",
+        "storybook_pages",
+        None,
+        None,
+    )
+    .expect_err("empty action slot should fail");
+
+    assert!(!err.retryable);
+    assert!(
+        err.safe_message()
+            .contains("storybook_pages.pages[0].illustration.action")
+    );
+}
+
+#[test]
+fn provider_output_rejects_forbidden_illustration_wording() {
+    let err = normalize_provider_output(
+        json!({
+            "pages": [{
+                "page_number": 1,
+                "title": "门口挤成一团",
+                "body": "小猫和小兔都想先进去。",
+                "illustration": {
+                    "camera": "中近景，画面紧凑",
+                    "scene_state": "早晨送园高峰，小动物们挤在门口，背景虚化",
+                    "contact_chain": "小猫被夹在人群中间",
+                    "action": "小猫踮起脚尖往门缝里挤",
+                    "expression": "小猫眉头紧皱"
+                }
+            }]
+        }),
+        "deepseek",
+        "storybook_pages",
+        None,
+        None,
+    )
+    .expect_err("forbidden wording should fail");
+
+    assert!(!err.retryable);
+    assert!(err.safe_message().contains("禁止写法"));
+    assert!(err.safe_message().contains("背景虚化"));
+}
+
+#[test]
+fn provider_output_rejects_forbidden_wording_in_legacy_prompt() {
+    let err = normalize_provider_output(
+        json!({
+            "pages": [{
+                "page_number": 1,
+                "title": "排队",
+                "body": "孩子们排队。",
+                "illustration_prompt": "幼儿园门口，孩子们略显拥挤，背景柔焦"
+            }]
+        }),
+        "deepseek",
+        "storybook_pages",
+        None,
+        None,
+    )
+    .expect_err("legacy prompt with forbidden wording should fail");
+
+    assert!(err.safe_message().contains("禁止写法"));
+}
+
+#[test]
+fn deepseek_pages_payload_uses_lower_temperature() {
+    let provider = DeepSeekTextProvider {
+        api_key: Some("test-key".to_string()),
+        base_url: "https://api.deepseek.com".to_string(),
+        endpoint_path: "/chat/completions".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        timeout_seconds: 45,
+        max_tokens: 4096,
+    };
+    let pages_payload = provider
+        .build_chat_payload(&GenerationRequest {
+            job_type: "storybook_pages",
+            input: &json!({"page_count": 6}),
+        })
+        .expect("pages payload should be built");
+    assert_eq!(pages_payload["temperature"], json!(0.35));
+
+    let plan_payload = provider
+        .build_chat_payload(&GenerationRequest {
+            job_type: "storybook_plan",
+            input: &json!({"theme": "排队洗手"}),
+        })
+        .expect("plan payload should be built");
+    assert_eq!(plan_payload["temperature"], json!(0.7));
+}
+
+#[test]
+fn deepseek_payload_appends_retry_feedback() {
+    let provider = DeepSeekTextProvider {
+        api_key: Some("test-key".to_string()),
+        base_url: "https://api.deepseek.com".to_string(),
+        endpoint_path: "/chat/completions".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        timeout_seconds: 45,
+        max_tokens: 4096,
+    };
+    let payload = provider
+        .build_chat_payload_with_feedback(
+            &GenerationRequest {
+                job_type: "storybook_pages",
+                input: &json!({"page_count": 6}),
+            },
+            Some("pages[0].illustration.action 必须是非空文本"),
+        )
+        .expect("payload with feedback should be built");
+
+    let content = payload["messages"][1]["content"]
+        .as_str()
+        .expect("user content should be text");
+    assert!(content.contains("上一次输出未通过校验"));
+    assert!(content.contains("illustration.action"));
 }
 
 #[test]

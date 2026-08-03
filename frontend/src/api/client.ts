@@ -615,10 +615,20 @@ export function apiResourceUrl(pathOrUrl?: string | null) {
   return pathOrUrl;
 }
 
+/** 前端始终连接真实后端 API：仅使用登录后写入的会话 token，没有 mock/演示回退。 */
 function token() {
-  const storedToken = localStorage.getItem("kindleaf_token");
-  if (storedToken) return storedToken;
-  return "dev-token";
+  return localStorage.getItem("kindleaf_token");
+}
+
+/** 受保护页面收到 401/403 时统一清理登录态并回登录页（公开链接页不跳转）。 */
+function handleAuthFailure(status: number) {
+  if (![401, 403].includes(status)) return;
+  const path = window.location.pathname;
+  if (!path.startsWith("/app") && !path.startsWith("/operator")) return;
+  localStorage.removeItem("kindleaf_token");
+  if (!path.startsWith("/login")) {
+    window.location.assign("/login");
+  }
 }
 
 async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
@@ -633,6 +643,7 @@ async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
+    handleAuthFailure(response.status);
     const errorPayload = payload as ErrorEnvelope | null;
     const message = errorPayload?.error?.message || "请求失败，请稍后重试";
     const code = errorPayload?.error?.code || "request_failed";
@@ -656,6 +667,7 @@ async function requestBlob(path: string, init: RequestInit = {}) {
     },
   });
   if (!response.ok) {
+    handleAuthFailure(response.status);
     const payload = await response.json().catch(() => null);
     const errorPayload = payload as ErrorEnvelope | null;
     const message = errorPayload?.error?.message || "文件下载失败，请稍后重试";
@@ -664,6 +676,14 @@ async function requestBlob(path: string, init: RequestInit = {}) {
     throw new ApiClientError(response.status, code, message, field, payload);
   }
   return response.blob();
+}
+
+// 后端对显式传入的空字符串会返回 400（"字段不能为空"），且 None 表示"不修改该字段"。
+// 因此 PATCH 载荷里的空白字符串一律转为 undefined，让 JSON.stringify 直接丢弃该键。
+function optionalText(value: string | undefined | null): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 function queryString(query: Record<string, string | number | boolean | undefined>) {
@@ -684,10 +704,6 @@ function pageMeta<T>(envelope: Envelope<T[]>): PaginationMeta {
     offset: 0,
     has_more: false,
   };
-}
-
-export async function initApiMode() {
-  return true;
 }
 
 export async function login(identifier: string, password: string) {
@@ -957,14 +973,14 @@ export async function updateStorybook(
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}`, {
     method: "PATCH",
     body: JSON.stringify({
-      title: payload.title,
+      title: optionalText(payload.title),
       status: payload.status,
       visibility: payload.visibility,
       teacher_review_status: payload.teacherReviewStatus,
-      age_group: payload.ageGroup,
-      use_scene: payload.useScene,
-      teaching_goal: payload.teachingGoal,
-      cover_tone: payload.coverTone,
+      age_group: optionalText(payload.ageGroup),
+      use_scene: optionalText(payload.useScene),
+      teaching_goal: optionalText(payload.teachingGoal),
+      cover_tone: optionalText(payload.coverTone),
     }),
   });
   return mapStorybook(response);
@@ -989,9 +1005,9 @@ export async function updateStorybookPage(
     {
       method: "PATCH",
       body: JSON.stringify({
-        title: payload.title,
-        body: payload.body,
-        illustration_prompt: payload.illustrationPrompt,
+        title: optionalText(payload.title),
+        body: optionalText(payload.body),
+        illustration_prompt: optionalText(payload.illustrationPrompt),
         status: payload.status,
       }),
     },
@@ -1010,14 +1026,14 @@ export async function updateStorybookRole(
     {
       method: "PATCH",
       body: JSON.stringify({
-        name: payload.name,
-        role_type: payload.roleType,
-        appearance: payload.appearance,
-        story_function: payload.storyFunction,
+        name: optionalText(payload.name),
+        role_type: optionalText(payload.roleType),
+        appearance: optionalText(payload.appearance),
+        story_function: optionalText(payload.storyFunction),
         needs_consistency: payload.needsConsistency,
-        reference_image_url: payload.referenceImageUrl,
-        reference_image_prompt: payload.referenceImagePrompt,
-        reference_status: payload.referenceStatus,
+        reference_image_url: optionalText(payload.referenceImageUrl),
+        reference_image_prompt: optionalText(payload.referenceImagePrompt),
+        reference_status: optionalText(payload.referenceStatus),
       }),
     },
   );

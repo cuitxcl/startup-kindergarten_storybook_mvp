@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "good" | "warn" | "danger" | "info" }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
@@ -126,6 +126,38 @@ export function WizardSideNav({
   );
 }
 
+/**
+ * 带禁用提示的按钮：不用原生 disabled 属性（禁用时 title 提示不会显示），
+ * 改用 aria-disabled + 点击拦截，让"为什么不能用"的提示在悬停时可见。
+ */
+export function ActionButton({
+  className = "button secondary",
+  type = "button",
+  disabled = false,
+  disabledHint,
+  onClick,
+  children,
+}: {
+  className?: string;
+  type?: "button" | "submit";
+  disabled?: boolean;
+  disabledHint?: string;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      className={disabled ? `${className} is-disabled` : className}
+      type={type}
+      aria-disabled={disabled || undefined}
+      title={disabled && disabledHint ? disabledHint : undefined}
+      onClick={disabled ? undefined : onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function Modal({
   title,
   children,
@@ -137,17 +169,71 @@ export function Modal({
   onClose: () => void;
   className?: string;
 }) {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={title}>
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div className={`modal ${className}`}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
-            x
+            ×
           </button>
         </div>
         {children}
       </div>
+    </div>
+  );
+}
+
+export function ImageLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="modal-backdrop image-lightbox-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt || "图片放大预览"}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <figure className="image-lightbox">
+        <button className="icon-button image-lightbox-close" type="button" onClick={onClose} aria-label="关闭放大预览">
+          ×
+        </button>
+        <img src={src} alt={alt} onClick={onClose} />
+        {alt ? <figcaption>{alt}</figcaption> : null}
+      </figure>
     </div>
   );
 }

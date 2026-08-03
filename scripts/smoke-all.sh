@@ -81,7 +81,7 @@ wait_for_url "$API_BASE_URL/api/health" "backend"
 echo "3. start frontend"
 (
   cd "$ROOT_DIR/frontend"
-  VITE_USE_API=true VITE_API_BASE_URL="$API_BASE_URL" \
+  VITE_API_BASE_URL="$API_BASE_URL" \
     npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT"
 ) >"$LOG_DIR/frontend.log" 2>&1 &
 frontend_pid="$!"

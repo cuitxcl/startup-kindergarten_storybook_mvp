@@ -3,7 +3,6 @@ use std::time::Duration;
 use serde_json::{Value as JsonValue, json};
 
 use crate::services::{
-    generation_mock_provider::MockGenerationProvider,
     generation_output_validator::normalize_provider_output,
     generation_privacy::{provider_input_privacy_audit, sanitize_provider_input},
     generation_provider_config::{env_non_empty, env_u64, first_non_empty_env, truncate},
@@ -39,7 +38,7 @@ impl DeepSeekTextProvider {
             base_url: first_non_empty_env(&["DEEPSEEK_BASE_URL"], "https://api.deepseek.com"),
             endpoint_path: first_non_empty_env(&["DEEPSEEK_ENDPOINT_PATH"], "/chat/completions"),
             model: first_non_empty_env(&["DEEPSEEK_MODEL"], "deepseek-v4-flash"),
-            timeout_seconds: env_u64("DEEPSEEK_TIMEOUT_SECONDS", 45),
+            timeout_seconds: env_u64("DEEPSEEK_TIMEOUT_SECONDS", 180),
             max_tokens: env_u64("DEEPSEEK_MAX_TOKENS", 4096),
         }
     }
@@ -73,7 +72,34 @@ impl DeepSeekTextProvider {
         &self,
         request: &GenerationRequest<'_>,
     ) -> Result<JsonValue, GenerationProviderError> {
+        self.build_chat_payload_with_feedback(request, None)
+    }
+
+    /// retry_feedback 用于校验未通过后的自动重试：把校验失败原因反馈给模型，引导其修正输出。
+    pub(crate) fn build_chat_payload_with_feedback(
+        &self,
+        request: &GenerationRequest<'_>,
+        retry_feedback: Option<&str>,
+    ) -> Result<JsonValue, GenerationProviderError> {
         let prompt = self.build_prompt(request)?;
+        let base_user_content = format!(
+            "{}\n\n请只返回一个合法 JSON 对象，不要 Markdown，不要代码块。\n期望 JSON 结构示例：\n{}\n\n输入：\n{}",
+            prompt["user_prompt"].as_str().unwrap_or("请生成结构化绘本内容。"),
+            response_schema_for(request.job_type),
+            prompt["input"]
+        );
+        let user_content = match retry_feedback.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(feedback) => format!(
+                "{base_user_content}\n\n上一次输出未通过校验：{feedback}\n请针对上述问题修正后，重新输出完整 JSON 对象。"
+            ),
+            None => base_user_content,
+        };
+        // 分页图文需要严格按槽位模板输出，降低采样温度提升格式遵循度；方案/角色保留创造力空间。
+        let temperature = if request.job_type == "storybook_pages" {
+            0.35
+        } else {
+            0.7
+        };
         Ok(json!({
             "model": self.model,
             "messages": [
@@ -83,16 +109,11 @@ impl DeepSeekTextProvider {
                 },
                 {
                     "role": "user",
-                    "content": format!(
-                        "{}\n\n请只返回一个合法 JSON 对象，不要 Markdown，不要代码块。\n期望 JSON 结构示例：\n{}\n\n输入：\n{}",
-                        prompt["user_prompt"].as_str().unwrap_or("请生成结构化绘本内容。"),
-                        response_schema_for(request.job_type),
-                        prompt["input"]
-                    )
+                    "content": user_content
                 }
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0.7,
+            "temperature": temperature,
             "max_tokens": self.max_tokens,
             "stream": false
         }))
@@ -100,6 +121,52 @@ impl DeepSeekTextProvider {
 
     pub(crate) fn endpoint(&self) -> String {
         format_deepseek_endpoint(&self.base_url, &self.endpoint_path)
+    }
+
+    /// 单次 DeepSeek 调用，返回 (content, usage)。传输层与协议层错误直接返回，不进入校验重试。
+    async fn request_content(
+        &self,
+        client: &reqwest::Client,
+        api_key: &str,
+        payload: &JsonValue,
+    ) -> Result<(String, Option<JsonValue>), GenerationProviderError> {
+        let response = client
+            .post(self.endpoint())
+            .bearer_auth(api_key)
+            .json(payload)
+            .send()
+            .await
+            .map_err(|err| {
+                GenerationProviderError::retryable(format!("DeepSeek 请求失败：{err}"))
+            })?;
+
+        let status = response.status();
+        let body = response.text().await.map_err(|err| {
+            GenerationProviderError::retryable(format!(
+                "读取 DeepSeek 响应失败（可能响应超时或连接中断）：{err}"
+            ))
+        })?;
+
+        if !status.is_success() {
+            return Err(GenerationProviderError::retryable(format!(
+                "DeepSeek 请求返回 {status}：{}",
+                truncate(&body, 240)
+            )));
+        }
+
+        let response_json: JsonValue = serde_json::from_str(&body).map_err(|err| {
+            GenerationProviderError::new(format!("DeepSeek 响应不是合法 JSON：{err}"))
+        })?;
+        let content = response_json["choices"]
+            .as_array()
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice["message"]["content"].as_str())
+            .ok_or_else(|| {
+                GenerationProviderError::new("DeepSeek 响应缺少 choices[0].message.content")
+            })?
+            .to_string();
+        let usage = response_json.get("usage").cloned();
+        Ok((content, usage))
     }
 
     pub(crate) fn summary_component(&self) -> GenerationProviderComponent {
@@ -140,69 +207,64 @@ impl AiGenerationProvider for DeepSeekTextProvider {
         };
 
         let privacy_audit = provider_input_privacy_audit(request.input);
-        let payload = self.build_chat_payload(&request)?;
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(self.timeout_seconds))
             .build()
             .map_err(|err| {
                 GenerationProviderError::new(format!("创建 DeepSeek 客户端失败：{err}"))
             })?;
-        let response = client
-            .post(self.endpoint())
-            .bearer_auth(api_key)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| {
-                GenerationProviderError::retryable(format!("DeepSeek 请求失败：{err}"))
-            })?;
 
-        let status = response.status();
-        let body = response.text().await.map_err(|err| {
-            GenerationProviderError::new(format!("读取 DeepSeek 响应失败：{err}"))
-        })?;
-
-        if !status.is_success() {
-            return Err(GenerationProviderError::retryable(format!(
-                "DeepSeek 请求返回 {status}：{}",
-                truncate(&body, 240)
-            )));
+        // 输出校验未通过时，把失败原因反馈给模型自动重试一次；传输层错误仍交给任务队列重试。
+        let mut retry_feedback: Option<String> = None;
+        let mut last_validation_error: Option<GenerationProviderError> = None;
+        for attempt in 0..2 {
+            let payload =
+                self.build_chat_payload_with_feedback(&request, retry_feedback.as_deref())?;
+            let (content, usage) = self.request_content(&client, api_key, &payload).await?;
+            let result = serde_json::from_str::<JsonValue>(&content)
+                .map_err(|err| {
+                    GenerationProviderError::new(format!(
+                        "DeepSeek content 不是合法 JSON：{}；content={}",
+                        err,
+                        truncate(&content, 240)
+                    ))
+                })
+                .and_then(|output| {
+                    let normalized = normalize_provider_output(
+                        output,
+                        self.name(),
+                        request.job_type,
+                        usage,
+                        Some(privacy_audit.clone()),
+                    )?;
+                    validate_output_against_input(&normalized, request.input, request.job_type)?;
+                    Ok(normalized)
+                });
+            match result {
+                Ok(normalized) => return Ok(normalized),
+                Err(err) => {
+                    if attempt == 0 {
+                        retry_feedback = Some(err.safe_message());
+                        last_validation_error = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
         }
 
-        let response_json: JsonValue = serde_json::from_str(&body).map_err(|err| {
-            GenerationProviderError::new(format!("DeepSeek 响应不是合法 JSON：{err}"))
-        })?;
-        let content = response_json["choices"]
-            .as_array()
-            .and_then(|choices| choices.first())
-            .and_then(|choice| choice["message"]["content"].as_str())
-            .ok_or_else(|| {
-                GenerationProviderError::new("DeepSeek 响应缺少 choices[0].message.content")
-            })?;
-        let output = serde_json::from_str(content).map_err(|err| {
-            GenerationProviderError::new(format!(
-                "DeepSeek content 不是合法 JSON：{}；content={}",
-                err,
-                truncate(content, 240)
-            ))
-        })?;
-
-        let normalized = normalize_provider_output(
-            output,
-            self.name(),
-            request.job_type,
-            response_json.get("usage").cloned(),
-            Some(privacy_audit),
-        )?;
-        validate_output_against_input(&normalized, request.input, request.job_type)?;
-        Ok(normalized)
+        Err(last_validation_error.unwrap_or_else(|| {
+            GenerationProviderError::new("DeepSeek 输出校验失败，请重试")
+        }))
     }
 
     async fn generate_image(
         &self,
-        request: ImageGenerationRequest<'_>,
+        _request: ImageGenerationRequest<'_>,
     ) -> Result<JsonValue, GenerationProviderError> {
-        MockGenerationProvider.generate_image(request).await
+        Err(GenerationProviderError::new(
+            "当前仅配置了文本 provider（deepseek），插图生成需要配置 SEEDREAM_API_KEY 或 ARK_API_KEY",
+        ))
     }
 }
 
@@ -309,7 +371,7 @@ pub(crate) fn prompt_for(job_type: &str) -> &'static str {
             "根据 input.plan 中已经确认的故事方案生成主角、同伴、老师形象和关键道具设定，必须紧扣 input.title、input.theme、input.plan.summary 和 input.plan.outline，不得沿用无关示例。role_type 只能使用英文枚举 protagonist、supporting、peer、teacher、prop；不要输出中文类型。appearance 只能写稳定可见的视觉特征，例如物种或身份、颜色、服装或材质、体型轮廓、发型/耳朵/配饰、表情和可跨页重复识别的小标记；禁止把动作、习惯、剧情行为或故事任务写入 appearance，例如“喜欢蹦跳”“离开队伍”“带领探险”“制定规则”。这些内容必须写入 story_function。needs_consistency 只给需要跨页重复出现并保持同一形象的主角、老师、重要同伴或反复出现关键道具设为 true；只出现一次的临时事物、背景动物、一次性道具必须设为 false，不需要参考图。"
         }
         "storybook_pages" => {
-            "根据已确认方案和角色生成分页图文，每页包含标题、正文和插图提示词。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角；插图提示词也必须复述这些角色一致性线索。"
+            "根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角。\n\n每页的插图设定必须输出为 illustration 对象，按以下 6 个槽位分别填写，槽位之间不要重复内容：\n- camera：镜头与构图，一句话，例如“中近景，画面紧凑，角色相互遮挡”；角色多或画面拥挤时优先中近景。\n- scene_state：场景此刻正在发生什么，必须写状态而不是场景名词；有群体时必须写出密度（身体紧紧挨着、你推我搡、卡成一团）。\n- contact_chain：主角与周围角色之间的接触和遮挡关系，例如“身后的小熊被人群推着贴上小猫的背”；主角必须被写进关系里，不能孤立在人群之外。\n- action：主要角色的动作，必须写成身体语言（踮起脚尖、肩膀前倾、扒着门框、踉跄后仰），不能只写动作名称。\n- expression：主要角色的表情，必须写成具体五官细节（眉头紧皱、眼睛瞪圆、嘴巴张成 O 形），禁止只写“慌张”“着急”“开心”这类总结词。\n- prop_detail：一个增强现场感的小道具细节，例如“地上有一只被挤掉的小书包”；没有合适的就填空字符串。\n\n情绪翻译词库（必须先把情绪翻译成身体语言再写）：着急=踮脚+身体前倾+眉头紧锁；慌张=眼睛瞪圆+耳朵后压+后仰失衡+手脚乱挥；开心=眯起笑眼+嘴角上扬+蹦跳离地；拥挤=身体紧挨+相互遮挡+你推我搡。\n\n禁止写法（出现即视为不合格）：“背景虚化”“背景模糊”“柔焦”“略显”“并排站”“面无表情”“人群最前面”“证件照”；禁止只写场景名词而不写场景状态。风格不用你写，由系统统一拼接，不要在任何槽位里写风格描述或“绘本风格”字样。\n\n合格示例（仅作写法示范，实际输出必须使用 input.confirmed_roles 里的角色）：\ncamera：中近景，画面紧凑，一群小动物挤在木门口相互遮挡\nscene_state：早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口，小路上还有人赶来\ncontact_chain：橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背；白色小兔紧挨着小猫，长耳朵被旁边的小动物压歪\naction：小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤；小兔被挤得踉跄前倾、前爪慌乱挥舞\nexpression：小猫眉头紧皱、胡须绷直；小兔眼睛瞪圆、嘴巴张成 O 形\nprop_detail：地上有一只被挤掉的粉色书包"
         }
         "customization_plan" => {
             "基于普通绘本和儿童档案生成定制方案，只输出可审核的改写点和风险检查。"
@@ -359,7 +421,14 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
                 "page_number": "number",
                 "title": "string",
                 "body": "string",
-                "illustration_prompt": "string",
+                "illustration": {
+                    "camera": "string（镜头与构图，角色多时优先中近景）",
+                    "scene_state": "string（场景正在发生什么，群体必须写出密度）",
+                    "contact_chain": "string（主角与周围角色的接触和遮挡关系）",
+                    "action": "string（动作的身体语言，不是动作名称）",
+                    "expression": "string（表情的具体五官细节，不是情绪总结词）",
+                    "prop_detail": "string（一个氛围道具细节，可为空字符串）"
+                },
                 "status": "draft"
             }],
             "editor_notes": ["string"]

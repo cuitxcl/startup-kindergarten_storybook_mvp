@@ -250,9 +250,7 @@ function getMetrics(workspace: Workspace, books: Storybook[], childItems: ChildP
   ];
 }
 
-function getQuickActions(workspace: Workspace, books: Storybook[], childItems: ChildProfile[]) {
-  const firstExportable = books.find((book) => book.status === "exportable");
-
+function getQuickActions(workspace: Workspace, childItems: ChildProfile[]) {
   if (workspace.role === "school_admin") {
     return [
       { icon: <UserPlus />, title: "邀请老师", copy: "管理成员和授权班级", to: "../admin/members" },
@@ -263,9 +261,9 @@ function getQuickActions(workspace: Workspace, books: Storybook[], childItems: C
 
   if (workspace.role === "school_teacher") {
     return [
-      { icon: <BookOpen />, title: "新建普通绘本", copy: "为班级共读创建内容", to: "../storybooks/new" },
-      { icon: <FileCheck2 />, title: "生成定制副本", copy: firstExportable ? `从《${firstExportable.title}》开始` : "先完成一本普通绘本", to: firstExportable ? `../storybooks/${firstExportable.id}/customize` : "../storybooks" },
+      { icon: <BookOpen />, title: "查看园所绘本", copy: "全部普通与定制绘本", to: "../storybooks" },
       { icon: <UsersRound />, title: "检查儿童资料", copy: `${childItems.length} 份授权资料`, to: "../children" },
+      { icon: <Library />, title: "从市场复制", copy: "复用平台模板或园所作品", to: "../marketplace" },
     ];
   }
 
@@ -346,9 +344,15 @@ export function DashboardPage() {
   const primary = getPrimary(workspace, books, childItems);
   const tasks = getTasks(workspace, books, childItems, submissionItems).slice(0, 4);
   const metrics = getMetrics(workspace, books, childItems, submissionItems);
-  const quickActions = getQuickActions(workspace, books, childItems);
+  const quickActions = getQuickActions(workspace, childItems);
   const creationActions = getCreationActions(books);
   const showCreationLaunch = workspace.type === "school";
+  const isPersonal = workspace.type === "personal";
+  const isEmptyAccount =
+    books.length === 0 &&
+    generationJobs.length === 0 &&
+    childItems.length === 0 &&
+    submissionItems.length === 0;
 
   useEffect(() => {
     let mounted = true;
@@ -358,26 +362,25 @@ export function DashboardPage() {
     setStorageQuota(defaultStorageQuota(workspace));
     setUserStorageQuota(defaultUserStorageQuota());
     setError("");
-    Promise.all([
+    // 分区降级：主数据失败才报错；任务、配额等辅助数据失败时保留默认值，不拖垮整个工作台。
+    Promise.allSettled([
       dashboard(workspace.id),
       listGenerationJobsPage(workspace.id, { limit: 12, offset: 0 }),
       getWorkspaceStorageQuota(workspace.id),
       getUserStorageQuota(),
     ])
-      .then(([data, jobsPage, quota, userQuota]) => {
+      .then(([dataResult, jobsResult, quotaResult, userQuotaResult]) => {
         if (!mounted) return;
-        setRemoteData(data);
-        setGenerationJobs(jobsPage.data);
-        setStorageQuota(quota);
-        setUserStorageQuota(userQuota);
-        setError("");
-      })
-      .catch((err) => {
-        if (!mounted) return;
-        setRemoteData(null);
-        setGenerationJobs([]);
-        setStorageQuota(defaultStorageQuota(workspace));
-        setError(err instanceof Error ? err.message : "无法读取工作台数据");
+        if (dataResult.status === "fulfilled") {
+          setRemoteData(dataResult.value);
+          setError("");
+        } else {
+          setRemoteData(null);
+          setError(dataResult.reason instanceof Error ? dataResult.reason.message : "无法读取工作台数据");
+        }
+        if (jobsResult.status === "fulfilled") setGenerationJobs(jobsResult.value.data);
+        if (quotaResult.status === "fulfilled") setStorageQuota(quotaResult.value);
+        if (userQuotaResult.status === "fulfilled") setUserStorageQuota(userQuotaResult.value);
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -442,24 +445,17 @@ export function DashboardPage() {
         </Link>
       </section>
 
-      <Card className="storage-quota-card">
-        <div>
-          <p className="eyebrow">Storage</p>
-          <h2>当前空间容量</h2>
-          <p>{quotaCopy(storageQuota)}</p>
-        </div>
-        <div className="storage-quota-meter">
-          <div className="storage-quota-meta">
-            <strong>{formatBytes(storageQuota.usedBytes)} / {formatBytes(storageQuota.quotaBytes)}</strong>
-            <Badge tone={quotaTone(storageQuota)}>{Math.round(storageQuota.usedPercent)}%</Badge>
-          </div>
-          <div className="quota-track" aria-label="当前空间存储使用比例">
-            <span style={{ width: `${Math.min(100, Math.max(0, storageQuota.usedPercent))}%` }} />
-          </div>
-          <small>剩余 {formatBytes(storageQuota.remainingBytes)} · 预警线 {Math.round(storageQuota.warningPercent)}%</small>
-          <small>我的容量 {formatBytes(userStorageQuota.usedBytes)} / {formatBytes(userStorageQuota.quotaBytes)} · 个人空间 {userStorageQuota.personalWorkspaceCount} 个</small>
-        </div>
-      </Card>
+      {!isEmptyAccount && (
+        <section className="metric-grid">
+          {metrics.map((metric) => (
+            <Card key={metric.label}>
+              <Badge tone={metric.tone}>{metric.label}</Badge>
+              <strong>{metric.value}</strong>
+              <p>{metric.copy}</p>
+            </Card>
+          ))}
+        </section>
+      )}
 
       <section className="dashboard-main-grid">
         <Card className="task-panel">
@@ -501,75 +497,117 @@ export function DashboardPage() {
         </Card>
       </section>
 
-      <Card>
-        <div className="section-head">
-          <div><p className="eyebrow">Generation</p><h2>最近生成任务</h2></div>
-          <Badge tone={generationJobs.some((job) => job.status === "failed") ? "danger" : generationJobs.length ? "good" : "neutral"}>
-            {generationJobs.length ? `${generationJobs.length} 条` : "暂无任务"}
-          </Badge>
-        </div>
-        {generationJobs.length === 0 ? (
-          <EmptyState title="还没有生成任务" copy="创建普通绘本、生成插图或生成定制方案后，这里会显示最近任务状态。" />
-        ) : (
-          <div className="compact-list generation-job-list">
-            {generationJobs.slice(0, 5).map((job) => {
-              const row = (
-                <>
-                  <div>
-                    <strong>{generationJobTitle(job)}</strong>
-                    <span>{generationJobCopy(job)}</span>
-                    <small>{generationJobNextAction(job)}</small>
-                    <small>任务 {job.id.slice(0, 8)} · {generationJobTime(job)}</small>
-                  </div>
-                  <Badge tone={statusTone(job.status)}>{generationJobStatusLabel[job.status] || job.status}</Badge>
-                </>
-              );
-              return job.storybookId ? (
-                <Link key={job.id} to={`../storybooks/${job.storybookId}`} className="compact-row dashboard-recent-row">
-                  {row}
-                </Link>
-              ) : (
-                <div key={job.id} className="compact-row dashboard-recent-row static">
-                  {row}
-                </div>
-              );
-            })}
+      {isPersonal && isEmptyAccount ? (
+        <Card>
+          <div className="section-head">
+            <div><p className="eyebrow">Start</p><h2>三步开始</h2></div>
           </div>
-        )}
-      </Card>
-
-      <section className="metric-grid">
-        {metrics.map((metric) => (
-          <Card key={metric.label}>
-            <Badge tone={metric.tone}>{metric.label}</Badge>
-            <strong>{metric.value}</strong>
-            <p>{metric.copy}</p>
+          <div className="action-grid compact-actions">
+            <Link className="action-card" to="../children">
+              <UsersRound />
+              创建孩子资料
+              <span>记录兴趣、特质和关注点，用于生成定制绘本</span>
+            </Link>
+            <Link className="action-card" to="../storybooks/new">
+              <BookOpen />
+              新建普通绘本
+              <span>确认故事方案、角色和分页后生成</span>
+            </Link>
+            <Link className="action-card" to="../marketplace">
+              <Library />
+              从市场复制
+              <span>复用平台模板，快速获得第一本绘本</span>
+            </Link>
+          </div>
+        </Card>
+      ) : (
+        <>
+          <Card>
+            <div className="section-head">
+              <div><p className="eyebrow">Generation</p><h2>最近生成任务</h2></div>
+              <Badge tone={generationJobs.some((job) => job.status === "failed") ? "danger" : generationJobs.length ? "good" : "neutral"}>
+                {generationJobs.length ? `${generationJobs.length} 条` : "暂无任务"}
+              </Badge>
+            </div>
+            {generationJobs.length === 0 ? (
+              <EmptyState title="还没有生成任务" copy="创建普通绘本、生成插图或生成定制方案后，这里会显示最近任务状态。" />
+            ) : (
+              <div className="compact-list generation-job-list">
+                {generationJobs.slice(0, 5).map((job) => {
+                  const row = (
+                    <>
+                      <div>
+                        <strong>{generationJobTitle(job)}</strong>
+                        <span>{generationJobCopy(job)}</span>
+                        <small>{generationJobNextAction(job)}</small>
+                        <small>任务 {job.id.slice(0, 8)} · {generationJobTime(job)}</small>
+                      </div>
+                      <Badge tone={statusTone(job.status)}>{generationJobStatusLabel[job.status] || job.status}</Badge>
+                    </>
+                  );
+                  return job.storybookId ? (
+                    <Link key={job.id} to={`../storybooks/${job.storybookId}`} className="compact-row dashboard-recent-row">
+                      {row}
+                    </Link>
+                  ) : (
+                    <div key={job.id} className="compact-row dashboard-recent-row static">
+                      {row}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Card>
-        ))}
-      </section>
 
-      <Card>
-        <div className="section-head">
-          <div><p className="eyebrow">Recent</p><h2>最近更新</h2></div>
-          <Link className="button secondary" to="../storybooks">查看全部</Link>
-        </div>
-        {books.length === 0 ? (
-          <EmptyState title="还没有绘本" copy="从空白创建普通绘本，或先去市场复制一个模板。" />
-        ) : (
-          <div className="compact-list">
-            {books.slice(0, 4).map((book) => (
-              <Link key={book.id} to={`../storybooks/${book.id}`} className="compact-row dashboard-recent-row">
-                <div>
-                  <strong>{book.title}</strong>
-                  <span>{book.useScene} · {book.ageGroup} · {book.updatedAt}</span>
-                  <small>{storybookNextAction(book)}</small>
-                </div>
-                <Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge>
-              </Link>
-            ))}
+          <Card>
+            <div className="section-head">
+              <div><p className="eyebrow">Recent</p><h2>最近更新</h2></div>
+              <Link className="button secondary" to="../storybooks">查看全部</Link>
+            </div>
+            {books.length === 0 ? (
+              <EmptyState title="还没有绘本" copy="从空白创建普通绘本，或先去市场复制一个模板。" />
+            ) : (
+              <div className="compact-list">
+                {books.slice(0, 4).map((book) => (
+                  <Link key={book.id} to={`../storybooks/${book.id}`} className="compact-row dashboard-recent-row">
+                    <div>
+                      <strong>{book.title}</strong>
+                      <span>{book.useScene} · {book.ageGroup} · {book.updatedAt}</span>
+                      <small>{storybookNextAction(book)}</small>
+                    </div>
+                    <Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {storageQuota.warning || storageQuota.exceeded ? (
+        <Card className="storage-quota-card">
+          <div>
+            <p className="eyebrow">Storage</p>
+            <h2>当前空间容量</h2>
+            <p>{quotaCopy(storageQuota)}</p>
           </div>
-        )}
-      </Card>
+          <div className="storage-quota-meter">
+            <div className="storage-quota-meta">
+              <strong>{formatBytes(storageQuota.usedBytes)} / {formatBytes(storageQuota.quotaBytes)}</strong>
+              <Badge tone={quotaTone(storageQuota)}>{Math.round(storageQuota.usedPercent)}%</Badge>
+            </div>
+            <div className="quota-track" aria-label="当前空间存储使用比例">
+              <span style={{ width: `${Math.min(100, Math.max(0, storageQuota.usedPercent))}%` }} />
+            </div>
+            <small>剩余 {formatBytes(storageQuota.remainingBytes)} · 预警线 {Math.round(storageQuota.warningPercent)}%</small>
+            <small>我的容量 {formatBytes(userStorageQuota.usedBytes)} / {formatBytes(userStorageQuota.quotaBytes)} · 个人空间 {userStorageQuota.personalWorkspaceCount} 个</small>
+          </div>
+        </Card>
+      ) : (
+        <p className="storage-quota-inline">
+          空间容量 {formatBytes(storageQuota.usedBytes)} / {formatBytes(storageQuota.quotaBytes)}（{Math.round(storageQuota.usedPercent)}%）· 容量充足
+        </p>
+      )}
     </div>
   );
 }

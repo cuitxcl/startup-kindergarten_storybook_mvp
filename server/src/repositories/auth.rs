@@ -101,7 +101,7 @@ pub async fn login(
     if !verify_password(password, password_hash.as_deref()) {
         return Err(DbErr::RecordNotFound("user".to_string()));
     }
-    let workspaces = list_workspaces_for_user(db, user.id).await?;
+    let workspaces = ensure_personal_workspace(db, &user).await?;
     Ok(LoginResponse {
         token: token_for_user(user.id),
         user,
@@ -114,8 +114,6 @@ pub async fn register(
     payload: RegisterRequest,
 ) -> Result<LoginResponse, DbErr> {
     let user_id = Uuid::new_v4();
-    let workspace_id = Uuid::new_v4();
-    let member_id = Uuid::new_v4();
     let display_name = payload.display_name.trim();
     let email = payload.email.trim().to_lowercase();
     if display_name.is_empty() {
@@ -140,28 +138,7 @@ pub async fn register(
     ))
     .await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r#"
-        insert into workspaces (id, name, workspace_type, description, status, created_at, updated_at)
-        values ($1, $2, 'personal', '个人绘本、孩子资料和私人导出记录', 'active', now(), now())
-        "#,
-        [
-            workspace_id.into(),
-            format!("{display_name}的个人空间").into(),
-        ],
-    ))
-    .await?;
-
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r#"
-        insert into workspace_members (id, workspace_id, user_id, role, status, classroom_ids, created_at, updated_at)
-        values ($1, $2, $3, 'personal_owner', 'active', '[]'::jsonb, now(), now())
-        "#,
-        [member_id.into(), workspace_id.into(), user_id.into()],
-    ))
-    .await?;
+    create_personal_workspace(db, user_id, display_name).await?;
 
     let user = find_user_by_email(db, &email).await?;
     let workspaces = list_workspaces_for_user(db, user.id).await?;
@@ -177,12 +154,60 @@ pub async fn current_session(
     user_id: Option<Uuid>,
 ) -> Result<LoginResponse, DbErr> {
     let user = find_user_by_id(db, user_id.unwrap_or(DEMO_USER_ID)).await?;
-    let workspaces = list_workspaces_for_user(db, user.id).await?;
+    let workspaces = ensure_personal_workspace(db, &user).await?;
     Ok(LoginResponse {
         token: token_for_user(user.id),
         user,
         workspaces,
     })
+}
+
+/// 账号不能没有任何可用空间：前端各页面都假定至少存在一个空间。
+/// 当用户的空间被清空（或历史数据异常）时，登录/会话刷新会自动补一个个人空间。
+async fn ensure_personal_workspace(
+    db: &DatabaseConnection,
+    user: &User,
+) -> Result<Vec<Workspace>, DbErr> {
+    let workspaces = list_workspaces_for_user(db, user.id).await?;
+    if !workspaces.is_empty() {
+        return Ok(workspaces);
+    }
+    create_personal_workspace(db, user.id, &user.display_name).await?;
+    list_workspaces_for_user(db, user.id).await
+}
+
+async fn create_personal_workspace(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    display_name: &str,
+) -> Result<(), DbErr> {
+    let workspace_id = Uuid::new_v4();
+    let member_id = Uuid::new_v4();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        insert into workspaces (id, name, workspace_type, description, status, created_at, updated_at)
+        values ($1, $2, 'personal', '个人绘本、孩子资料和私人导出记录', 'active', now(), now())
+        "#,
+        [
+            workspace_id.into(),
+            format!("{}的个人空间", display_name.trim()).into(),
+        ],
+    ))
+    .await?;
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        insert into workspace_members (id, workspace_id, user_id, role, status, classroom_ids, created_at, updated_at)
+        values ($1, $2, $3, 'personal_owner', 'active', '[]'::jsonb, now(), now())
+        "#,
+        [member_id.into(), workspace_id.into(), user_id.into()],
+    ))
+    .await?;
+
+    Ok(())
 }
 
 pub async fn list_current_workspaces(

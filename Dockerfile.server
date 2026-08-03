@@ -25,4 +25,4 @@ ENV RUST_LOG=info
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/kindleaf-server"]
-CMD ["-e", "production", "start"]
+CMD ["-e", "production", "start", "-a"]

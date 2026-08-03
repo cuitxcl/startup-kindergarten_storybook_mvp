@@ -1,11 +1,12 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
   createGenerationJob,
+  createRoleReferenceImageTask,
   createStorybook,
-  getGenerationJob,
   getStorybook,
   getWorkspaceGenerationProvider,
+  listGenerationJobsPage,
   retryGenerationJob,
   updateStorybook,
   updateStorybookPage,
@@ -13,13 +14,16 @@ import {
   type GenerationJob,
   type GenerationProviderStatus,
 } from "../../api/client";
-import { Badge, Card, Notice, PageHeader, WizardSideNav } from "../../components/ui";
+import { ActionButton, Badge, Card, Notice, PageHeader, WizardSideNav } from "../../components/ui";
+import { GenerationReviewBlock } from "../../components/GenerationReviewBlock";
 import type { Storybook, StorybookPage, StorybookRole, Workspace } from "../../types/domain";
 import {
-  generationJobStatusLabel,
-  generationJobTypeLabel,
-  generationPrivacyAuditSummary,
-} from "../../utils/labels";
+  generationErrorMessage,
+  generationStatusLabel,
+  isActiveJobStatus,
+  pollGenerationJob,
+} from "../../utils/generation";
+import { generationJobTypeLabel } from "../../utils/labels";
 
 const steps = ["需求", "绘本方案", "角色道具", "分页编辑", "预览导出"];
 
@@ -101,6 +105,18 @@ export function NewStorybookPage() {
     setStep(nextStep);
   };
   const updateRequestForm = (patch: Partial<typeof form>) => {
+    // 已有生成产出时，修改需求会先确认再清空，避免误操作抹掉已生成内容。
+    const hasGenerated = Boolean(
+      createdBookId
+      || generationOutputs.storybook_plan
+      || editableRoles.length
+      || editablePages.length
+      || planDraft.summary
+      || planDraft.outlineText,
+    );
+    if (hasGenerated && !window.confirm("修改需求会清空已生成的方案、角色和分页内容，确定继续吗？")) {
+      return;
+    }
     setForm((current) => ({ ...current, ...patch }));
     setGenerationOutputs({});
     setPlanDraft({ summary: "", outlineText: "", roleRequirementsText: "", reviewPointsText: "" });
@@ -114,6 +130,55 @@ export function NewStorybookPage() {
 
   useEffect(() => {
     getWorkspaceGenerationProvider(workspace.id).then(setProvider).catch(() => setProvider(null));
+  }, [workspace.id]);
+
+  // 断线恢复：刷新后如果还有向导类生成任务在跑，恢复表单上下文并继续等待结果。
+  useEffect(() => {
+    let mounted = true;
+    listGenerationJobsPage(workspace.id, { limit: 10 })
+      .then((page) => {
+        if (!mounted) return;
+        const active = page.data.find((job) => (
+          ["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)
+          && isActiveJobStatus(job.status)
+        ));
+        if (!active) return;
+        // 超过 15 分钟仍在排队/运行的任务视为僵死（与后端 stale 锁阈值一致），不再接管，避免向导被旧任务卡住。
+        const createdMs = Date.parse(active.createdAt);
+        if (Number.isFinite(createdMs) && Date.now() - createdMs > 15 * 60_000) return;
+        const input = (active.input || {}) as Record<string, unknown>;
+        setForm((current) => ({
+          ...current,
+          title: typeof input.title === "string" && input.title ? input.title : current.title,
+          theme: typeof input.theme === "string" && input.theme ? input.theme : current.theme,
+          ageGroup: typeof input.age_group === "string" && input.age_group ? input.age_group : current.ageGroup,
+          pageCount: typeof input.page_count === "string" && input.page_count ? input.page_count : current.pageCount,
+          useScene: typeof input.use_scene === "string" && input.use_scene ? input.use_scene : current.useScene,
+          style: typeof input.style === "string" && input.style ? input.style : current.style,
+        }));
+        if (active.storybookId) setCreatedBookId(active.storybookId);
+        setGeneratingStep(active.jobType);
+        setNotice({
+          title: "已恢复进行中的生成任务",
+          copy: `检测到未完成的${generationJobTypeLabel[active.jobType] || "生成"}任务，正在继续等待结果。任务编号：${active.id.slice(0, 8)}。`,
+        });
+        waitForGenerationJob(active)
+          .then((settled) => { if (mounted) void handleGenerationJob(settled, "生成任务已完成"); })
+          .catch(() => {
+            if (mounted) {
+              setNotice({
+                title: "原生成任务已失效",
+                copy: "未完成的任务已不存在或无法读取，请直接重新生成。",
+              });
+            }
+          })
+          .finally(() => { if (mounted) setGeneratingStep(null); });
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.id]);
   const ensureStorybookCreated = async () => {
     if (createdBookId) return createdBookId;
@@ -155,14 +220,8 @@ export function NewStorybookPage() {
     }
   };
 
-  const waitForGenerationJob = async (initialJob: GenerationJob) => {
-    let currentJob = initialJob;
-    for (let attempt = 0; attempt < 20 && ["queued", "running"].includes(currentJob.status); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 800));
-      currentJob = await getGenerationJob(workspace.id, currentJob.id);
-    }
-    return currentJob;
-  };
+  const waitForGenerationJob = (initialJob: GenerationJob) =>
+    pollGenerationJob(workspace.id, initialJob, { timeoutMs: 240_000 });
   const retryFailedGeneration = async () => {
     if (!retryJob) return;
     setGeneratingStep(retryJob.jobType);
@@ -261,6 +320,58 @@ export function NewStorybookPage() {
       teachingGoal: form.theme.trim() || "帮助孩子理解班级规则和生活习惯",
     });
   };
+  // 分页生成后自动为跨页出现的角色排队生成参考图，避免故事里只有角色文字描述、没有角色图片。
+  const autoGenerateRoleReferences = async (bookId: string) => {
+    let book: Storybook;
+    let recentJobs: GenerationJob[] = [];
+    try {
+      book = await getStorybook(workspace.id, bookId);
+      recentJobs = await listGenerationJobsPage(workspace.id, { storybookId: bookId, limit: 50 })
+        .then((page) => page.data)
+        .catch(() => [] as GenerationJob[]);
+    } catch {
+      return;
+    }
+    const activeRoleIds = new Set(
+      recentJobs
+        .filter((job) => job.jobType === "storybook_role_reference_image" && isActiveJobStatus(job.status))
+        .map((job) => ((job.input || {}) as { role_id?: unknown }).role_id)
+        .filter((value): value is string => typeof value === "string"),
+    );
+    const pendingRoles = book.roles.filter((role) => {
+      if (!role.needsConsistency) return false;
+      if (role.referenceStatus === "ready" && role.referenceImageUrl) return false;
+      if (activeRoleIds.has(role.id)) return false;
+      const usage = book.pages.filter((page) => `${page.title} ${page.body} ${page.illustrationPrompt}`.includes(role.name)).length;
+      return usage >= 2;
+    });
+    if (!pendingRoles.length) return;
+    let queued = 0;
+    let failed = 0;
+    for (const role of pendingRoles) {
+      try {
+        // 不传 prompt，后端会根据角色最新的名称、类型和外观设定组合标准参考图提示词。
+        await createRoleReferenceImageTask(workspace.id, bookId, role.id, {
+          referenceImageUrls: [],
+          imageMode: "text_to_image",
+        });
+        queued += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    if (queued > 0) {
+      setNotice({
+        title: "角色参考图已自动加入生成队列",
+        copy: `分页已生成，同时为 ${queued} 个跨页角色自动排队生成参考图${failed ? `（${failed} 个入队失败，可在详情页手动重试）` : ""}。进入详情页可查看进度，参考图会让后续插图保持同一形象。`,
+      });
+    } else if (failed > 0) {
+      setNotice({
+        title: "角色参考图自动入队失败",
+        copy: "分页已生成，但角色参考图未能自动加入生成队列，可在详情页角色管理中手动生成。",
+      });
+    }
+  };
   const handlePrimary = async () => {
     setNotice(null);
     if (step === 0) {
@@ -279,7 +390,12 @@ export function NewStorybookPage() {
         return;
       }
     } else if (step === 1 && createdBookId) {
-      await persistStorybookMeta(createdBookId);
+      try {
+        await persistStorybookMeta(createdBookId);
+      } catch (err) {
+        setNotice({ title: "保存绘本信息失败", copy: err instanceof Error ? err.message : "请稍后重试" });
+        return;
+      }
     }
     if (step === 2) {
       const bookId = await ensureStorybookCreated();
@@ -288,21 +404,29 @@ export function NewStorybookPage() {
         setEditingReview("roles");
         return;
       }
-      if (bookId) {
-        await persistRoles(bookId, currentRoles);
-      }
-      if (await runGeneration("storybook_pages", "分页图文已生成并写入绘本")) {
+      try {
         if (bookId) {
-          await updateStorybook(workspace.id, bookId, { status: "roles_pending" });
+          await persistRoles(bookId, currentRoles);
         }
-        goToStep(3);
-        setEditingReview("pages");
+        if (await runGeneration("storybook_pages", "分页图文已生成并写入绘本")) {
+          if (bookId) {
+            await updateStorybook(workspace.id, bookId, { status: "roles_pending" });
+            await autoGenerateRoleReferences(bookId);
+          }
+          goToStep(3);
+          setEditingReview("pages");
+        }
+      } catch (err) {
+        setNotice({ title: "保存角色失败", copy: err instanceof Error ? err.message : "请稍后重试" });
       }
       return;
     }
     if (step === 3) {
       if (!hasPages) {
         if (await runGeneration("storybook_pages", "分页图文已生成并写入绘本")) {
+          if (createdBookId) {
+            await autoGenerateRoleReferences(createdBookId);
+          }
           setEditingReview("pages");
         }
         return;
@@ -311,8 +435,8 @@ export function NewStorybookPage() {
         const bookId = createdBookId;
         if (bookId) {
           await persistPages(bookId);
+          // 向导完成只推进到 editing，交付需在详情页完成老师复核后再标记可交付。
           await updateStorybook(workspace.id, bookId, { status: "editing" });
-          await updateStorybook(workspace.id, bookId, { status: "exportable" });
         }
         goToStep(4);
         if (bookId) {
@@ -368,51 +492,29 @@ export function NewStorybookPage() {
               <label className="span-2">故事风格<textarea rows={3} value={form.style} onChange={(event) => updateRequestForm({ style: event.target.value })} /></label>
             </div>
           )}
-          {step === 1 && <ReviewBlock title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => runGeneration("storybook_plan", "已重新生成方案")} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} />} />}
-          {step === 2 && <ReviewBlock title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} />} />}
-          {step === 3 && <ReviewBlock title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} />} />}
+          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => runGeneration("storybook_plan", "已重新生成方案")} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} />} />}
+          {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} />} />}
+          {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} />} />}
           {step === 4 && (
             <div className="preview-complete">
-              <Badge tone="good">可导出</Badge>
-              <h2>《{form.title || "一起玩小汽车"}》已准备好</h2>
-              <p>你可以继续编辑，也可以导出 PDF，或之后基于它生成定制绘本。</p>
+              <Badge tone="info">编辑中</Badge>
+              <h2>《{form.title || "一起玩小汽车"}》分页已就绪</h2>
+              <p>请进入详情页生成插图、完成老师复核，再标记可交付后导出 PDF 或派生定制绘本。</p>
               {targetBook ? (
                 <Link className="button primary" to={`/app/${workspace.id}/storybooks/${targetBook}`}>进入绘本详情</Link>
               ) : (
-                <button className="button primary" type="button" disabled title="需要先成功创建绘本">等待绘本创建完成</button>
+                <ActionButton className="button primary" disabled disabledHint="需要先成功创建绘本">等待绘本创建完成</ActionButton>
               )}
             </div>
           )}
           <div className="wizard-actions">
-            <button className="button secondary" disabled={step === 0} title={step === 0 ? "当前已经是第一步" : undefined} onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</button>
-            <button className="button primary" disabled={step === steps.length - 1 || creating || Boolean(generatingStep)} title={step === steps.length - 1 ? "绘本已生成，请进入详情继续编辑或导出" : undefined} onClick={handlePrimary}>{creating ? "正在创建..." : generatingStep ? "生成中..." : primaryLabels[step]}</button>
+            <ActionButton className="button secondary" disabled={step === 0} disabledHint="当前已经是第一步" onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</ActionButton>
+            <ActionButton className="button primary" disabled={step === steps.length - 1 || creating || Boolean(generatingStep)} disabledHint={step === steps.length - 1 ? "绘本已生成，请进入详情继续编辑或导出" : "生成进行中，请稍候"} onClick={handlePrimary}>{creating ? "正在创建..." : generatingStep ? "生成中..." : primaryLabels[step]}</ActionButton>
           </div>
         </Card>
       </div>
     </div>
   );
-}
-
-function generationStatusLabel(status: string) {
-  if (status === "queued") return "已加入队列";
-  return generationJobStatusLabel[status] || `状态：${status}`;
-}
-
-function generationErrorMessage(job: GenerationJob) {
-  const output = job.output as { error?: { message?: string } } | undefined;
-  return output?.error?.message || "生成任务失败，可稍后重试";
-}
-
-function generationOutputMeta(output: unknown) {
-  const value = output as { provider?: string; schema_version?: string; mode?: string; message?: string } | undefined;
-  return {
-    provider: value?.provider || "待生成",
-    schema: value?.schema_version || "尚无输出",
-    mode: value?.mode || "等待任务",
-    message: value?.message || "生成后会在这里显示可审核内容。",
-    real: value?.schema_version === "generation.provider.v1",
-    privacy: generationPrivacyAuditSummary(output),
-  };
 }
 
 function storybookPlanItems(output: unknown, form: { title: string; theme: string }, draft?: EditablePlan) {
@@ -505,54 +607,6 @@ function storybookPageItems(output: unknown, editablePages: EditablePage[] = [],
   ].filter(Boolean) as string[];
 }
 
-function ReviewBlock({
-  title,
-  items,
-  output,
-  onRegenerate,
-  onEdit,
-  editor,
-  editing = false,
-  regenerating = false,
-}: {
-  title: string;
-  items: string[];
-  output?: unknown;
-  onRegenerate: () => void;
-  onEdit: () => void;
-  editor?: ReactNode;
-  editing?: boolean;
-  regenerating?: boolean;
-}) {
-  const meta = generationOutputMeta(output);
-  return (
-    <div className="review-block">
-      <div className="section-head compact">
-        <div>
-          <p className="eyebrow">老师审核</p>
-          <h2>{title}</h2>
-          <p>{meta.message}</p>
-        </div>
-        <Badge tone={meta.real ? "good" : "neutral"}>{meta.real ? "真实生成" : meta.provider}</Badge>
-      </div>
-      <div className="review-meta">
-        <span>来源：{meta.provider}</span>
-        <span>任务：{generationModeLabel(meta.mode)}</span>
-        <span>结构：{meta.schema}</span>
-        {meta.privacy && <span>{meta.privacy}</span>}
-      </div>
-      <div className="review-list">
-        {items.map((item) => <div key={item}><span>确认项</span><strong>{item}</strong></div>)}
-      </div>
-      {editing && editor}
-      <div className="inline-actions">
-        <button className="button secondary" type="button" disabled={regenerating} onClick={onRegenerate}>{regenerating ? "生成中..." : "重新生成"}</button>
-        <button className="button secondary" type="button" onClick={onEdit}>{editing ? "收起修改" : "手动修改"}</button>
-      </div>
-    </div>
-  );
-}
-
 function PlanEditor({
   form,
   plan,
@@ -639,10 +693,6 @@ function PageEditor({ pages, roles, onChange }: { pages: EditablePage[]; roles: 
   );
 }
 
-function generationModeLabel(mode: string) {
-  if (mode === "等待任务") return "等待任务";
-  return generationJobTypeLabel[mode] || mode;
-}
 
 function linesFromRows(value: string) {
   return value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
@@ -722,7 +772,7 @@ function rolePayload(role: EditableRole) {
     role_type: role.roleType,
     appearance,
     story_function: role.storyFunction,
-    reference_image_prompt: role.needsConsistency ? role.referenceImagePrompt || `${role.name}，${appearance || "绘本角色"}，温暖绘本风格，单一角色标准图，白底或简洁背景，画面只有这个角色，无人类，无其他角色，保持跨页一致` : undefined,
+    reference_image_prompt: role.needsConsistency ? role.referenceImagePrompt || `${role.name}，${appearance || "绘本角色"}，柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，表情自然生动、富有神采，姿态自然放松，单一角色标准图，白底或简洁背景，画面只有这个角色，无人类，无其他角色，保持跨页一致，不要僵硬对称的证件照式站姿` : undefined,
     needs_consistency: role.needsConsistency,
   };
 }

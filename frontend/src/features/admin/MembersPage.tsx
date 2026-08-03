@@ -3,6 +3,7 @@ import { useOutletContext } from "react-router-dom";
 import { createMember, listClassroomsPage, listMembersPage, revokeMemberInvitation, type PaginationMeta } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader } from "../../components/ui";
 import type { Classroom, Workspace, WorkspaceMember } from "../../types/domain";
+import { absoluteAppUrl, copyText } from "../../utils/clipboard";
 import { memberStatusLabel, roleLabel } from "../../utils/labels";
 
 const PAGE_SIZE = 12;
@@ -93,7 +94,7 @@ export function MembersPage() {
       setOpen(false);
       setForm({ name: "", email: "", classroom: classrooms[0]?.name || "" });
       const invitePath = member.invitationUrl || (member.invitationToken ? `/invite/${member.invitationToken}` : "");
-      const inviteUrl = invitePath ? absoluteLinkUrl(invitePath) : "";
+      const inviteUrl = invitePath ? absoluteAppUrl(invitePath) : "";
       setLatestInviteUrl(inviteUrl);
       setNotice({
         title: "邀请已发送",
@@ -117,7 +118,7 @@ export function MembersPage() {
   function copyMemberInviteUrl(member: WorkspaceMember) {
     const invitePath = member.invitationUrl || (member.invitationToken ? `/invite/${member.invitationToken}` : "");
     if (!invitePath) return;
-    const inviteUrl = absoluteLinkUrl(invitePath);
+    const inviteUrl = absoluteAppUrl(invitePath);
     setLatestInviteUrl(inviteUrl);
     setNotice({ title: "邀请链接已准备复制", copy: inviteUrl });
     copyText(inviteUrl).catch(() => undefined);
@@ -226,34 +227,3 @@ export function MembersPage() {
   );
 }
 
-function absoluteLinkUrl(path: string) {
-  if (/^https?:\/\//i.test(path)) return path;
-  return `${window.location.origin}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await Promise.race([
-        navigator.clipboard.writeText(value),
-        new Promise((_, reject) => window.setTimeout(() => reject(new Error("clipboard timeout")), 300)),
-      ]);
-      return;
-    } catch {
-      // Continue with the textarea fallback for browsers that expose clipboard but block it.
-    }
-  }
-  const textArea = document.createElement("textarea");
-  textArea.value = value;
-  textArea.setAttribute("readonly", "true");
-  textArea.style.position = "fixed";
-  textArea.style.opacity = "0";
-  document.body.appendChild(textArea);
-  textArea.focus();
-  textArea.select();
-  const copied = document.execCommand("copy");
-  document.body.removeChild(textArea);
-  if (!copied) {
-    throw new Error("浏览器没有允许复制，请手动复制邀请链接。");
-  }
-}

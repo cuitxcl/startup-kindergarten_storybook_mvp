@@ -5,8 +5,8 @@ import { pickPrimaryWorkspace } from "../../utils/workspace";
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const [identifier, setIdentifier] = useState("lin@example.com");
-  const [password, setPassword] = useState("password");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -16,6 +16,10 @@ export function LoginPage() {
     setError("");
     try {
       const session = await login(identifier, password);
+      if (!session.workspaces.length) {
+        setError("当前账号没有可用空间，请稍后重试或联系管理员");
+        return;
+      }
       navigate(`/app/${pickPrimaryWorkspace(session.workspaces).id}/dashboard`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -30,10 +34,10 @@ export function LoginPage() {
         <p className="eyebrow">Kindleaf</p>
         <h1>登录绘本工作台</h1>
         <p>进入个人空间或园所空间，继续生成普通绘本、定制绘本和管理市场内容。</p>
-        <label>邮箱或手机号<input value={identifier} onChange={(event) => setIdentifier(event.target.value)} /></label>
-        <label>密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <label>邮箱或手机号<input required value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="name@example.com" /></label>
+        <label>密码<input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入密码" /></label>
         {error && <p className="form-error">{error}</p>}
-        <button className="button primary" type="submit" disabled={loading}>{loading ? "登录中..." : "登录并进入个人空间"}</button>
+        <button className="button primary" type="submit" disabled={loading}>{loading ? "登录中..." : "登录"}</button>
         <div className="auth-links">
           <Link to="/register">注册新账号</Link>
         </div>
@@ -44,9 +48,9 @@ export function LoginPage() {
 
 export function RegisterPage() {
   const navigate = useNavigate();
-  const [displayName, setDisplayName] = useState("新老师");
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("password123");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -56,6 +60,10 @@ export function RegisterPage() {
     setError("");
     try {
       const session = await register(displayName, email, password);
+      if (!session.workspaces.length) {
+        setError("账号已创建，但空间初始化未完成，请直接登录");
+        return;
+      }
       navigate(`/app/${pickPrimaryWorkspace(session.workspaces).id}/dashboard`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败");
@@ -72,9 +80,9 @@ export function RegisterPage() {
         <p>注册后系统会自动创建个人空间，后续也可以通过邀请加入园所空间。</p>
         <label>显示名称<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="例如：林老师" /></label>
         <label>邮箱<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" /></label>
-        <label>密码<input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 位" /></label>
+        <label>密码<input required type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 位" /></label>
         {error && <p className="form-error">{error}</p>}
-        <button className="button primary" type="submit" disabled={loading}>{loading ? "注册中..." : "注册并进入个人空间"}</button>
+        <button className="button primary" type="submit" disabled={loading}>{loading ? "注册中..." : "注册并进入"}</button>
         <Link to="/login">已有账号，去登录</Link>
       </form>
     </main>

@@ -54,7 +54,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
-    command: ["-e", "development", "start"]
+    command: ["-e", "development", "start", "-a"]
 
   migrate:
     profiles: ["app"]

@@ -1,5 +1,5 @@
 import { ArrowRight, CheckCircle2, Copy, Download, Pencil, Send } from "lucide-react";
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, type ReactNode, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   cancelGenerationJob,
@@ -11,7 +11,6 @@ import {
   downloadStorybookExportFile,
   duplicateStorybook,
   getStorybookExport,
-  getGenerationJob,
   getStorybook,
   listShareLinksPage,
   listStorybookGenerationJobs,
@@ -25,13 +24,20 @@ import {
   type GenerationJob,
   type ShareLink,
 } from "../../api/client";
-import { Badge, Card, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
+import { ActionButton, Badge, Card, ImageLightbox, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
 import type { Storybook, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
+import { absoluteAppUrl, copyText } from "../../utils/clipboard";
+import { cacheImagePreview, getCachedImagePreview } from "../../utils/imagePreviewCache";
+import {
+  generationErrorMessage,
+  generationStatusLabel,
+  isActiveJobStatus,
+  pollGenerationJob,
+  pollUntilSettled,
+} from "../../utils/generation";
 import {
   generationJobNextAction,
-  generationJobStatusLabel,
   generationJobTypeLabel,
-  generationPrivacyAuditSummary,
   pageStatusLabel,
   storybookNextAction,
   storybookSourceLabel,
@@ -48,10 +54,11 @@ export function StorybookDetailPage() {
   const book = remoteBook;
   const [selectedPageId, setSelectedPageId] = useState<string | undefined>(undefined);
   const [pageForm, setPageForm] = useState({ title: "", body: "", illustrationPrompt: "" });
-  const [notice, setNotice] = useState<{ title: string; copy: string; tone?: "good" | "info" } | null>(null);
+  const [notice, setNotice] = useState<{ title: string; copy: string; tone?: "good" | "info"; action?: ReactNode } | null>(null);
   const [retryImageJob, setRetryImageJob] = useState<GenerationJob | null>(null);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
+  const [zoomedImage, setZoomedImage] = useState<{ src: string; alt: string } | null>(null);
   const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
@@ -304,15 +311,22 @@ export function StorybookDetailPage() {
       setCurrentImagePreviewError("");
       return;
     }
-    let revokedUrl = "";
+    const jobId = currentPageImageJob.id;
+    const cached = getCachedImagePreview(jobId);
+    if (cached) {
+      setCurrentImagePreviewUrl(cached);
+      setCurrentImagePreviewError("");
+      return;
+    }
     let active = true;
     setCurrentImagePreviewUrl("");
     setCurrentImagePreviewError("");
-    downloadGenerationImageFile(workspace.id, currentPageImageJob.id)
+    downloadGenerationImageFile(workspace.id, jobId)
       .then((file) => {
         if (!active) return;
-        revokedUrl = window.URL.createObjectURL(file);
-        setCurrentImagePreviewUrl(revokedUrl);
+        const url = window.URL.createObjectURL(file);
+        cacheImagePreview(jobId, url);
+        setCurrentImagePreviewUrl(url);
       })
       .catch((err) => {
         if (active) {
@@ -322,22 +336,24 @@ export function StorybookDetailPage() {
       });
     return () => {
       active = false;
-      if (revokedUrl) window.URL.revokeObjectURL(revokedUrl);
     };
   }, [currentPageImage?.imageUrl, currentPageImageJob?.id, workspace.id]);
 
+  // 当前页有进行中的插图任务时统一轮询；页面切后台自动暂停，完成后刷新绘本与质量检查。
   useEffect(() => {
     if (!book?.id || !selectedPage?.id || !activeCurrentPageImageJob) return;
 
     let active = true;
     const currentPageId = selectedPage.id;
-    const poll = async () => {
-      try {
-        const job = await getGenerationJob(workspace.id, activeCurrentPageImageJob.id);
+    pollGenerationJob(workspace.id, activeCurrentPageImageJob, {
+      timeoutMs: 300_000,
+      onUpdate: (job) => {
         if (!active) return;
         setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
-        if (job.status === "queued" || job.status === "running") return;
-
+      },
+    })
+      .then(async (job) => {
+        if (!active || isActiveJobStatus(job.status)) return;
         await refreshGenerationJobs(book.id);
         await refreshStorybook(book.id);
         setSelectedPageId(currentPageId);
@@ -347,28 +363,15 @@ export function StorybookDetailPage() {
           return;
         }
         setRetryImageJob(null);
-        const image = extractImageResult(job.output);
-        if (image?.provider === "mock") {
-          setNotice({
-            title: "没有生成真实插图",
-            copy: `任务已结束，但返回的是 mock 占位图，不是真实 Seedream 图片。请检查后端生图配置或稍后重试。任务编号：${job.id.slice(0, 8)}。`,
-            tone: "info",
-          });
-          return;
-        }
         setNotice({ title: "真实插图已生成", copy: `任务${generationStatusLabel(job.status)}，当前页结果已刷新。`, tone: "good" });
-      } catch (err) {
+      })
+      .catch((err) => {
         if (active) {
           setNotice({ title: "插图状态刷新失败", copy: err instanceof Error ? err.message : "请稍后手动刷新页面", tone: "info" });
         }
-      }
-    };
-
-    poll();
-    const timer = window.setInterval(poll, 2000);
+      });
     return () => {
       active = false;
-      window.clearInterval(timer);
     };
   }, [activeCurrentPageImageJob?.id, book?.id, selectedPage?.id, workspace.id]);
 
@@ -384,16 +387,22 @@ export function StorybookDetailPage() {
       setRoleReferencePreviewError("角色参考图地址缺少生成任务编号");
       return;
     }
+    const cached = getCachedImagePreview(referenceJobId);
+    if (cached) {
+      setRoleReferencePreviewUrl(cached);
+      setRoleReferencePreviewError("");
+      return;
+    }
 
-    let revokedUrl = "";
     let active = true;
     setRoleReferencePreviewUrl("");
     setRoleReferencePreviewError("");
     downloadGenerationImageFile(workspace.id, referenceJobId)
       .then((file) => {
         if (!active) return;
-        revokedUrl = window.URL.createObjectURL(file);
-        setRoleReferencePreviewUrl(revokedUrl);
+        const url = window.URL.createObjectURL(file);
+        cacheImagePreview(referenceJobId, url);
+        setRoleReferencePreviewUrl(url);
       })
       .catch((err) => {
         if (active) {
@@ -403,7 +412,6 @@ export function StorybookDetailPage() {
       });
     return () => {
       active = false;
-      if (revokedUrl) window.URL.revokeObjectURL(revokedUrl);
     };
   }, [selectedRole?.id, selectedRole?.referenceImageUrl, workspace.id]);
 
@@ -477,7 +485,10 @@ export function StorybookDetailPage() {
         imageMode: "text_to_image",
       });
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
-      const settledJob = await waitForGenerationJob(job, { attempts: 70, intervalMs: 1000 });
+      const settledJob = await pollGenerationJob(workspace.id, job, {
+        timeoutMs: 300_000,
+        onUpdate: (current) => setGenerationJobs((jobs) => [current, ...jobs.filter((item) => item.id !== current.id)]),
+      });
       await refreshGenerationJobs(book.id);
       if (settledJob.status === "queued" || settledJob.status === "running") {
         setNotice({
@@ -534,15 +545,13 @@ export function StorybookDetailPage() {
         referenceRoleIds: referenceRoles.map((role) => role.id),
         imageMode: referenceRoles.length ? "reference_image" : "text_to_image",
       });
+      // 交给统一的轮询 effect 跟踪完成状态，避免这里再重复轮询。
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
       setNotice({
         title: "真实插图生成已开始",
-        copy: `当前页已加入生图队列，按钮会保持生成中直到后端返回结果。任务编号：${job.id.slice(0, 8)}。`,
+        copy: `当前页已加入生图队列，完成后这里会自动刷新。任务编号：${job.id.slice(0, 8)}。`,
         tone: "info",
       });
-      const settledJob = await waitForGenerationJob(job);
-      await refreshGenerationJobs(book.id);
-      await handleImageJob(settledJob);
     } catch (err) {
       setNotice({ title: "插图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
@@ -557,9 +566,7 @@ export function StorybookDetailPage() {
     try {
       const job = await retryGenerationJob(workspace.id, retryImageJob.id);
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
-      const settledJob = await waitForGenerationJob(job);
-      await refreshGenerationJobs(book.id);
-      await handleImageJob(settledJob);
+      setRetryImageJob(null);
     } catch (err) {
       setNotice({ title: "插图重试失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
@@ -581,43 +588,15 @@ export function StorybookDetailPage() {
     }
   }
 
-  async function handleImageJob(job: GenerationJob) {
-    if (!selectedPage) return;
-    const currentPageId = selectedPage.id;
-    if (job.status === "failed") {
-      setRetryImageJob(job);
-      setNotice({ title: "插图生成失败", copy: `${generationErrorMessage(job)}。任务编号：${job.id.slice(0, 8)}。`, tone: "info" });
-      return;
-    }
-    if (job.status === "queued" || job.status === "running") {
-      setNotice({ title: "插图仍在生成", copy: `任务${generationStatusLabel(job.status)}，稍后会继续刷新结果。`, tone: "info" });
-      return;
-    }
-    setRetryImageJob(null);
-    await refreshStorybook(book?.id);
-    setSelectedPageId(currentPageId);
-    const image = extractImageResult(job.output);
-    if (image?.provider === "mock") {
-      setNotice({
-        title: "没有生成真实插图",
-        copy: `任务已结束，但返回的是 mock 占位图，不是真实 Seedream 图片。请检查后端生图配置或稍后重试。任务编号：${job.id.slice(0, 8)}。`,
-        tone: "info",
-      });
-      return;
-    }
-    setNotice({ title: "插图任务已完成", copy: `任务${generationStatusLabel(job.status)}，当前页插图和质量检查已刷新。`, tone: "good" });
-  }
-
-  async function waitForGenerationJob(initialJob: GenerationJob, options: { attempts?: number; intervalMs?: number } = {}) {
-    const attempts = options.attempts ?? 16;
-    const intervalMs = options.intervalMs ?? 700;
-    let currentJob = initialJob;
-    for (let attempt = 0; attempt < attempts && ["queued", "running"].includes(currentJob.status); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
-      currentJob = await getGenerationJob(workspace.id, currentJob.id);
-      setGenerationJobs((jobs) => [currentJob, ...jobs.filter((job) => job.id !== currentJob.id)]);
-    }
-    return currentJob;
+  async function waitForExportJob(storybookId: string, initialJob: ExportJob) {
+    return pollUntilSettled(
+      () => getStorybookExport(workspace.id, storybookId, initialJob.id),
+      initialJob,
+      {
+        timeoutMs: 120_000,
+        onUpdate: (job) => setExportJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]),
+      },
+    );
   }
 
   async function exportPdf() {
@@ -749,23 +728,22 @@ export function StorybookDetailPage() {
     try {
       const file = await downloadStorybookExportFile(workspace.id, book.id, job.id);
       const url = window.URL.createObjectURL(file);
-      window.open(url, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
-      setNotice({ title: "PDF 已打开", copy: "已通过当前登录态下载导出文件。", tone: "good" });
+      const opened = window.open(url, "_blank", "noopener,noreferrer");
+      if (opened) {
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+        setNotice({ title: "PDF 已打开", copy: "已通过当前登录态下载导出文件。", tone: "good" });
+      } else {
+        // 浏览器拦截了异步弹窗：保留 blob 地址，改为显式按钮打开
+        setNotice({
+          title: "浏览器拦截了自动打开",
+          copy: "请点击右侧按钮查看 PDF。",
+          tone: "info",
+          action: <a className="button secondary" href={url} target="_blank" rel="noreferrer">打开 PDF</a>,
+        });
+      }
     } catch (err) {
       setNotice({ title: "PDF 打开失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     }
-  }
-
-  async function waitForExportJob(storybookId: string, initialJob: ExportJob) {
-    let currentJob = initialJob;
-    setExportJobs((jobs) => [currentJob, ...jobs.filter((job) => job.id !== currentJob.id)]);
-    for (let attempt = 0; attempt < 5 && ["queued", "running"].includes(currentJob.status); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 700));
-      currentJob = await getStorybookExport(workspace.id, storybookId, currentJob.id);
-      setExportJobs((jobs) => [currentJob, ...jobs.filter((job) => job.id !== currentJob.id)]);
-    }
-    return currentJob;
   }
 
   async function createShare() {
@@ -814,7 +792,7 @@ export function StorybookDetailPage() {
   }
 
   async function copyShareUrl(link: ShareLink) {
-    const fullUrl = absoluteShareUrl(link.url);
+    const fullUrl = absoluteAppUrl(link.url);
     setNotice({ title: "分享链接已准备复制", copy: fullUrl, tone: "good" });
     copyText(fullUrl).catch(() => undefined);
   }
@@ -841,11 +819,11 @@ export function StorybookDetailPage() {
             <button className="button secondary" type="button" onClick={() => setRoleManagerOpen(true)}><Pencil size={16} />管理角色</button>
             <button className="button secondary" type="button" onClick={() => setMetaOpen(true)}><Pencil size={16} />编辑信息</button>
             {(book.status === "editing" || book.status === "image_pending") && (
-              <button className="button secondary" type="button" disabled={deliverySaving || !canMarkDeliverable} title={!canMarkDeliverable ? deliveryBlockers.join("；") || "请等待当前绘本加载完成" : undefined} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "标记可交付"}</button>
+              <ActionButton className="button secondary" disabled={deliverySaving || !canMarkDeliverable} disabledHint={deliveryBlockers.join("；") || "请等待当前绘本加载完成"} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "标记可交付"}</ActionButton>
             )}
             <button className="button secondary" type="button" disabled={duplicating} onClick={() => { setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={16} />{duplicating ? "复制中..." : "复制副本"}</button>
-            <button className="button secondary" type="button" disabled={!canStartDelivery} title={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</button>
-            <button className={book.type === "plain" ? "button secondary" : "button primary"} type="button" disabled={exporting || !canStartDelivery} title={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</button>
+            <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</ActionButton>
+            <ActionButton className={book.type === "plain" ? "button secondary" : "button primary"} disabled={exporting || !canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || (exporting ? "导出进行中" : undefined)} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</ActionButton>
           </>
         }
       />
@@ -854,7 +832,7 @@ export function StorybookDetailPage() {
           title={visibleNotice.title}
           copy={visibleNotice.copy}
           tone={retryImageJob ? "danger" : visibleNotice.tone || "good"}
-          action={retryImageJob ? <button className="button secondary" type="button" disabled={imageGenerating} onClick={retryIllustration}>重新生成插图</button> : undefined}
+          action={retryImageJob ? <button className="button secondary" type="button" disabled={imageGenerating} onClick={retryIllustration}>重新生成插图</button> : visibleNotice.action}
         />
       )}
 
@@ -915,9 +893,9 @@ export function StorybookDetailPage() {
             <div className="form-stack">
               <div className="inline-actions editor-actions modal-editor-actions">
                 <button className="button secondary" type="button" disabled={roleSaving} onClick={saveRole}>{roleSaving ? "保存中..." : "保存角色设定"}</button>
-                <button className="button primary" type="button" disabled={selectedRoleReferenceGenerating || !selectedRoleNeedsReference} title={!selectedRoleNeedsReference ? "只出现一次的角色或道具不需要参考图" : undefined} onClick={generateRoleReferenceImage}>
+                <ActionButton className="button primary" disabled={selectedRoleReferenceGenerating || !selectedRoleNeedsReference} disabledHint={!selectedRoleNeedsReference ? "只出现一次的角色或道具不需要参考图" : "生成进行中，请稍候"} onClick={generateRoleReferenceImage}>
                   {selectedRoleReferenceGenerating ? "生成中..." : !selectedRoleNeedsReference ? "无需参考图" : selectedRole.referenceImageUrl ? "重绘参考图" : "生成参考图"}
-                </button>
+                </ActionButton>
               </div>
               <div className="reference-preview">
                 {!selectedRoleNeedsReference ? (
@@ -926,7 +904,9 @@ export function StorybookDetailPage() {
                   <div className="reference-empty">正在生成新的参考图</div>
                 ) : selectedRole.referenceImageUrl ? (
                   roleReferencePreviewUrl ? (
-                    <img src={roleReferencePreviewUrl} alt={`${selectedRole.name} 的角色参考图`} />
+                    <button className="image-zoom-trigger" type="button" title="点击放大查看" onClick={() => setZoomedImage({ src: roleReferencePreviewUrl, alt: `${selectedRole.name} 的角色参考图` })}>
+                      <img src={roleReferencePreviewUrl} alt={`${selectedRole.name} 的角色参考图`} />
+                    </button>
                   ) : roleReferencePreviewError ? (
                     <div className="reference-empty">参考图读取失败：{roleReferencePreviewError}</div>
                   ) : (
@@ -979,17 +959,13 @@ export function StorybookDetailPage() {
       <section className="detail-layout">
         <aside className="page-strip">
           <h2>页面</h2>
-          {book.pages.map((page) => {
-            const pageImage = extractImageResult(latestPageImageJob(generationJobs, page.id)?.output);
-            const isMockImage = pageImage?.provider === "mock";
-            return (
-              <button key={page.id} type="button" className={`page-thumb ${selectedPage.id === page.id ? "active" : ""}`} onClick={() => setSelectedPageId(page.id)}>
-                <span>第 {page.pageNumber} 页</span>
-                <strong>{page.title}</strong>
-                <Badge tone={isMockImage ? "warn" : statusTone(page.status)}>{isMockImage ? "占位图" : pageStatusLabel[page.status]}</Badge>
-              </button>
-            );
-          })}
+          {book.pages.map((page) => (
+            <button key={page.id} type="button" className={`page-thumb ${selectedPage.id === page.id ? "active" : ""}`} onClick={() => setSelectedPageId(page.id)}>
+              <span>第 {page.pageNumber} 页</span>
+              <strong>{page.title}</strong>
+              <Badge tone={statusTone(page.status)}>{pageStatusLabel[page.status]}</Badge>
+            </button>
+          ))}
         </aside>
         <div className="storybook-workspace-main">
           <Card className="preview-panel">
@@ -1032,18 +1008,15 @@ export function StorybookDetailPage() {
                   </span>
                 </div>
                 <p>{pageForm.illustrationPrompt || selectedPage.illustrationPrompt}</p>
-                <small>完成后这里会自动刷新为真实插图，不会再回退成 mock 占位结果。</small>
+                <small>完成后这里会自动刷新为真实插图。</small>
               </div>
             ) : currentPageImage && (
               <div className="preview-image-block">
                 <Badge tone="info">当前页插图结果</Badge>
-                {currentPageImage.provider === "mock" ? (
-                  <div className="image-placeholder-note">
-                    <strong>当前还没有真实插图</strong>
-                    <span>这次任务使用了 mock 占位图，说明后端没有读到真实生图配置。请确认 Seedream 配置生效后重新生成。</span>
-                  </div>
-                ) : currentImagePreviewUrl ? (
-                  <img src={currentImagePreviewUrl} alt={currentPageImage.altText || selectedPage.title} />
+                {currentImagePreviewUrl ? (
+                  <button className="image-zoom-trigger" type="button" title="点击放大查看" onClick={() => setZoomedImage({ src: currentImagePreviewUrl, alt: currentPageImage.altText || selectedPage.title })}>
+                    <img src={currentImagePreviewUrl} alt={currentPageImage.altText || selectedPage.title} />
+                  </button>
                 ) : currentImagePreviewError ? (
                   <p>插图文件读取失败：{currentImagePreviewError}</p>
                 ) : (
@@ -1113,7 +1086,7 @@ export function StorybookDetailPage() {
                 title={pageImageReferenceBlocker || undefined}
                 onClick={generateIllustration}
               >
-                {pageImageActionLabel(selectedPage.status, currentPageImage?.provider, imageActionBusy)}
+                {pageImageActionLabel(selectedPage.status, imageActionBusy)}
               </button>
             )}
           </Card>
@@ -1264,11 +1237,14 @@ export function StorybookDetailPage() {
           <div className="modal-actions">
             <button className="button secondary" type="button" onClick={() => setShareOpen(false)}>取消</button>
             {createdShareUrl && <a className="button secondary" href={createdShareUrl} target="_blank" rel="noreferrer">打开最新分享页</a>}
-            <button className="button primary" type="button" disabled={shareSaving || Boolean(qualityDeliveryBlocker)} title={qualityDeliveryBlocker || undefined} onClick={createShare}>
+            <ActionButton className="button primary" disabled={shareSaving || Boolean(qualityDeliveryBlocker)} disabledHint={qualityDeliveryBlocker || (shareSaving ? "处理中，请稍候" : undefined)} onClick={createShare}>
               {shareSaving ? "处理中..." : "创建新的分享链接"}
-            </button>
+            </ActionButton>
           </div>
         </Modal>
+      )}
+      {zoomedImage && (
+        <ImageLightbox src={zoomedImage.src} alt={zoomedImage.alt} onClose={() => setZoomedImage(null)} />
       )}
     </div>
   );
@@ -1476,58 +1452,11 @@ function shareAccessLabel(link: ShareLink) {
   return `已访问 ${link.accessCount} 次${lastAccess}`;
 }
 
-function absoluteShareUrl(path: string) {
-  if (/^https?:\/\//i.test(path)) return path;
-  return `${window.location.origin}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await Promise.race([
-        navigator.clipboard.writeText(value),
-        new Promise((_, reject) => window.setTimeout(() => reject(new Error("clipboard timeout")), 300)),
-      ]);
-      return;
-    } catch {
-      // Continue with the textarea fallback for browsers that expose clipboard but block it.
-    }
-  }
-  const textArea = document.createElement("textarea");
-  textArea.value = value;
-  textArea.setAttribute("readonly", "true");
-  textArea.style.position = "fixed";
-  textArea.style.opacity = "0";
-  document.body.appendChild(textArea);
-  textArea.focus();
-  textArea.select();
-  const copied = document.execCommand("copy");
-  document.body.removeChild(textArea);
-  if (!copied) {
-    throw new Error("浏览器没有允许复制，请打开分享页后手动复制地址。");
-  }
-}
-
-function generationStatusLabel(status: string) {
-  return {
-    queued: "已加入队列",
-    running: "正在生成",
-    succeeded: "已完成",
-    failed: "失败",
-  }[status] || `状态：${status}`;
-}
-
-function pageImageActionLabel(pageStatus: string, provider?: string, generating = false) {
+function pageImageActionLabel(pageStatus: string, generating = false) {
   if (generating) return "生成中...";
-  if (provider === "mock") return "重新生成真实插图";
   if (pageStatus === "needs_regeneration" || pageStatus === "failed") return "按当前描述重绘插图";
   if (pageStatus === "ready") return "不满意，重新生成插图";
   return "按当前描述生成插图";
-}
-
-function generationErrorMessage(job: GenerationJob) {
-  const output = job.output as { error?: { message?: string } } | undefined;
-  return output?.error?.message || "生成任务失败，可稍后重试";
 }
 
 function roleReferenceStatusLabel(status?: string) {
@@ -1543,7 +1472,7 @@ function roleReferenceStatusLabel(status?: string) {
 function buildRoleReferencePrompt(role: Pick<StorybookRole, "name" | "roleType" | "appearance">) {
   const name = role.name.trim() || "未命名角色";
   const appearance = cleanVisualAppearance(role.appearance) || "请先补充外观设定";
-  return `${name}，${roleTypeLabel(role.roleType)}，${appearance}，温暖绘本风格，单一角色标准图，白底或简洁背景，清晰半身或全身，画面只有这个角色，无人类，无其他角色，保持跨页一致`;
+  return `${name}，${roleTypeLabel(role.roleType)}，${appearance}，柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，表情自然生动、富有神采，姿态自然放松，单一角色标准图，白底或简洁背景，清晰半身或全身，可微微侧身，画面只有这个角色，无人类，无其他角色，保持跨页一致，不要僵硬对称的证件照式站姿`;
 }
 
 function cleanVisualAppearance(value: string) {
@@ -1670,7 +1599,7 @@ function generationJobTime(job: GenerationJob) {
   return job.finishedAt || job.createdAt;
 }
 
-function resultNoticeFromSearch(search: string): { title: string; copy: string; tone: "good" } | null {
+function resultNoticeFromSearch(search: string): { title: string; copy: string; tone: "good"; action?: ReactNode } | null {
   const result = new URLSearchParams(search).get("result");
   if (result === "plain") {
     return {

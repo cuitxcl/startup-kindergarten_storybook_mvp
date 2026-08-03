@@ -4,7 +4,6 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde_json::{Value as JsonValue, json};
 
 use crate::services::{
-    generation_mock_provider::MockGenerationProvider,
     generation_privacy::sanitize_image_prompt_with_audit,
     generation_provider_config::{env_non_empty, env_u64, first_non_empty_env, truncate},
     generation_provider_contract::{
@@ -86,9 +85,11 @@ impl AiGenerationProvider for SeedreamImageProvider {
 
     async fn generate(
         &self,
-        request: GenerationRequest<'_>,
+        _request: GenerationRequest<'_>,
     ) -> Result<JsonValue, GenerationProviderError> {
-        MockGenerationProvider.generate(request).await
+        Err(GenerationProviderError::new(
+            "当前仅配置了插图 provider（seedream），文本生成需要配置 DEEPSEEK_API_KEY",
+        ))
     }
 
     async fn generate_image(

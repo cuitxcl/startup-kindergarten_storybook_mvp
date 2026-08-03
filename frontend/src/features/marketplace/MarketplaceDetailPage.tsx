@@ -71,7 +71,6 @@ export function MarketplaceDetailPage() {
         eyebrow="模板详情"
         title={template.title}
         copy={template.summary}
-        actions={<button className="button primary" onClick={() => setOpen(true)}>复制到当前空间</button>}
       />
       <section className="list-hero">
         <div>
@@ -79,7 +78,7 @@ export function MarketplaceDetailPage() {
           <h2>复制后会成为当前空间的普通绘本</h2>
           <p>副本可以继续编辑、导出，也可以作为定制绘本母本使用。</p>
         </div>
-        <button className="button primary" onClick={() => setOpen(true)}>复制到当前空间</button>
+        <button className="button primary" type="button" onClick={() => setOpen(true)}>复制到当前空间</button>
       </section>
       <section className="two-column">
         <Card>
@@ -102,7 +101,7 @@ export function MarketplaceDetailPage() {
           <p>目标空间：<strong>{workspace.name}</strong></p>
           <p>空间类型：{workspace.type === "personal" ? "个人空间" : "园所空间"}</p>
           <div className="modal-actions">
-            <button className="button secondary" onClick={() => setOpen(false)}>取消</button>
+            <button className="button secondary" type="button" onClick={() => setOpen(false)}>取消</button>
             <button className="button primary" type="button" disabled={copying} onClick={confirmCopy}>
               {copying ? "正在复制..." : "确认复制并打开副本"}
             </button>

@@ -266,7 +266,7 @@ export function OperatorMarketplacePage() {
             <h2>当前生成 provider 状态</h2>
             <p>这块展示当前后端可用的生成模式，方便判断真实生成能力是否已经接入。</p>
           </div>
-          <Badge tone={provider?.productionReady ? "good" : provider?.provider === "mock" ? "warn" : "info"}>
+          <Badge tone={provider?.productionReady ? "good" : "info"}>
             {provider?.provider || (providerLoading ? "读取中..." : "未知")}
           </Badge>
         </div>
@@ -298,7 +298,7 @@ export function OperatorMarketplacePage() {
           <Notice
             title="当前仍未生产就绪"
             copy={provider.diagnostic}
-            tone={provider.provider === "mock" ? "warn" : "info"}
+            tone="info"
           />
         )}
       </Card>
@@ -360,7 +360,6 @@ export function OperatorMarketplacePage() {
               <option value="">全部</option>
               <option value="deepseek">DeepSeek</option>
               <option value="seedream">Seedream</option>
-              <option value="mock">Mock</option>
             </select>
           </label>
           <label>
@@ -459,7 +458,7 @@ export function OperatorMarketplacePage() {
           <p className="task-summary">正在读取生成成本。</p>
         )}
       </Card>
-      {notice && <Notice title="市场模板提示" copy={notice} tone="info" />}
+      {notice && <Notice title={notice.includes("失败") || notice.includes("重试") ? "操作失败" : "操作成功"} copy={notice} tone={notice.includes("失败") || notice.includes("重试") ? "danger" : "good"} />}
       {initialLoading ? (
         <EmptyState title="正在加载市场模板" copy="正在读取已上架模板。" />
       ) : error && templates.length === 0 ? (

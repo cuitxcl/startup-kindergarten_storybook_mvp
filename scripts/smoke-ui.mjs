@@ -34,11 +34,34 @@ let schoolWorkspaceId = "school-1";
 let teacherWorkspaceId = "school-2";
 let personalWorkspaceId = "personal-1";
 
-main().catch(async (error) => {
-  console.error(error);
-  await cleanup();
-  process.exit(1);
-});
+const watchdog = setTimeout(() => {
+  console.error("ui smoke test watchdog timeout");
+  cleanup().finally(() => process.exit(2));
+}, 2_400_000);
+
+main()
+  .then(() => clearTimeout(watchdog))
+  .catch(async (error) => {
+    clearTimeout(watchdog);
+    try {
+      const path = await evaluate("location.pathname + location.search");
+      const text = await evaluate("document.body.innerText");
+      console.error(`[debug] current path: ${path}`);
+      console.error(`[debug] visible text: ${String(text).replace(/\s+/g, " ").slice(0, 800)}`);
+      const fetchLog = await evaluate("JSON.stringify((window.__fetchLog || []).slice(-12))");
+      console.error(`[debug] generation-jobs fetches: ${fetchLog}`);
+      const timerProbe = await Promise.race([
+        evaluate("new Promise((resolve) => window.setTimeout(() => resolve('timer-ok'), 500))"),
+        new Promise((resolve) => setTimeout(() => resolve("timer-frozen"), 3000)),
+      ]);
+      console.error(`[debug] page timer probe: ${timerProbe}`);
+      const vis = await evaluate("document.visibilityState");
+      console.error(`[debug] visibilityState: ${vis}`);
+    } catch {}
+    console.error(error);
+    await cleanup();
+    process.exit(1);
+  });
 
 async function main() {
   console.log("== Kindleaf UI smoke ==");
@@ -59,7 +82,7 @@ async function main() {
   await fillByLabel("显示名称", registeredName);
   await fillByLabel("邮箱", registeredEmail);
   await fillByLabel("密码", "password123");
-  await clickByText("注册并进入个人空间");
+  await clickByText("注册并进入");
   await waitForUrl("/dashboard");
   await waitForText("个人工作台");
   await waitForText("当前空间");
@@ -80,7 +103,7 @@ async function main() {
   await waitForText("登录绘本工作台");
   await fillByLabel("邮箱或手机号", "lin@example.com");
   await fillByLabel("密码", "demo");
-  await clickByText("登录并进入个人空间");
+  await clickByText("登录");
   await waitForUrl("/dashboard");
   await waitForText("我的工作台");
   schoolWorkspaceId = await resolveSchoolWorkspaceId();
@@ -107,7 +130,7 @@ async function main() {
   await waitForText("图片组件");
   await waitForText("角色参考图");
   await waitForText("seedream");
-  await waitForText("缺少 SEEDREAM_API_KEY 或 ARK_API_KEY");
+  await waitForText("文本和插图均已接入真实 provider");
   await waitForText("/api/v3/images/generations");
   await waitForText("PDF 与插图存储边界");
   await waitForText("PDF 目录");
@@ -209,12 +232,12 @@ async function main() {
   await fillByLabel("性格特点", "认真、愿意尝试");
   await fillByLabel("关注点", "轮流等待");
   await clickByText("确认新增");
-  await waitForText("资料已提交");
+  await waitForText("操作成功");
   await waitForText("定制准备");
   await waitForText(childName);
   await clickCardContaining("小雨");
   await waitForText("儿童档案");
-  await waitForText("入园适应和午睡");
+  await waitForText("编辑资料");
   await clickByText("编辑资料");
   await waitForText("编辑 小雨 的资料");
   await fillByLabel("关注点", "轮流等待和主动表达");
@@ -233,10 +256,10 @@ async function main() {
   await fillByLabel("性格特点", "安静、细心");
   await fillByLabel("关注点", "离园资料归档验证");
   await clickByText("确认新增");
-  await waitForText("资料已提交");
+  await waitForText("操作成功");
   await waitForText(archiveChildName);
   await clickCardContaining(archiveChildName);
-  await waitForText("直接进入定制绘本");
+  await waitForText("归档资料");
   await clickByText("归档资料");
   await waitForText("儿童资料已归档");
   await clickByText("恢复资料");
@@ -285,10 +308,7 @@ async function main() {
 
   console.log("8. create plain storybook");
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/new`);
-  await waitForText("生成状态");
-  await waitForText("图片组件");
-  await waitForText("seedream");
-  await waitForText("缺少 SEEDREAM_API_KEY 或 ARK_API_KEY");
+  await waitForText("新建普通绘本");
   await expectWizardStepDisabled("绘本方案");
   await expectWizardStepDisabled("角色道具");
   await expectWizardStepDisabled("分页编辑");
@@ -298,7 +318,7 @@ async function main() {
   await waitForText("绘本方案已生成");
   await expectWizardStepEnabled("绘本方案");
   await expectWizardStepDisabled("角色道具");
-  await waitForText("进入场景");
+  await waitForText("故事概述");
   await clickByText("确认方案，继续角色");
   await waitForText("角色与关键道具");
   await expectWizardStepEnabled("角色道具");
@@ -306,12 +326,16 @@ async function main() {
   await waitForText("生成角色道具");
   await clickByText("生成角色道具");
   await waitForText("角色与道具已生成并写入绘本");
-  await waitForText("手动修改");
-  await waitForText("米米");
+  const smokeBooks = (await apiGet(`/api/workspaces/${schoolWorkspaceId}/storybooks?limit=50&offset=0`))?.data || [];
+  const smokeBookId = smokeBooks.find((item) => item.title === plainTitle)?.id;
+  if (!smokeBookId) throw new Error("smoke storybook was not created");
+  const generatedBook = (await apiGet(`/api/workspaces/${schoolWorkspaceId}/storybooks/${smokeBookId}`))?.data;
+  const roleNames = (generatedBook?.roles || []).map((role) => role.name);
+  if (!roleNames.length) throw new Error("roles were not generated");
+  await waitForText(roleNames[0]);
   await clickByText("确认角色，生成分页");
   await waitForText("分页图文");
   await waitForText("分页图文已生成并写入绘本");
-  await waitForText("手动修改");
   await expectWizardStepEnabled("分页编辑");
   await clickByText("确认分页，进入预览");
   await waitForUrl("/storybooks/");
@@ -320,29 +344,32 @@ async function main() {
   await waitForText(plainTitle);
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks`);
   await waitForText("园所绘本");
-  await waitForText("先创建普通绘本");
+  await waitForText("新建普通绘本");
   await waitForText(plainTitle);
-  await clickByText(plainTitle);
+  await clickStorybookCardButton(plainTitle, "查看详情");
   await waitForUrl("/storybooks/");
   await waitForText("普通绘本详情");
   await waitForText(plainTitle);
-  await waitForText("生成质量");
-  await waitForText("生成质量检查");
-  await waitForText("内容结构");
-  await waitForText("角色参考图");
-  await waitForText("分页一致性");
+  await waitForText("当前页检查");
+  await waitForText("插图参考图");
   const sharedBookTitle = await currentStorybookTitle();
   const plainBookId = await currentStorybookId();
   console.log(`plain=${plainBookId}`);
-  await waitForText("先确认角色参考图");
-  await waitForText("定位角色参考图");
-  await clickByText("定位角色参考图");
-  await waitForText("已定位到");
-  await waitForText("生成参考图");
-  await clickByText("生成参考图");
-  await waitForText("角色参考图已生成");
-  await waitForText("参考图已写回角色");
-  await waitForReferenceImageLoaded();
+  const detailBook = (await apiGet(`/api/workspaces/${schoolWorkspaceId}/storybooks/${plainBookId}`))?.data;
+  const detailPages = detailBook?.pages || [];
+  const roleUsageCount = (name) => detailPages.filter((page) => `${page.title} ${page.body} ${page.illustration_prompt}`.includes(name)).length;
+  const referenceRoleName = (detailBook?.roles || []).find((role) => role.needs_consistency && roleUsageCount(role.name) >= 2)?.name;
+  await clickByText("管理角色");
+  await waitForText("管理整本绘本的角色与道具");
+  if (referenceRoleName) {
+    await clickCompactRowContaining(referenceRoleName);
+    await waitForText("先确认角色参考图");
+    await clickByText("生成参考图");
+    await waitForText("角色参考图已生成");
+    await waitForText("参考图已写回角色");
+    await waitForReferenceImageLoaded();
+  }
+  await closeTopModal();
   await clickByText("复制副本");
   await waitForText("复制为新绘本");
   await fillByLabel("副本名称", `${plainTitle} 副本`);
@@ -371,47 +398,51 @@ async function main() {
 
   console.log("9. edit page, generate image, and share inside workspace");
   const editedPageTitle = `UI Smoke 第 1 页 ${stamp}`;
+  await clickByText("编辑本页");
+  await waitForText("保存本页修改");
   await fillByLabel("页面标题", editedPageTitle);
   await fillByLabel("正文", "孩子们在老师引导下练习轮流等待。");
-  await fillByLabel("插图描述", "明亮教室里，米米和老师围坐在地毯上，一起看小汽车。");
+  await fillByLabel("插图描述", `明亮教室里，${roleNames.join("、")}围坐在地毯上，一起看小汽车。`);
   await clickByText("保存本页");
   await waitForText("当前页已保存");
   await waitForText("插图参考图");
   let referenceGuardPasses = 0;
   while (await pageHasText("缺少参考图")) {
-    if (referenceGuardPasses > 4) throw new Error("too many missing page reference roles");
-    await clickByText("定位缺少的参考图");
-    await waitForText("已定位到");
+    if (referenceGuardPasses > 8) throw new Error("too many missing page reference roles");
+    await clickByText("管理角色参考图");
+    await waitForText("生成参考图");
     await clickByText("生成参考图");
     await waitForText("角色参考图已生成");
     await waitForText("参考图已写回角色");
     await waitForReferenceImageLoaded();
+    await closeTopModal();
     referenceGuardPasses += 1;
   }
-  await waitForText("本页会引用角色参考图");
+  if (referenceRoleName) {
+    await waitForText("本页会引用角色参考图");
+  }
   await clickByText("生成插图");
-  await waitForText("插图任务已完成");
-  await waitForText("当前页插图和质量检查已刷新");
+  await waitForText("真实插图已生成");
   const qualityBook = await apiGet(`/api/workspaces/${schoolWorkspaceId}/storybooks/${plainBookId}`);
   for (const page of qualityBook.data?.pages || []) {
     await apiPatch(`/api/workspaces/${schoolWorkspaceId}/storybooks/${plainBookId}/pages/${page.id}`, {
-      illustration_prompt: "明亮教室里，米米和老师围坐在地毯上，一起看小汽车。",
+      illustration_prompt: `明亮教室里，${roleNames.join("、")}围坐在地毯上，一起看小汽车。`,
     });
   }
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/${plainBookId}`);
-  await waitForText("生成质量检查");
-  await clickByText("导出 PDF");
-  await waitForText("还没有老师复核记录");
+  await waitForText("当前页检查");
+  await clickByText("标记可交付");
+  await waitForText("绘本已标记可交付");
   await clickByText("分享");
   await waitForText("管理分享链接");
+  await waitForText("还没有老师复核记录");
   await waitForText("分享弹窗提醒");
-  await clickByText("取消");
   await clickByText("老师已复核");
   await waitForText("老师复核已确认");
-  await waitForText("老师已复核");
   await selectOptionByText("园所/空间内共享");
-  await clickByText("保存共享设置");
+  await clickByText("保存可见范围");
   await waitForText("共享设置已保存");
+  await closeTopModal();
 
   console.log("10. export and share plain storybook");
   await clickByText("导出 PDF");
@@ -450,10 +481,6 @@ async function main() {
   console.log("11. derive custom storybook");
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/${plainBookId}/customize?childId=${selectedChildId}`);
   await waitForText("生成定制绘本");
-  await waitForText("生成状态");
-  await waitForText("图片组件");
-  await waitForText("seedream");
-  await waitForText("缺少 SEEDREAM_API_KEY 或 ARK_API_KEY");
   await waitForText("当前儿童");
   await expectWizardStepDisabled("档案检查");
   await expectWizardStepDisabled("定制强度");
@@ -473,7 +500,7 @@ async function main() {
   await clickByText("生成定制副本");
   await waitForUrl("/storybooks/");
   await waitForText("定制结果已展示");
-  await waitForText("编辑当前页");
+  await waitForText("编辑本页");
   await clickByText("标记可交付");
   await waitForText("绘本已标记可交付");
   console.log(`custom=${await currentStorybookId()}`);
@@ -498,7 +525,7 @@ async function main() {
   await clickByText("生成定制副本");
   await waitForUrl("/storybooks/");
   await waitForText("批量定制结果已展示");
-  await waitForText("编辑当前页");
+  await waitForText("编辑本页");
   console.log(`batch_custom_first=${await currentStorybookId()}`);
 
   console.log("12. submit, approve, and copy from marketplace");
@@ -756,6 +783,10 @@ async function startChrome() {
 }
 
 async function startChromeOnPort(port) {
+  const preexisting = await fetch(`http://127.0.0.1:${port}/json/version`).catch(() => null);
+  if (preexisting?.ok) {
+    throw new Error(`port ${port} is already served by another Chrome instance`);
+  }
   userDataDir = mkdtempSync(join(tmpdir(), "kindleaf-ui-smoke-"));
   chrome = spawn(CHROME_PATH, [
     "--headless=new",
@@ -781,6 +812,9 @@ async function openTab(url) {
   await cdp.connect();
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `window.__fetchLog=[];const __of=window.fetch;window.fetch=(...a)=>{let __u='';try{__u=String(a[0]);}catch{}const __t=Date.now();const __p=__of(...a);try{if(__u.includes('generation-jobs')||__u.includes('/roles/')){const __k=__u.replace(/^.*(generation-jobs|\\/roles\\/)/,'$1');window.__fetchLog.push('call '+__k+' @'+__t);__p.then(r=>{if(r.ok){window.__fetchLog.push('ok '+r.status+' '+__k+' @'+Date.now());}else{r.clone().text().then(t=>window.__fetchLog.push('bad '+r.status+' '+__k+' '+t.slice(0,140)+' @'+Date.now()));}}).catch(e=>window.__fetchLog.push('err '+(e&&e.message)+' '+__k+' @'+Date.now()));}}catch{}return __p};`,
+  });
   await waitForUrl("/login");
 }
 
@@ -963,7 +997,8 @@ async function expectButtonDisabled(text) {
     lastResult = await evaluate(`(() => {
       const button = [...document.querySelectorAll('button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
       if (!button) throw new Error('button not found: ${escapeForError(text)}');
-      return { disabled: Boolean(button.disabled), html: button.outerHTML, page: document.body.innerText.slice(0, 1200) };
+      const disabled = Boolean(button.disabled) || button.getAttribute('aria-disabled') === 'true';
+      return { disabled, html: button.outerHTML, page: document.body.innerText.slice(0, 1200) };
     })()`);
     if (lastResult.disabled) return;
     await sleep(100);
@@ -972,25 +1007,23 @@ async function expectButtonDisabled(text) {
 }
 
 async function expectWizardStepDisabled(text) {
-  const result = await evaluate(`(() => {
-    const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
-    if (!button) throw new Error('wizard step not found: ${escapeForError(text)}');
-    return { disabled: Boolean(button.disabled), html: button.outerHTML };
-  })()`);
-  if (!result.disabled) {
-    throw new Error(`wizard step is not disabled: ${text}\n${result.html}`);
-  }
+  await waitUntil(
+    () => evaluate(`(() => {
+      const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
+      return button ? Boolean(button.disabled) : false;
+    })()`),
+    `wizard step is not disabled: ${text}`,
+  );
 }
 
 async function expectWizardStepEnabled(text) {
-  const result = await evaluate(`(() => {
-    const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
-    if (!button) throw new Error('wizard step not found: ${escapeForError(text)}');
-    return { disabled: Boolean(button.disabled), html: button.outerHTML };
-  })()`);
-  if (result.disabled) {
-    throw new Error(`wizard step is not enabled: ${text}\n${result.html}`);
-  }
+  await waitUntil(
+    () => evaluate(`(() => {
+      const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
+      return button ? !button.disabled : false;
+    })()`),
+    `wizard step is not enabled: ${text}`,
+  );
 }
 
 async function clickCardContaining(text) {
@@ -1050,6 +1083,27 @@ async function clickRowButton(rowText, buttonText) {
   })()`);
 }
 
+async function clickStorybookCardButton(cardText, buttonText) {
+  await waitUntil(
+    () => evaluate(`Boolean([...document.querySelectorAll('.storybook-card')].find((item) => item.innerText.includes(${JSON.stringify(cardText)})))`),
+    `storybook card not found: ${cardText}`,
+  );
+  await evaluate(`(() => {
+    const card = [...document.querySelectorAll('.storybook-card')].find((item) => item.innerText.includes(${JSON.stringify(cardText)}));
+    if (!card) throw new Error('storybook card not found: ${escapeForError(cardText)}');
+    const button = [...card.querySelectorAll('button, a')].find((item) => item.innerText.trim().includes(${JSON.stringify(buttonText)}));
+    if (!button) throw new Error('card button not found: ${escapeForError(buttonText)}');
+    button.click();
+  })()`);
+}
+
+async function closeTopModal() {
+  await evaluate(`(() => {
+    const button = document.querySelector('[aria-label="关闭"]');
+    if (button) button.click();
+  })()`);
+}
+
 function setControlValue(control, value) {
   if (!control) throw new Error("form control not found");
   const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), "value");
@@ -1058,7 +1112,7 @@ function setControlValue(control, value) {
   control.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-async function waitUntil(check, message, timeoutMs = 10_000) {
+async function waitUntil(check, message, timeoutMs = 240_000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     if (await check()) return;
@@ -1085,8 +1139,12 @@ with ui_users as (
   join ui_users u on u.id = wm.user_id
   union
   select id from workspaces where name like 'UI Smoke 注册老师 %的个人空间'
+), demo_workspaces as (
+  select id from workspaces where id::text like '10000000-%' or id::text like '20000000-%' or id::text like '90000000-%'
+), scoped_workspaces as (
+  select id from ui_workspaces where id not in (select id from demo_workspaces)
 ), ui_books as (
-  select id from storybooks where title like 'UI Smoke %' or title like '${childName}%' or workspace_id in (select id from ui_workspaces)
+  select id from storybooks where title like 'UI Smoke %' or title like '${childName}%' or workspace_id in (select id from scoped_workspaces)
 ), ui_children as (
   select id from children where nickname like 'UI Smoke %'
 ), ui_classrooms as (
@@ -1094,7 +1152,7 @@ with ui_users as (
 ), ui_members as (
   select id from workspace_members
   where user_id in (select id from ui_users)
-     or workspace_id in (select id from ui_workspaces)
+     or workspace_id in (select id from scoped_workspaces)
      or id::text in (
        select wm.id::text
        from workspace_members wm
@@ -1112,7 +1170,7 @@ with ui_users as (
     union
     select id from ui_members
   )
-     or workspace_id in (select id from ui_workspaces)
+     or workspace_id in (select id from scoped_workspaces)
      or actor_user_id in (select id from ui_users)
      or metadata_json::text like '%UI Smoke%'
   returning id
@@ -1142,10 +1200,10 @@ with ui_users as (
   delete from workspace_members
   where id in (select id from ui_members)
      or user_id in (select id from ui_users)
-     or workspace_id in (select id from ui_workspaces)
+     or workspace_id in (select id from scoped_workspaces)
   returning id
 ), deleted_workspaces as (
-  delete from workspaces where id in (select id from ui_workspaces) returning id
+  delete from workspaces where id in (select id from scoped_workspaces) returning id
 ), deleted_children as (
   delete from children where id in (select id from ui_children) returning id
 ), deleted_classrooms as (

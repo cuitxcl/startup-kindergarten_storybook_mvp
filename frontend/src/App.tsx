@@ -1,29 +1,33 @@
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, Suspense, lazy, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useOutletContext } from "react-router-dom";
 import { currentSession, isApiClientError } from "./api/client";
 import { AppShell } from "./layout/AppShell";
 import { HomePage } from "./features/home/HomePage";
 import { LoginPage, RegisterPage } from "./features/auth/AuthPages";
-import { InvitePage } from "./features/auth/InvitePage";
-import { DashboardPage } from "./features/dashboard/DashboardPage";
-import { StorybookListPage } from "./features/storybooks/StorybookListPage";
-import { StorybookDetailPage } from "./features/storybooks/StorybookDetailPage";
-import { NewStorybookPage } from "./features/storybooks/NewStorybookPage";
-import { CustomizeStorybookPage } from "./features/storybooks/CustomizeStorybookPage";
-import { ChildrenPage } from "./features/children/ChildrenPage";
-import { ChildDetailPage } from "./features/children/ChildDetailPage";
-import { MarketplacePage } from "./features/marketplace/MarketplacePage";
-import { MarketplaceDetailPage } from "./features/marketplace/MarketplaceDetailPage";
-import { AdminPage } from "./features/admin/AdminPage";
-import { MembersPage } from "./features/admin/MembersPage";
-import { ClassesPage } from "./features/admin/ClassesPage";
-import { SubmissionsPage } from "./features/admin/SubmissionsPage";
-import { AuditLogsPage } from "./features/admin/AuditLogsPage";
-import { OperatorMarketplacePage, OperatorSubmissionsPage } from "./features/admin/OperatorPages";
-import { IntakeLinkPage, ShareLinkPage } from "./features/links/LinkPages";
 import { EmptyState } from "./components/ui";
 import { pickPrimaryWorkspace } from "./utils/workspace";
 import type { Workspace } from "./types/domain";
+
+// 路由级代码分割：管理、运营、市场、详情等重页面按需加载，首包只保留入口与认证。
+const InvitePage = lazy(() => import("./features/auth/InvitePage").then((m) => ({ default: m.InvitePage })));
+const DashboardPage = lazy(() => import("./features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const StorybookListPage = lazy(() => import("./features/storybooks/StorybookListPage").then((m) => ({ default: m.StorybookListPage })));
+const StorybookDetailPage = lazy(() => import("./features/storybooks/StorybookDetailPage").then((m) => ({ default: m.StorybookDetailPage })));
+const NewStorybookPage = lazy(() => import("./features/storybooks/NewStorybookPage").then((m) => ({ default: m.NewStorybookPage })));
+const CustomizeStorybookPage = lazy(() => import("./features/storybooks/CustomizeStorybookPage").then((m) => ({ default: m.CustomizeStorybookPage })));
+const ChildrenPage = lazy(() => import("./features/children/ChildrenPage").then((m) => ({ default: m.ChildrenPage })));
+const ChildDetailPage = lazy(() => import("./features/children/ChildDetailPage").then((m) => ({ default: m.ChildDetailPage })));
+const MarketplacePage = lazy(() => import("./features/marketplace/MarketplacePage").then((m) => ({ default: m.MarketplacePage })));
+const MarketplaceDetailPage = lazy(() => import("./features/marketplace/MarketplaceDetailPage").then((m) => ({ default: m.MarketplaceDetailPage })));
+const AdminPage = lazy(() => import("./features/admin/AdminPage").then((m) => ({ default: m.AdminPage })));
+const MembersPage = lazy(() => import("./features/admin/MembersPage").then((m) => ({ default: m.MembersPage })));
+const ClassesPage = lazy(() => import("./features/admin/ClassesPage").then((m) => ({ default: m.ClassesPage })));
+const SubmissionsPage = lazy(() => import("./features/admin/SubmissionsPage").then((m) => ({ default: m.SubmissionsPage })));
+const AuditLogsPage = lazy(() => import("./features/admin/AuditLogsPage").then((m) => ({ default: m.AuditLogsPage })));
+const OperatorMarketplacePage = lazy(() => import("./features/admin/OperatorPages").then((m) => ({ default: m.OperatorMarketplacePage })));
+const OperatorSubmissionsPage = lazy(() => import("./features/admin/OperatorPages").then((m) => ({ default: m.OperatorSubmissionsPage })));
+const IntakeLinkPage = lazy(() => import("./features/links/LinkPages").then((m) => ({ default: m.IntakeLinkPage })));
+const ShareLinkPage = lazy(() => import("./features/links/LinkPages").then((m) => ({ default: m.ShareLinkPage })));
 
 function AppRedirect() {
   const [target, setTarget] = useState<string | null>(null);
@@ -73,7 +77,8 @@ function AdminOnlyRoute({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
-    <Routes>
+    <Suspense fallback={<main className="page-stack shell-loading"><strong>正在加载页面...</strong></main>}>
+      <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
@@ -101,5 +106,6 @@ export default function App() {
         <Route path="admin/audit-logs" element={<AdminOnlyRoute><AuditLogsPage /></AdminOnlyRoute>} />
       </Route>
     </Routes>
+    </Suspense>
   );
 }

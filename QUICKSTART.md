@@ -2,7 +2,7 @@
 
 ## 1. 前端启动
 
-默认前端会优先连接本地后端 `127.0.0.1:8080`。如果你想看 mock 原型，可以显式切到 mock 模式。
+前端始终连接本地后端 `127.0.0.1:8080`（可通过 `VITE_API_BASE_URL` 覆盖），没有 mock 原型模式。
 
 ```sh
 cd frontend
@@ -76,7 +76,7 @@ schema 变化后，可以用临时库验证 migration 能否回滚并重放：
 ```sh
 cd server
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/kindleaf_development \
-  cargo run --features db -- start
+  cargo run --features db -- start -a
 ```
 
 如果希望后端启动时自动补齐演示数据，可以在开发或测试环境打开：
@@ -353,20 +353,13 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/kindleaf_development \
   cargo run --features db -- -e production start
 ```
 
-如果你想强制看 mock 原型：
-
-```sh
-cd frontend
-npm run dev:mock
-```
-
 ## 4. 前端连接真实 API
 
-后端启动后，在另一个终端启动 API 优先前端：
+后端启动后，在另一个终端启动前端：
 
 ```sh
 cd frontend
-npm run dev:api
+npm run dev
 ```
 
 默认访问：
@@ -385,7 +378,7 @@ API 模式下，前端会把 `personal-1`、`school-1`、`school-2` 这些演示
 ```sh
 cd frontend
 npm run build
-npm run build:api
+npm run build
 npm run smoke:ui
 ```
 

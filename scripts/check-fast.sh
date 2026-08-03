@@ -71,7 +71,7 @@ echo "6. secret guard"
 
 echo
 echo "7. frontend API build"
-npm --prefix "$ROOT_DIR/frontend" run build:api
+npm --prefix "$ROOT_DIR/frontend" run build
 
 echo
 echo "8. backend format"

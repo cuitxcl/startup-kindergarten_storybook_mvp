@@ -14,6 +14,7 @@ import {
 } from "../../api/client";
 import { Badge, Card, EmptyState, Modal, Notice, PageHeader } from "../../components/ui";
 import type { ChildProfile, Classroom, ParentIntake, ParentIntakeLink, Workspace } from "../../types/domain";
+import { absoluteAppUrl, copyText } from "../../utils/clipboard";
 
 const PAGE_SIZE = 12;
 
@@ -27,7 +28,8 @@ function splitTags(value: string) {
 export function ChildrenPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const [open, setOpen] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ copy: string; tone: "good" | "danger" } | null>(null);
+  const showNotice = (copy: string, tone: "good" | "danger" = "good") => setNotice({ copy, tone });
   const [remoteRows, setRemoteRows] = useState<ChildProfile[]>([]);
   const [offset, setOffset] = useState(0);
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
@@ -167,10 +169,10 @@ export function ChildrenPage() {
       setRemoteRows((current) => [child, ...current.filter((item) => item.id !== child.id)]);
       setPageMeta((meta) => meta ? { ...meta, total: meta.total + 1 } : meta);
       setOpen(false);
-      setNotice(`已创建 ${child.nickname} 的资料。`);
+      showNotice(`已创建 ${child.nickname} 的资料。`);
       setForm({ nickname: "", ageGroup: "3-4 岁", interests: "", traits: "", focus: "" });
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "新增失败，请稍后重试。");
+      showNotice(err instanceof Error ? err.message : "新增失败，请稍后重试。", "danger");
     }
   }
 
@@ -187,9 +189,9 @@ export function ChildrenPage() {
           ? { ...item, status: "confirmed", confirmedChildId: child.id, updatedAt: child.updatedAt }
           : item
       )));
-      setNotice(`已确认 ${child.nickname} 的资料，并生成儿童档案。`);
+      showNotice(`已确认 ${child.nickname} 的资料，并生成儿童档案。`);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "确认失败，请稍后重试。");
+      showNotice(err instanceof Error ? err.message : "确认失败，请稍后重试。", "danger");
     } finally {
       setConfirmingId("");
     }
@@ -222,9 +224,9 @@ export function ChildrenPage() {
       setIntakeLinks(page.data.length || !linkMatchesCurrentFilter ? page.data : [link, ...page.data.filter((item) => item.id !== link.id)]);
       setIntakeLinkMeta(page.data.length || !linkMatchesCurrentFilter ? page.meta : { ...page.meta, total: Math.max(page.meta.total, 1) });
       setIntakeLinkOffset(0);
-      setNotice(`家长资料链接已生成：${window.location.origin}${link.url}${link.expiresAt ? `，有效期至 ${link.expiresAt}` : ""}`);
+      showNotice(`家长资料链接已生成：${window.location.origin}${link.url}${link.expiresAt ? `，有效期至 ${link.expiresAt}` : ""}`);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "生成链接失败，请稍后重试。");
+      showNotice(err instanceof Error ? err.message : "生成链接失败，请稍后重试。", "danger");
     } finally {
       setCreatingLink(false);
     }
@@ -249,7 +251,7 @@ export function ChildrenPage() {
       setIntakeLinkMeta(page.meta);
       setIntakeLinkOffset(nextOffset);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "资料链接加载失败，请稍后重试。");
+      showNotice(err instanceof Error ? err.message : "资料链接加载失败，请稍后重试。", "danger");
     } finally {
       setIntakeLinkLoading(false);
     }
@@ -267,9 +269,9 @@ export function ChildrenPage() {
       if (intakeLinkStatus === "active") {
         setIntakeLinkMeta((meta) => meta ? { ...meta, total: Math.max(0, meta.total - 1) } : meta);
       }
-      setNotice(`家长资料链接已撤回：${updated.label}`);
+      showNotice(`家长资料链接已撤回：${updated.label}`);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "撤回链接失败，请稍后重试。");
+      showNotice(err instanceof Error ? err.message : "撤回链接失败，请稍后重试。", "danger");
     } finally {
       setRevokingLinkId("");
     }
@@ -288,17 +290,17 @@ export function ChildrenPage() {
       setIntakeLinks(page.data);
       setIntakeLinkMeta(page.meta);
       setIntakeLinkOffset(0);
-      setNotice(classroomFilter ? `${classroomFilter}：${result.message}` : result.message);
+      showNotice(classroomFilter ? `${classroomFilter}：${result.message}` : result.message);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "批量停用失败，请稍后重试。");
+      showNotice(err instanceof Error ? err.message : "批量停用失败，请稍后重试。", "danger");
     } finally {
       setRevokingActiveLinks(false);
     }
   }
 
   async function copyIntakeLink(link: ParentIntakeLink) {
-    const fullUrl = absoluteLinkUrl(link.url);
-    setNotice(`家长资料链接已准备复制：${fullUrl}`);
+    const fullUrl = absoluteAppUrl(link.url);
+    showNotice(`家长资料链接已准备复制：${fullUrl}`);
     copyText(fullUrl).catch(() => undefined);
   }
 
@@ -310,7 +312,7 @@ export function ChildrenPage() {
         copy="定制绘本需要称呼、年龄段和至少一个个性化元素。"
         actions={addButton}
       />
-      {notice && <Notice title="资料已提交" copy={notice} tone="good" />}
+      {notice && <Notice title={notice.tone === "danger" ? "操作失败" : "操作成功"} copy={notice.copy} tone={notice.tone} />}
       <section className="list-hero">
         <div>
           <Badge tone="good">定制准备</Badge>
@@ -514,34 +516,3 @@ export function ChildrenPage() {
   );
 }
 
-function absoluteLinkUrl(path: string) {
-  if (/^https?:\/\//i.test(path)) return path;
-  return `${window.location.origin}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await Promise.race([
-        navigator.clipboard.writeText(value),
-        new Promise((_, reject) => window.setTimeout(() => reject(new Error("clipboard timeout")), 300)),
-      ]);
-      return;
-    } catch {
-      // Continue with the textarea fallback for browsers that expose clipboard but block it.
-    }
-  }
-  const textArea = document.createElement("textarea");
-  textArea.value = value;
-  textArea.setAttribute("readonly", "true");
-  textArea.style.position = "fixed";
-  textArea.style.opacity = "0";
-  document.body.appendChild(textArea);
-  textArea.focus();
-  textArea.select();
-  const copied = document.execCommand("copy");
-  document.body.removeChild(textArea);
-  if (!copied) {
-    throw new Error("浏览器没有允许复制，请打开链接后手动复制地址。");
-  }
-}

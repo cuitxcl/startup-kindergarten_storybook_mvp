@@ -9,6 +9,7 @@ import {
 import { Badge, Card, EmptyState, Notice, PageHeader, statusTone } from "../../components/ui";
 import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
 import { generationJobStatusLabel, generationJobTypeLabel, storybookNextAction, storybookSourceLabel, storybookStatusLabel } from "../../utils/labels";
+import { useDebouncedValue } from "../../utils/useDebouncedValue";
 
 const PAGE_SIZE = 12;
 
@@ -16,6 +17,7 @@ export function StorybookListPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const [filter, setFilter] = useState<"all" | "plain" | "custom" | "exportable">("all");
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query.trim(), 300);
   const [offset, setOffset] = useState(0);
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
   const [remoteBooks, setRemoteBooks] = useState<Storybook[]>([]);
@@ -52,7 +54,7 @@ export function StorybookListPage() {
     const type = filter === "plain" || filter === "custom" ? filter : undefined;
     const status = filter === "exportable" ? "exportable" : undefined;
     Promise.all([
-      listStorybooksPage(workspace.id, { type, status, q: query.trim(), limit: PAGE_SIZE, offset }),
+      listStorybooksPage(workspace.id, { type, status, q: debouncedQuery, limit: PAGE_SIZE, offset }),
       listGenerationJobsPage(workspace.id, { limit: 50, offset: 0 }),
     ])
       .then(([page, jobsPage]) => {
@@ -81,7 +83,7 @@ export function StorybookListPage() {
     return () => {
       mounted = false;
     };
-  }, [filter, offset, query, workspace.id]);
+  }, [filter, offset, debouncedQuery, workspace.id]);
 
   return (
     <div className="page-stack">

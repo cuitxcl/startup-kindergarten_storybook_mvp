@@ -5,7 +5,6 @@ import {
   deriveCustomStorybooksBatch,
   deriveCustomStorybook,
   getChild,
-  getGenerationJob,
   getStorybook,
   getWorkspaceGenerationProvider,
   listChildrenPage,
@@ -15,14 +14,16 @@ import {
   type GenerationProviderStatus,
   type PaginationMeta,
 } from "../../api/client";
-import { Badge, Card, EmptyState, Notice, PageHeader, WizardSideNav, statusTone } from "../../components/ui";
+import { ActionButton, Badge, Card, EmptyState, Notice, PageHeader, WizardSideNav, statusTone } from "../../components/ui";
+import { GenerationReviewBlock } from "../../components/GenerationReviewBlock";
 import type { ChildProfile, Storybook, Workspace } from "../../types/domain";
 import {
-  generationJobNextAction,
-  generationJobStatusLabel,
-  generationJobTypeLabel,
-  generationPrivacyAuditSummary,
-} from "../../utils/labels";
+  generationErrorMessage,
+  generationStatusLabel,
+  isActiveJobStatus,
+  pollGenerationJob,
+} from "../../utils/generation";
+import { generationJobNextAction, generationJobTypeLabel } from "../../utils/labels";
 
 const steps = ["选择孩子", "档案检查", "定制强度", "定制方案", "生成副本"];
 const CHILD_PAGE_SIZE = 12;
@@ -105,14 +106,8 @@ export function CustomizeStorybookPage() {
     }
   };
 
-  const waitForGenerationJob = async (initialJob: GenerationJob) => {
-    let currentJob = initialJob;
-    for (let attempt = 0; attempt < 20 && ["queued", "running"].includes(currentJob.status); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 800));
-      currentJob = await getGenerationJob(workspace.id, currentJob.id);
-    }
-    return currentJob;
-  };
+  const waitForGenerationJob = (initialJob: GenerationJob) =>
+    pollGenerationJob(workspace.id, initialJob, { timeoutMs: 240_000 });
 
   const retryCustomizationPlan = async () => {
     if (!retryJob) return;
@@ -182,10 +177,34 @@ export function CustomizeStorybookPage() {
         setChildPageMeta(childPage.meta);
         setSelectedChildId((value) => requestedChild?.id || value || childRows[0]?.id || null);
         setSelectedBatchChildIds((value) => value.filter((id) => childRows.some((child) => child.id === id)));
+        let jobs: GenerationJob[] = [];
         try {
-          setGenerationJobs(await listStorybookGenerationJobs(workspace.id, book.id, { limit: 8 }));
+          jobs = await listStorybookGenerationJobs(workspace.id, book.id, { limit: 8 });
+          setGenerationJobs(jobs);
         } catch {
           setGenerationJobs([]);
+        }
+        // 断线恢复：源绘本还有进行中的定制方案任务时，继续等待并接回结果。
+        const activePlan = jobs.find((job) => job.jobType === "customization_plan" && isActiveJobStatus(job.status));
+        // 超过 15 分钟仍在排队/运行的任务视为僵死（与后端 stale 锁阈值一致），不再接管，避免页面被旧任务卡住。
+        const activePlanFresh = activePlan && Number.isFinite(Date.parse(activePlan.createdAt)) && Date.now() - Date.parse(activePlan.createdAt) <= 15 * 60_000;
+        if (activePlan && activePlanFresh && mounted) {
+          setGeneratingPlan(true);
+          setNotice({
+            title: "已恢复进行中的定制方案任务",
+            copy: `检测到未完成的定制方案任务，正在继续等待结果。任务编号：${activePlan.id.slice(0, 8)}。`,
+          });
+          waitForGenerationJob(activePlan)
+            .then((settled) => { if (mounted) handleGenerationJob(settled); })
+            .catch(() => {
+              if (mounted) {
+                setNotice({
+                  title: "原定制任务已失效",
+                  copy: "未完成的任务已不存在或无法读取，请直接重新生成。",
+                });
+              }
+            })
+            .finally(() => { if (mounted) setGeneratingPlan(false); });
         }
         setError("");
       } catch (err) {
@@ -395,8 +414,8 @@ export function CustomizeStorybookPage() {
             )
           )}
           {step === 1 && (customMode === "batch"
-            ? <ReviewBlock title="档案检查" items={[`批量儿童：${selectedBatchChildren.length} 个`, `平均完整度：${averageCompleteness(selectedBatchChildren)}%`, `本次模式：每个儿童生成独立副本`, ...selectedBatchChildren.slice(0, 6).map((child) => `${child.nickname}：${child.ageGroup} · ${child.focus}`)]} />
-            : selected && <ReviewBlock title="档案检查" items={[`称呼：${selected.nickname}`, `年龄段：${selected.ageGroup}`, `可用个性化元素：${selected.interests.join("、")}`, `关注点：${selected.focus}`]} />
+            ? <GenerationReviewBlock title="档案检查" items={[`批量儿童：${selectedBatchChildren.length} 个`, `平均完整度：${averageCompleteness(selectedBatchChildren)}%`, `本次模式：每个儿童生成独立副本`, ...selectedBatchChildren.slice(0, 6).map((child) => `${child.nickname}：${child.ageGroup} · ${child.focus}`)]} />
+            : selected && <GenerationReviewBlock title="档案检查" items={[`称呼：${selected.nickname}`, `年龄段：${selected.ageGroup}`, `可用个性化元素：${selected.interests.join("、")}`, `关注点：${selected.focus}`]} />
           )}
           {step === 2 && (
             <div className="selection-grid">
@@ -405,8 +424,8 @@ export function CustomizeStorybookPage() {
             </div>
           )}
           {step === 3 && (customMode === "batch"
-            ? <ReviewBlock title="定制方案" output={customizationPlan} items={batchCustomizationPlanItems(customizationPlan, selectedBatchChildren, intensity)} />
-            : selected && <ReviewBlock title="定制方案" output={customizationPlan} items={customizationPlanItems(customizationPlan, selected, intensity)} />
+            ? <GenerationReviewBlock title="定制方案" output={customizationPlan} items={batchCustomizationPlanItems(customizationPlan, selectedBatchChildren, intensity)} />
+            : selected && <GenerationReviewBlock title="定制方案" output={customizationPlan} items={customizationPlanItems(customizationPlan, selected, intensity)} />
           )}
           {generationJobs.length > 0 && step >= 3 && (
             <Card>
@@ -426,7 +445,7 @@ export function CustomizeStorybookPage() {
                   {generationJobs.slice(0, 4).map((job) => (
                     <div key={job.id} className="compact-row static">
                       <div>
-                        <strong>{generationModeLabel(job.jobType)}</strong>
+                        <strong>{generationJobTypeLabel[job.jobType] || job.jobType}</strong>
                         <span>{job.status === "failed" ? generationErrorMessage(job) : job.status === "running" ? "任务正在生成中。" : "已完成或已排队。"}</span>
                         <small>{generationJobNextAction(job)}</small>
                         <small>任务 {job.id.slice(0, 8)} · {job.finishedAt || job.createdAt}</small>
@@ -446,16 +465,16 @@ export function CustomizeStorybookPage() {
               {generatedTarget ? (
                 <Link className="button primary" to={`/app/${workspace.id}/storybooks/${generatedTarget}`}>查看生成结果</Link>
               ) : (
-                <button className="button primary" type="button" disabled title="需要先成功生成定制副本">等待副本生成完成</button>
+                <ActionButton className="button primary" disabled disabledHint="需要先成功生成定制副本">等待副本生成完成</ActionButton>
               )}
             </div>
           )}
           <div className="wizard-actions">
-            <button className="button secondary" disabled={step === 0} title={step === 0 ? "当前已经是第一步" : undefined} onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</button>
-            <button
+            <ActionButton className="button secondary" disabled={step === 0} disabledHint="当前已经是第一步" onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</ActionButton>
+            <ActionButton
               className="button primary"
               disabled={step === steps.length - 1 || (step === 0 && (!canContinueSelection || childList.length === 0)) || generatingPlan || generating}
-              title={step === 0 && childList.length === 0 ? "请先新增儿童资料" : step === 0 && !canContinueSelection ? "请至少选择一个儿童" : step === steps.length - 1 ? "副本已生成，请查看结果" : undefined}
+              disabledHint={step === 0 && childList.length === 0 ? "请先新增儿童资料" : step === 0 && !canContinueSelection ? "请至少选择一个儿童" : step === steps.length - 1 ? "副本已生成，请查看结果" : "生成进行中，请稍候"}
               onClick={() => {
                 if (step === 2) {
                   createCustomizationPlan();
@@ -467,33 +486,12 @@ export function CustomizeStorybookPage() {
                 }
                 nextStep();
               }}
-            >{generatingPlan ? "正在生成方案..." : generating ? "正在生成..." : primaryLabels[step]}</button>
+            >{generatingPlan ? "正在生成方案..." : generating ? "正在生成..." : primaryLabels[step]}</ActionButton>
           </div>
         </Card>
       </div>
     </div>
   );
-}
-
-function generationErrorMessage(job: GenerationJob) {
-  const output = job.output as { error?: { message?: string } } | undefined;
-  return output?.error?.message || "生成任务失败，可稍后重试";
-}
-
-function generationStatusLabel(status: string) {
-  return generationJobStatusLabel[status] || `状态：${status}`;
-}
-
-function generationOutputMeta(output: unknown) {
-  const value = output as { provider?: string; schema_version?: string; mode?: string; message?: string } | undefined;
-  return {
-    provider: value?.provider || "待生成",
-    schema: value?.schema_version || "尚无输出",
-    mode: value?.mode || "等待任务",
-    message: value?.message || "生成后会在这里显示可审核内容。",
-    real: value?.schema_version === "generation.provider.v1",
-    privacy: generationPrivacyAuditSummary(output),
-  };
 }
 
 function customizationPlanItems(output: unknown, child: ChildProfile, intensity: "quick" | "standard") {
@@ -561,38 +559,3 @@ function batchCustomizationPlanItems(output: unknown, batchChildren: ChildProfil
   ].filter(Boolean) as string[];
 }
 
-function ReviewBlock({ title, items, output }: { title: string; items: string[]; output?: unknown }) {
-  const meta = output === undefined ? null : generationOutputMeta(output);
-  return (
-    <div className="review-block">
-      {meta ? (
-        <>
-          <div className="section-head compact">
-            <div>
-              <p className="eyebrow">老师审核</p>
-              <h2>{title}</h2>
-              <p>{meta.message}</p>
-            </div>
-            <Badge tone={meta.real ? "good" : "neutral"}>{meta.real ? "真实生成" : meta.provider}</Badge>
-          </div>
-          <div className="review-meta">
-            <span>来源：{meta.provider}</span>
-            <span>任务：{generationModeLabel(meta.mode)}</span>
-            <span>结构：{meta.schema}</span>
-            {meta.privacy && <span>{meta.privacy}</span>}
-          </div>
-        </>
-      ) : (
-        <h2>{title}</h2>
-      )}
-      <div className="review-list">
-        {items.map((item) => <div key={item}><span>确认项</span><strong>{item}</strong></div>)}
-      </div>
-    </div>
-  );
-}
-
-function generationModeLabel(mode: string) {
-  if (mode === "等待任务") return "等待任务";
-  return generationJobTypeLabel[mode] || mode;
-}

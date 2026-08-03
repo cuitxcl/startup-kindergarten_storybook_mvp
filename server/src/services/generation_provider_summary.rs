@@ -3,83 +3,86 @@ use crate::services::{
         DEFAULT_TEXT_SCHEMA_VERSION, DeepSeekTextProvider, SUPPORTED_TEXT_JOB_TYPES,
     },
     generation_provider::{ConfiguredGenerationProvider, SUPPORTED_IMAGE_JOB_TYPES},
-    generation_provider_config::env_non_empty,
     generation_provider_contract::{
         AiGenerationProvider, GenerationProviderComponent, GenerationProviderSummary,
     },
     generation_seedream_provider::SeedreamImageProvider,
 };
 
+/// 只描述真实 provider 的就绪状态；缺少 API key 时通过
+/// missing_configuration / diagnostic 明确暴露，不存在 mock 回退。
 pub fn provider_summary(provider: &ConfiguredGenerationProvider) -> GenerationProviderSummary {
-    let requested_provider = ConfiguredGenerationProvider::raw_provider_mode();
-    let deepseek_key_present = env_non_empty("DEEPSEEK_API_KEY").is_some();
-    let seedream_key_present = SeedreamImageProvider::api_key_from_env().is_some();
-
     match provider {
-        ConfiguredGenerationProvider::Mock(_) => GenerationProviderSummary {
-            provider: "mock".to_string(),
-            mode: "demo".to_string(),
-            schema_version: "generation.mock.v1".to_string(),
-            requires_api_key: false,
-            supports_text: supported_text_jobs(),
-            supports_image: supported_image_jobs(),
-            real_text_ready: false,
-            real_image_ready: false,
-            production_ready: false,
-            missing_configuration: missing_generation_configuration(
-                &requested_provider,
-                deepseek_key_present,
-                seedream_key_present,
-            ),
-            components: generation_provider_components(),
-            diagnostic: mock_diagnostic(
-                &requested_provider,
-                deepseek_key_present,
-                seedream_key_present,
-            ),
-        },
-        ConfiguredGenerationProvider::DeepSeek(provider) => GenerationProviderSummary {
-            provider: provider.name().to_string(),
-            mode: "text".to_string(),
-            schema_version: DEFAULT_TEXT_SCHEMA_VERSION.to_string(),
-            requires_api_key: true,
-            supports_text: supported_text_jobs(),
-            supports_image: vec![],
-            real_text_ready: true,
-            real_image_ready: false,
-            production_ready: false,
-            missing_configuration: vec![],
-            components: generation_provider_components(),
-            diagnostic: "文本生成已接入真实 provider，插图仍使用 mock".to_string(),
-        },
-        ConfiguredGenerationProvider::Seedream(provider) => GenerationProviderSummary {
-            provider: provider.name().to_string(),
-            mode: "image".to_string(),
-            schema_version: DEFAULT_TEXT_SCHEMA_VERSION.to_string(),
-            requires_api_key: true,
-            supports_text: vec![],
-            supports_image: supported_image_jobs(),
-            real_text_ready: false,
-            real_image_ready: true,
-            production_ready: false,
-            missing_configuration: vec![],
-            components: generation_provider_components(),
-            diagnostic: "插图生成已接入 Seedream，文本仍使用 mock".to_string(),
-        },
-        ConfiguredGenerationProvider::Composite { text, image } => GenerationProviderSummary {
-            provider: format!("{}+{}", text.name(), image.name()),
-            mode: "composite".to_string(),
-            schema_version: DEFAULT_TEXT_SCHEMA_VERSION.to_string(),
-            requires_api_key: true,
-            supports_text: supported_text_jobs(),
-            supports_image: supported_image_jobs(),
-            real_text_ready: true,
-            real_image_ready: true,
-            production_ready: true,
-            missing_configuration: vec![],
-            components: generation_provider_components(),
-            diagnostic: "文本和插图均已接入真实 provider".to_string(),
-        },
+        ConfiguredGenerationProvider::DeepSeek(provider) => {
+            let text_ready = provider.api_key.is_some();
+            GenerationProviderSummary {
+                provider: provider.name().to_string(),
+                mode: "text".to_string(),
+                schema_version: DEFAULT_TEXT_SCHEMA_VERSION.to_string(),
+                requires_api_key: true,
+                supports_text: supported_text_jobs(),
+                supports_image: vec![],
+                real_text_ready: text_ready,
+                real_image_ready: false,
+                production_ready: false,
+                missing_configuration: missing_configuration(text_ready, false),
+                components: generation_provider_components(),
+                diagnostic: if text_ready {
+                    "文本生成已接入真实 provider；插图生成未配置（缺少 SEEDREAM_API_KEY 或 ARK_API_KEY）".to_string()
+                } else {
+                    "缺少 DEEPSEEK_API_KEY，文本生成不可用".to_string()
+                },
+            }
+        }
+        ConfiguredGenerationProvider::Seedream(provider) => {
+            let image_ready = provider.api_key.is_some();
+            GenerationProviderSummary {
+                provider: provider.name().to_string(),
+                mode: "image".to_string(),
+                schema_version: DEFAULT_TEXT_SCHEMA_VERSION.to_string(),
+                requires_api_key: true,
+                supports_text: vec![],
+                supports_image: supported_image_jobs(),
+                real_text_ready: false,
+                real_image_ready: image_ready,
+                production_ready: false,
+                missing_configuration: missing_configuration(false, image_ready),
+                components: generation_provider_components(),
+                diagnostic: if image_ready {
+                    "插图生成已接入真实 provider；文本生成未配置（缺少 DEEPSEEK_API_KEY）".to_string()
+                } else {
+                    "缺少 SEEDREAM_API_KEY 或 ARK_API_KEY，插图生成不可用".to_string()
+                },
+            }
+        }
+        ConfiguredGenerationProvider::Composite { text, image } => {
+            let text_ready = text.api_key.is_some();
+            let image_ready = image.api_key.is_some();
+            GenerationProviderSummary {
+                provider: format!("{}+{}", text.name(), image.name()),
+                mode: "composite".to_string(),
+                schema_version: DEFAULT_TEXT_SCHEMA_VERSION.to_string(),
+                requires_api_key: true,
+                supports_text: supported_text_jobs(),
+                supports_image: supported_image_jobs(),
+                real_text_ready: text_ready,
+                real_image_ready: image_ready,
+                production_ready: text_ready && image_ready,
+                missing_configuration: missing_configuration(text_ready, image_ready),
+                components: generation_provider_components(),
+                diagnostic: match (text_ready, image_ready) {
+                    (true, true) => "文本和插图均已接入真实 provider".to_string(),
+                    (false, true) => "缺少 DEEPSEEK_API_KEY，文本生成不可用".to_string(),
+                    (true, false) => {
+                        "缺少 SEEDREAM_API_KEY 或 ARK_API_KEY，插图生成不可用".to_string()
+                    }
+                    (false, false) => {
+                        "缺少 DEEPSEEK_API_KEY 与 SEEDREAM_API_KEY 或 ARK_API_KEY，生成不可用"
+                            .to_string()
+                    }
+                },
+            }
+        }
     }
 }
 
@@ -97,44 +100,15 @@ fn supported_image_jobs() -> Vec<String> {
         .collect()
 }
 
-fn missing_generation_configuration(
-    requested_provider: &str,
-    deepseek_key_present: bool,
-    seedream_key_present: bool,
-) -> Vec<String> {
-    match requested_provider {
-        "deepseek" if !deepseek_key_present => vec!["DEEPSEEK_API_KEY".to_string()],
-        "seedream" if !seedream_key_present => {
-            vec!["SEEDREAM_API_KEY 或 ARK_API_KEY".to_string()]
-        }
-        "" if !deepseek_key_present && !seedream_key_present => {
-            vec![
-                "DEEPSEEK_API_KEY".to_string(),
-                "SEEDREAM_API_KEY 或 ARK_API_KEY".to_string(),
-            ]
-        }
-        _ => Vec::new(),
+fn missing_configuration(text_ready: bool, image_ready: bool) -> Vec<String> {
+    let mut missing = Vec::new();
+    if !text_ready {
+        missing.push("DEEPSEEK_API_KEY".to_string());
     }
-}
-
-fn mock_diagnostic(
-    requested_provider: &str,
-    deepseek_key_present: bool,
-    seedream_key_present: bool,
-) -> String {
-    match requested_provider {
-        "mock" => "当前使用 demo mock，未接入真实 AI provider".to_string(),
-        "deepseek" if !deepseek_key_present => {
-            "已请求 deepseek，但缺少 DEEPSEEK_API_KEY，已回退到 mock".to_string()
-        }
-        "seedream" if !seedream_key_present => {
-            "已请求 seedream，但缺少 SEEDREAM_API_KEY 或 ARK_API_KEY，已回退到 mock".to_string()
-        }
-        "" if !deepseek_key_present && !seedream_key_present => {
-            "未配置 DeepSeek / Seedream，已回退到 mock".to_string()
-        }
-        _ => "当前使用 mock 作为兜底执行器".to_string(),
+    if !image_ready {
+        missing.push("SEEDREAM_API_KEY 或 ARK_API_KEY".to_string());
     }
+    missing
 }
 
 fn generation_provider_components() -> Vec<GenerationProviderComponent> {

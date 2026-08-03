@@ -26,6 +26,7 @@ export function AppShell() {
   const isSchool = workspace?.type === "school";
   const isAdmin = workspace?.role === "school_admin";
 
+  // 仅在切换空间时重新校验会话；同空间内路由跳转复用已有会话，避免整页 loading 闪烁。
   useEffect(() => {
     let mounted = true;
     setLoading(true);
@@ -73,7 +74,12 @@ export function AppShell() {
     return () => {
       mounted = false;
     };
-  }, [location.pathname, location.search, navigate, workspaceId]);
+  }, [navigate, workspaceId]);
+
+  function logout() {
+    localStorage.removeItem("kindleaf_token");
+    navigate("/login", { replace: true });
+  }
 
   const navItems = [
     { to: "dashboard", label: isSchool ? "园所工作台" : "我的工作台", icon: LayoutDashboard },
@@ -142,6 +148,7 @@ export function AppShell() {
           </div>
           <div className="topbar-meta">
             <span>{user.displayName} · {roleLabel(workspace.role)}</span>
+            <button className="button secondary" type="button" onClick={logout}>退出登录</button>
           </div>
         </header>
         <Outlet context={{ workspace }} />

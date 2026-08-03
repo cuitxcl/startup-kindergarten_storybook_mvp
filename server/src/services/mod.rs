@@ -1,5 +1,4 @@
 pub mod generation_deepseek_provider;
-pub mod generation_mock_provider;
 pub mod generation_output_validator;
 pub mod generation_privacy;
 pub mod generation_provider;

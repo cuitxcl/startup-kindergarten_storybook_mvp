@@ -49,7 +49,6 @@ export function InvitePage() {
     try {
       const accepted = await acceptInvitation(token);
       setInvite(accepted);
-      setNotice({ title: "已接受邀请", copy: `你已加入 ${accepted.workspaceName}，角色为老师。`, tone: "good" });
       navigate(`/app/${accepted.workspaceId}/dashboard`);
     } catch (err) {
       setNotice({ title: "接受失败", copy: err instanceof Error ? err.message : "请稍后重试。", tone: "danger" });

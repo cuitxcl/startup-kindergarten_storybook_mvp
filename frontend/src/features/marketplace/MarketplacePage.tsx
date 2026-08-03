@@ -6,12 +6,14 @@ import {
 } from "../../api/client";
 import { Badge, Card, EmptyState, Notice, PageHeader } from "../../components/ui";
 import type { MarketplaceTemplate } from "../../types/domain";
+import { useDebouncedValue } from "../../utils/useDebouncedValue";
 
 const PAGE_SIZE = 12;
 
 export function MarketplacePage() {
   const [filter, setFilter] = useState<"all" | "platform" | "school_submission" | "customizable">("all");
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query.trim(), 300);
   const [offset, setOffset] = useState(0);
   const [pageMeta, setPageMeta] = useState<PaginationMeta | null>(null);
   const [remoteTemplates, setRemoteTemplates] = useState<MarketplaceTemplate[]>([]);
@@ -46,7 +48,7 @@ export function MarketplacePage() {
     listMarketplaceTemplatesPage({
       source,
       supportsCustomization,
-      q: query.trim(),
+      q: debouncedQuery,
       limit: PAGE_SIZE,
       offset,
     })
@@ -70,7 +72,7 @@ export function MarketplacePage() {
 
   useEffect(() => {
     loadTemplates();
-  }, [filter, offset, query]);
+  }, [filter, offset, debouncedQuery]);
 
   return (
     <div className="page-stack">

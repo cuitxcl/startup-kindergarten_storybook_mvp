@@ -56,12 +56,12 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/kindleaf_development \
 KINDLEAF_DEMO_SEED=1 \
 KINDLEAF_GENERATION_PROVIDER=mock \
 KINDLEAF_COST_BUDGET_WARNING_PERCENT=80 \
-  cargo run --features db -- start
+  cargo run --features db -- start -a
 ```
 
 ```sh
 cd frontend
-npm run dev:api
+npm run dev
 ```
 
 访问：

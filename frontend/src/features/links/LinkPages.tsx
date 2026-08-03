@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { createShareExport, downloadShareExportFile, getPublicParentIntakeLink, getShareExport, getSharedStorybook, submitParentIntake, type ExportJob } from "../../api/client";
+import { createShareExport, downloadShareExportFile, getPublicParentIntakeLink, getShareExport, getSharedStorybook, submitParentIntake } from "../../api/client";
+import { pollUntilSettled } from "../../utils/generation";
 import { Badge, Card, EmptyState, Notice } from "../../components/ui";
 import type { PublicParentIntakeLink, Storybook } from "../../types/domain";
 
@@ -157,21 +158,21 @@ export function ShareLinkPage() {
     }
     try {
       const job = await createShareExport(token);
-      const settledJob = await waitForShareExport(job);
+      // 统一轮询口径：1s 间隔、90s 预算、切后台自动暂停（替代原 5 次×0.7s 的短轮询）
+      const settledJob = await pollUntilSettled(() => getShareExport(token, job.id), job, { timeoutMs: 90_000 });
       if (settledJob.fileUrl) {
         setExportFileUrl(settledJob.fileUrl);
         const file = await downloadShareExportFile(token, settledJob.id);
         const url = window.URL.createObjectURL(file);
         setExportBlobUrl(url);
-        window.open(url, "_blank", "noopener,noreferrer");
       }
       setNotice({
-        title: settledJob.status === "failed" ? "导出失败" : settledJob.fileUrl ? "PDF 已准备下载" : "PDF 导出任务已创建",
+        title: settledJob.status === "failed" ? "导出失败" : settledJob.fileUrl ? "PDF 已准备下载" : "PDF 还在生成中",
         copy: settledJob.fileUrl
-          ? "PDF 文件已经通过分享链接权限下载，可以打开或保存。"
+          ? "点击下方的「打开 PDF」即可查看或保存。"
           : settledJob.status === "failed"
             ? "PDF 生成没有成功，请稍后重新点击下载。"
-            : "系统正在生成 PDF，稍后可重新点击下载。",
+            : "系统仍在生成 PDF，稍后可重新点击下载。",
         tone: settledJob.status === "failed" ? "danger" : "good",
       });
     } catch (err) {
@@ -179,16 +180,6 @@ export function ShareLinkPage() {
     } finally {
       setExporting(false);
     }
-  };
-
-  const waitForShareExport = async (initialJob: ExportJob) => {
-    if (!token) return initialJob;
-    let currentJob = initialJob;
-    for (let attempt = 0; attempt < 5 && ["queued", "running"].includes(currentJob.status); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 700));
-      currentJob = await getShareExport(token, currentJob.id);
-    }
-    return currentJob;
   };
 
   if (loading) {

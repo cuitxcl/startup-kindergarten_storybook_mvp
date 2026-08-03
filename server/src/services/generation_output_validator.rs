@@ -32,17 +32,26 @@ pub(crate) fn normalize_provider_output(
         object.insert("privacy_audit".to_string(), audit);
     }
     insert_if_missing(&mut object, "message", json!("生成任务已完成"));
-    normalize_provider_output_values(&mut object, job_type);
+    normalize_provider_output_values(&mut object, job_type)?;
     validate_provider_output_shape(&object, job_type)?;
     validate_provider_output_content_safety(&JsonValue::Object(object.clone()), job_type)?;
 
     Ok(JsonValue::Object(object))
 }
 
-fn normalize_provider_output_values(object: &mut JsonMap<String, JsonValue>, job_type: &str) {
-    if job_type != "storybook_roles" {
-        return;
+fn normalize_provider_output_values(
+    object: &mut JsonMap<String, JsonValue>,
+    job_type: &str,
+) -> Result<(), GenerationProviderError> {
+    match job_type {
+        "storybook_roles" => normalize_storybook_roles_values(object),
+        "storybook_pages" => normalize_storybook_pages_values(object)?,
+        _ => {}
     }
+    Ok(())
+}
+
+fn normalize_storybook_roles_values(object: &mut JsonMap<String, JsonValue>) {
     let Some(roles) = object
         .get_mut("roles")
         .and_then(|value| value.as_array_mut())
@@ -60,6 +69,101 @@ fn normalize_provider_output_values(object: &mut JsonMap<String, JsonValue>, job
             .unwrap_or_else(|| "supporting".to_string());
         role_object.insert("role_type".to_string(), json!(normalized));
     }
+}
+
+/// 插图提示词风格后缀由后端统一拼接，避免模型自由发挥导致风格漂移。
+const ILLUSTRATION_STYLE_SUFFIX: &str =
+    "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，暖色调，画面充满动感和童趣。画面中不要出现文字。";
+
+const REQUIRED_ILLUSTRATION_SLOTS: &[&str] =
+    &["camera", "scene_state", "contact_chain", "action", "expression"];
+
+/// 这些写法会让画面呆板或把叙事关键信息抹掉，出现在任何插图提示词里都视为不合格输出。
+const FORBIDDEN_ILLUSTRATION_WORDING: &[&str] = &[
+    "背景虚化",
+    "背景模糊",
+    "柔焦",
+    "略显",
+    "并排站",
+    "面无表情",
+    "人群最前面",
+    "证件照",
+];
+
+/// storybook_pages 的插图设定从结构化槽位拼装为最终 illustration_prompt。
+/// 旧格式（只有 illustration_prompt 字符串）保持兼容，只做禁止写法检查。
+fn normalize_storybook_pages_values(
+    object: &mut JsonMap<String, JsonValue>,
+) -> Result<(), GenerationProviderError> {
+    let Some(pages) = object
+        .get_mut("pages")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return Ok(());
+    };
+    for (index, page) in pages.iter_mut().enumerate() {
+        let Some(page_object) = page.as_object_mut() else {
+            continue;
+        };
+        let assembled = if let Some(illustration) = page_object
+            .get("illustration")
+            .and_then(|value| value.as_object())
+        {
+            let mut parts = Vec::new();
+            for slot in REQUIRED_ILLUSTRATION_SLOTS {
+                let text = illustration
+                    .get(*slot)
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .unwrap_or("");
+                if text.is_empty() {
+                    return Err(GenerationProviderError::new(format!(
+                        "provider 输出 storybook_pages.pages[{index}].illustration.{slot} 必须是非空文本"
+                    )));
+                }
+                parts.push(clean_illustration_slot_text(text));
+            }
+            let prop_detail = illustration
+                .get("prop_detail")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .unwrap_or("");
+            if !prop_detail.is_empty() {
+                parts.push(clean_illustration_slot_text(prop_detail));
+            }
+            format!(
+                "儿童绘本插图，{}。{}",
+                parts.join("，"),
+                ILLUSTRATION_STYLE_SUFFIX
+            )
+        } else if let Some(prompt) = page_object
+            .get("illustration_prompt")
+            .and_then(|value| value.as_str())
+        {
+            prompt.trim().to_string()
+        } else {
+            // 缺失插图字段的情况交给结构校验统一报错。
+            continue;
+        };
+        if let Some(word) = FORBIDDEN_ILLUSTRATION_WORDING
+            .iter()
+            .find(|word| assembled.contains(**word))
+        {
+            return Err(GenerationProviderError::new(format!(
+                "provider 输出 storybook_pages.pages[{index}] 插图提示词含有禁止写法：{word}（会让画面呆板或丢失叙事信息）"
+            )));
+        }
+        page_object.insert("illustration_prompt".to_string(), json!(assembled));
+    }
+    Ok(())
+}
+
+fn clean_illustration_slot_text(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches(['。', '，', ',', '；', ';', '、'])
+        .trim()
+        .to_string()
 }
 
 fn normalize_role_type(value: &str) -> String {
