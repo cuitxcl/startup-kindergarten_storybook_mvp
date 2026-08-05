@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import {
+  clearFailedGenerationJobs,
+  deleteStorybook,
   listGenerationJobsPage,
   listStorybooksPage,
   type GenerationJob,
@@ -24,6 +26,11 @@ export function StorybookListPage() {
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmingClearFailed, setConfirmingClearFailed] = useState(false);
+  const [clearingFailed, setClearingFailed] = useState(false);
   const books = remoteBooks;
   const initialLoading = loading && remoteBooks.length === 0;
   const filteredBooks = books;
@@ -34,6 +41,22 @@ export function StorybookListPage() {
     ["exportable", "可导出"],
   ] as const;
   const pendingGenerationCount = generationJobs.filter((job) => job.status === "queued" || job.status === "running" || job.status === "failed").length;
+  const failedGenerationCount = generationJobs.filter((job) => job.status === "failed").length;
+
+  const handleClearFailed = async () => {
+    setClearingFailed(true);
+    setError("");
+    try {
+      const result = await clearFailedGenerationJobs(workspace.id);
+      setGenerationJobs((current) => current.filter((job) => job.status !== "failed"));
+      setNotice(result.cleared > 0 ? `已清理 ${result.cleared} 条失败的生成任务。` : "当前没有需要清理的失败任务。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "清理失败，请稍后重试");
+    } finally {
+      setClearingFailed(false);
+      setConfirmingClearFailed(false);
+    }
+  };
   function recentTaskCopy(book: Storybook) {
     const recent = generationJobs
       .filter((job) => job.storybookId === book.id)
@@ -41,6 +64,22 @@ export function StorybookListPage() {
     if (!recent) return null;
     return `最近任务：${generationJobTypeLabel[recent.jobType] || recent.jobType} · ${generationJobStatusLabel[recent.status] || recent.status} · ${recent.finishedAt || recent.createdAt}`;
   }
+
+  const handleDelete = async (book: Storybook) => {
+    setDeletingId(book.id);
+    setError("");
+    try {
+      await deleteStorybook(workspace.id, book.id);
+      setRemoteBooks((current) => current.filter((item) => item.id !== book.id));
+      setPageMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current);
+      setNotice(`《${book.title}》已删除。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败，请稍后重试");
+    } finally {
+      setDeletingId(null);
+      setConfirmingDeleteId(null);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -99,6 +138,7 @@ export function StorybookListPage() {
         }
       />
       {error && filteredBooks.length > 0 && <Notice title="列表更新失败" copy={error} tone="danger" />}
+      {notice && <Notice title="操作完成" copy={notice} tone="good" />}
       <Card>
         <div className="filter-row">
           {filterItems.map(([value, label]) => (
@@ -129,6 +169,18 @@ export function StorybookListPage() {
           title={`有 ${pendingGenerationCount} 条生成任务需要关注`}
           copy="包含排队、运行中或失败的任务。打开对应绘本详情可以继续处理。"
           tone="warn"
+          action={failedGenerationCount > 0 ? (
+            confirmingClearFailed ? (
+              <>
+                <button className="button danger" type="button" disabled={clearingFailed} onClick={() => void handleClearFailed()}>
+                  {clearingFailed ? "清理中..." : `确认清理 ${failedGenerationCount} 条`}
+                </button>
+                <button className="button secondary" type="button" disabled={clearingFailed} onClick={() => setConfirmingClearFailed(false)}>取消</button>
+              </>
+            ) : (
+              <button className="button secondary" type="button" onClick={() => setConfirmingClearFailed(true)}>清理失败任务</button>
+            )
+          ) : undefined}
         />
       )}
       {initialLoading ? (
@@ -189,6 +241,22 @@ export function StorybookListPage() {
                           <Link className="button primary" to={book.id}>继续编辑</Link>
                           <Link className="button secondary" to={book.id}>{exportBlocker ? "查看详情" : "导出或分享"}</Link>
                         </>
+                      )}
+                      {confirmingDeleteId === book.id ? (
+                        <>
+                          <button
+                            className="button danger"
+                            type="button"
+                            disabled={deletingId === book.id}
+                            title="删除后不可恢复，分页、角色和生成记录会一并移除"
+                            onClick={() => void handleDelete(book)}
+                          >
+                            {deletingId === book.id ? "删除中..." : "确认删除"}
+                          </button>
+                          <button className="button secondary" type="button" disabled={deletingId === book.id} onClick={() => setConfirmingDeleteId(null)}>取消</button>
+                        </>
+                      ) : (
+                        <button className="button text-danger" type="button" onClick={() => { setNotice(""); setConfirmingDeleteId(book.id); }}>删除</button>
                       )}
                     </div>
                   </div>

@@ -2,7 +2,8 @@ use sea_orm::DbErr;
 
 use crate::models::{
     Storybook, StorybookPageQuality, StorybookQualityCheck, StorybookQualityReport,
-    StorybookQualityStatus, StorybookRole, StorybookStatus, StorybookType, Visibility,
+    StorybookQualityStatus, StorybookRole, StorybookStatus, StorybookType, UNEXPECTED_ANIMAL_NAMES,
+    Visibility,
 };
 
 pub fn parse_storybook_type(value: &str) -> StorybookType {
@@ -189,9 +190,9 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
             issues.push("插图仍在生成中。".to_string());
         } else if page.status == "failed" {
             issues.push("插图生成失败，需要重新生成。".to_string());
-        } else if page.status == "needs_regeneration" {
-            suggestions.push("当前页标记为需重绘，建议重新生成插图后再交付。".to_string());
         }
+        // needs_regeneration 不再产出质量建议：页面已有"待重绘"徽章，
+        // 交付提醒里也已有统一说明，无需再作为"建议查看"条目重复打扰。
 
         let page_roles: Vec<_> = book
             .roles
@@ -225,6 +226,26 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
                     role.name
                 ));
             }
+            let mention_count = page.illustration_prompt.matches(&role.name).count();
+            // 插图已生成且页面完成时，生图风险已经落定，不再提示点名次数；
+            // 页面被标记为待重绘后建议会重新出现，因为下次生成仍要看这段描述。
+            if mention_count > 2 && page.status != "ready" {
+                suggestions.push(format!(
+                    "「{}」在插图描述中被提到 {} 次，模型容易把同一角色画成多个，建议合并为一组动作。",
+                    role.name, mention_count
+                ));
+            }
+        }
+
+        let named_roles_in_prompt = page_roles
+            .iter()
+            .filter(|role| text_contains(&page.illustration_prompt, &role.name))
+            .count();
+        if named_roles_in_prompt > 4 && page.status != "ready" {
+            suggestions.push(format!(
+                "本页插图描述涉及 {} 个有名角色/道具，画面容易割裂，建议精简到 4 个以内，其余用「队伍延伸到画面外」带过。",
+                named_roles_in_prompt
+            ));
         }
 
         let role_names = book
@@ -233,7 +254,7 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
             .map(|role| role.name.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        for animal in ["小兔", "兔子", "小熊", "小象", "小猫", "小狗", "小狐狸"] {
+        for animal in UNEXPECTED_ANIMAL_NAMES {
             if text_contains(&page.illustration_prompt, animal)
                 && !text_contains(&role_names, animal)
             {

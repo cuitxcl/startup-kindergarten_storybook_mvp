@@ -106,6 +106,47 @@ pub async fn cancel_job(
     }
 }
 
+/// 清理工作区内全部失败的生成任务（用户确认后调用），返回清理条数。
+pub async fn clear_failed_jobs(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_editor_db(ctx, headers, workspace_id).await?;
+        let cleared =
+            crate::repositories::generation::delete_failed_generation_jobs(&ctx.db, workspace_id)
+                .await
+                .map_err(common::db_error)?;
+        crate::repositories::audit::log(
+            &ctx.db,
+            Some(workspace_id),
+            Some(common::actor_user_id(headers)?),
+            "generation_job.failed_cleared",
+            "generation_job",
+            None,
+            json!({ "cleared": cleared }),
+        )
+        .await
+        .map_err(common::db_error)?;
+        return Ok(serde_json::json!({
+            "status": "ok",
+            "cleared": cleared,
+        }));
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let state = shared_state(ctx)?;
+        common::require_editor(&state, headers, workspace_id)?;
+        Ok(serde_json::json!({
+            "status": "ok",
+            "cleared": 0,
+        }))
+    }
+}
+
 pub async fn recover_jobs(
     ctx: &AppContext,
     headers: &HeaderMap,

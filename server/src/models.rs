@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
+/// 绘本角色之外的常见"代称动物"黑名单：出现在正文/插图描述里但没有对应已确认角色时，
+/// 说明生成结果引入了未确认形象。质量检查与 provider 输出校验共用这一份名单。
+pub const UNEXPECTED_ANIMAL_NAMES: &[&str] = &[
+    "小象",
+    "小兔",
+    "兔子",
+    "小猴",
+    "小熊",
+    "小猫",
+    "小狗",
+    "小狐狸",
+    "小鹿",
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceRole {

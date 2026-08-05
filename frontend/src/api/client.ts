@@ -986,6 +986,13 @@ export async function updateStorybook(
   return mapStorybook(response);
 }
 
+export async function deleteStorybook(workspaceId: string, storybookId: string) {
+  // 后端返回 204 No Content，直接走 requestEnvelope 避免解析空 body。
+  await requestEnvelope<unknown>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function duplicateStorybook(workspaceId: string, storybookId: string, payload?: { title?: string }) {
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}/duplicate`, {
     method: "POST",
@@ -1166,6 +1173,12 @@ export async function cancelGenerationJob(workspaceId: string, jobId: string): P
     method: "POST",
   });
   return mapGenerationJob(response);
+}
+
+export async function clearFailedGenerationJobs(workspaceId: string): Promise<{ status: string; cleared: number }> {
+  return request<{ status: string; cleared: number }>(`/api/workspaces/${workspaceId}/generation-jobs/clear-failed`, {
+    method: "POST",
+  });
 }
 
 export async function recoverGenerationJobs(

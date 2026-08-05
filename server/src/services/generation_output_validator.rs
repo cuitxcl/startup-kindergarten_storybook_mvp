@@ -56,7 +56,10 @@ fn normalize_provider_output_values(
 fn normalize_storybook_page_prompt_values(
     object: &mut JsonMap<String, JsonValue>,
 ) -> Result<(), GenerationProviderError> {
-    let Some(page_object) = object.get_mut("page").and_then(|value| value.as_object_mut()) else {
+    let Some(page_object) = object
+        .get_mut("page")
+        .and_then(|value| value.as_object_mut())
+    else {
         return Ok(());
     };
     let Some(assembled) = assemble_illustration_prompt(page_object, "storybook_page_prompt.page")?
@@ -145,11 +148,16 @@ fn normalize_storybook_roles_values(object: &mut JsonMap<String, JsonValue>) {
 }
 
 /// 插图提示词风格后缀由后端统一拼接，避免模型自由发挥导致风格漂移。
-const ILLUSTRATION_STYLE_SUFFIX: &str =
-    "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，暖色调，画面充满动感和童趣。画面中不要出现文字。";
+const ILLUSTRATION_STYLE_SUFFIX: &str = "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，角色四肢完整、爪子或双手清晰可见，不要省略手臂，暖色调，画面充满动感和童趣。画面中不要出现文字。";
 
-const REQUIRED_ILLUSTRATION_SLOTS: &[&str] =
-    &["camera", "scene_state", "contact_chain", "crowd", "action", "expression"];
+const REQUIRED_ILLUSTRATION_SLOTS: &[&str] = &[
+    "camera",
+    "scene_state",
+    "contact_chain",
+    "crowd",
+    "action",
+    "expression",
+];
 
 /// 这些写法会让画面呆板或把叙事关键信息抹掉，出现在任何插图提示词里都视为不合格输出。
 const FORBIDDEN_ILLUSTRATION_WORDING: &[&str] = &[
@@ -232,8 +240,30 @@ fn validate_provider_output_shape(
                     ))
                 })?;
                 required_text_at(item, "page_range", job_type, &format!("outline[{index}]"))?;
+                let page_range = item
+                    .get("page_range")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default();
+                // 分页节奏必须一页一条，禁止 "1-2"、"第3~4页" 这类跨页区间写法。
+                if ["-", "–", "—", "~", "～", "至", "到"]
+                    .iter()
+                    .any(|mark| page_range.contains(mark))
+                {
+                    return Err(GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.outline[{index}].page_range 只允许单页页码（如 \"3\"），不允许跨页区间（如 \"1-2\"），请把每一页拆成独立的一条"
+                    )));
+                }
                 required_text_at(item, "goal", job_type, &format!("outline[{index}]"))?;
                 required_text_at(item, "beat", job_type, &format!("outline[{index}]"))?;
+            }
+            // outline 条目数必须与 page_count 一致，保证每条节奏恰好对应一页。
+            if let Some(page_count) = plan.get("page_count").and_then(JsonValue::as_u64) {
+                if outline.len() as u64 != page_count {
+                    return Err(GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.outline 共 {} 条，与 page_count={page_count} 不一致；分页节奏必须一页一条，共 page_count 条",
+                        outline.len()
+                    )));
+                }
             }
             let role_requirements = required_array(plan, "role_requirements", job_type)?;
             for (index, requirement) in role_requirements.iter().enumerate() {

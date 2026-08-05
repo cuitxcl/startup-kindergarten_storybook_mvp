@@ -47,6 +47,32 @@ pub async fn page_image_job_input(
             reference_images.push(scene);
         }
     }
+    // 把本页点名角色的外观关键词注入提示词：参考图未就绪或模型没吃参考图时，形象也不漂。
+    let named_roles = page_named_role_appearances(db, storybook_id, &prompt).await?;
+    let prompt = if named_roles.is_empty() {
+        prompt
+    } else {
+        let roster = named_roles
+            .iter()
+            .map(|(name, appearance)| format!("{name}={appearance}"))
+            .collect::<Vec<_>>()
+            .join("；");
+        format!("{prompt} 角色外观：{roster}。")
+    };
+    // 高频或多主体描述容易让文生图模型把同一角色画成多个、拆成拼接场景；
+    // 去重约束点名道姓（命中角色时），比泛指"每个角色"更有效。
+    let dedup_subject = if named_roles.is_empty() {
+        "每个角色".to_string()
+    } else {
+        named_roles
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join("、")
+    };
+    let prompt = format!(
+        "{prompt} {dedup_subject}在画面中各自只出现一次，不要重复绘制同一角色。单幅连续场景，不要分格、不要上下拼接两个画面。"
+    );
     let prompt = if has_scene_reference {
         format!("{prompt} 参考上一页画面保持场景布局与在场人群连续，动作与构图以文字描述为准。")
     } else {
@@ -324,6 +350,40 @@ async fn page_prompt(
     .try_get("", "illustration_prompt")
 }
 
+/// 查询本页提示词里点名角色的（名字, 外观设定）清单；没有命中则返回空 vec。
+/// 最多取 4 个，避免清单过长稀释画面描述。
+async fn page_named_role_appearances(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    prompt: &str,
+) -> Result<Vec<(String, String)>, DbErr> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select name, appearance
+            from storybook_roles
+            where storybook_id = $1
+            order by name asc, id asc
+            "#,
+            [storybook_id.into()],
+        ))
+        .await?;
+    let pairs = rows
+        .into_iter()
+        .filter_map(|row| {
+            let name = row.try_get::<String>("", "name").ok()?;
+            let appearance = row.try_get::<String>("", "appearance").ok()?;
+            let name = name.trim();
+            let appearance = appearance.trim().trim_end_matches(['。', '；', ';']);
+            (!name.is_empty() && !appearance.is_empty() && prompt.contains(name))
+                .then(|| (name.to_string(), appearance.to_string()))
+        })
+        .take(4)
+        .collect::<Vec<_>>();
+    Ok(pairs)
+}
+
 async fn role_reference_prompt(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -348,6 +408,6 @@ async fn role_reference_prompt(
     let role_type: String = row.try_get("", "role_type")?;
     let appearance: String = row.try_get("", "appearance")?;
     Ok(format!(
-        "为绘本生成单一角色标准参考图。角色名：{name}；视觉类型：{role_type}；外观：{appearance}。要求：白底或简洁背景，柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛；角色表情自然生动、富有神采，姿态自然放松，可微微侧身或采用三分之四视角，全身或半身清晰；画面中只有这个角色，无人类，无其他角色，便于后续分页插图保持一致。不要加入故事情节动作或分页场景，不要僵硬对称的证件照式站姿。"
+        "为绘本生成单一角色标准参考图。角色名：{name}；视觉类型：{role_type}；外观：{appearance}。要求：白底或简洁背景，柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛；角色表情自然生动、富有神采，姿态自然放松，可微微侧身或采用三分之四视角，全身或半身清晰，四肢与爪子清晰可见、不要省略手臂；画面中只有这个角色，无人类，无其他角色，便于后续分页插图保持一致。不要加入故事情节动作或分页场景，不要僵硬对称的证件照式站姿。"
     ))
 }

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use serde_json::{Value as JsonValue, json};
 
+use crate::models::UNEXPECTED_ANIMAL_NAMES;
 use crate::services::{
     generation_output_validator::normalize_provider_output,
     generation_privacy::{provider_input_privacy_audit, sanitize_provider_input},
@@ -40,7 +41,7 @@ impl DeepSeekTextProvider {
             endpoint_path: first_non_empty_env(&["DEEPSEEK_ENDPOINT_PATH"], "/chat/completions"),
             model: first_non_empty_env(&["DEEPSEEK_MODEL"], "deepseek-v4-flash"),
             timeout_seconds: env_u64("DEEPSEEK_TIMEOUT_SECONDS", 180),
-            max_tokens: env_u64("DEEPSEEK_MAX_TOKENS", 4096),
+            max_tokens: env_u64("DEEPSEEK_MAX_TOKENS", 8192),
         }
     }
 
@@ -85,11 +86,16 @@ impl DeepSeekTextProvider {
         let prompt = self.build_prompt(request)?;
         let base_user_content = format!(
             "{}\n\n请只返回一个合法 JSON 对象，不要 Markdown，不要代码块。\n期望 JSON 结构示例：\n{}\n\n输入：\n{}",
-            prompt["user_prompt"].as_str().unwrap_or("请生成结构化绘本内容。"),
+            prompt["user_prompt"]
+                .as_str()
+                .unwrap_or("请生成结构化绘本内容。"),
             response_schema_for(request.job_type),
             prompt["input"]
         );
-        let user_content = match retry_feedback.map(str::trim).filter(|value| !value.is_empty()) {
+        let user_content = match retry_feedback
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             Some(feedback) => format!(
                 "{base_user_content}\n\n上一次输出未通过校验：{feedback}\n请针对上述问题修正后，重新输出完整 JSON 对象。"
             ),
@@ -169,6 +175,18 @@ impl DeepSeekTextProvider {
                 GenerationProviderError::new("DeepSeek 响应缺少 choices[0].message.content")
             })?
             .to_string();
+        // 推理型模型（返回 reasoning_content）可能把 max_tokens 全部耗在思考上，content 为空。
+        // 空内容直接给出可行动的报错，避免下游解析时报出难懂的 "EOF while parsing"。
+        if content.trim().is_empty() {
+            let finish_reason = response_json["choices"]
+                .as_array()
+                .and_then(|choices| choices.first())
+                .and_then(|choice| choice["finish_reason"].as_str())
+                .unwrap_or("unknown");
+            return Err(GenerationProviderError::new(format!(
+                "DeepSeek 返回空内容（finish_reason={finish_reason}）：推理型模型可能把 max_tokens 全部耗在思考上，请调大 DEEPSEEK_MAX_TOKENS"
+            )));
+        }
         let usage = response_json.get("usage").cloned();
         Ok((content, usage))
     }
@@ -257,9 +275,8 @@ impl AiGenerationProvider for DeepSeekTextProvider {
             }
         }
 
-        Err(last_validation_error.unwrap_or_else(|| {
-            GenerationProviderError::new("DeepSeek 输出校验失败，请重试")
-        }))
+        Err(last_validation_error
+            .unwrap_or_else(|| GenerationProviderError::new("DeepSeek 输出校验失败，请重试")))
     }
 
     async fn generate_image(
@@ -360,16 +377,7 @@ pub(crate) fn validate_output_against_input(
                 "provider 输出 {location} 插图提示词未包含已确认角色姓名"
             )));
         }
-        let unexpected_animals = [
-            "小象",
-            "小兔",
-            "小猴",
-            "小熊",
-            "小猫",
-            "小狗",
-            "小狐狸",
-            "小鹿",
-        ];
+        let unexpected_animals = UNEXPECTED_ANIMAL_NAMES;
         let role_text = input
             .get("confirmed_roles")
             .map(JsonValue::to_string)
@@ -382,12 +390,30 @@ pub(crate) fn validate_output_against_input(
                 "provider 输出 {location} 出现未确认替代角色：{animal}"
             )));
         }
+        // 同一角色在插图提示词里被反复点名时，文生图模型会把它画成多个；超过 2 次判不合格，
+        // 交给自动重试机制让模型把动作合并、压缩点名次数（槽位指引要求合计不超过 2 次）。
+        for name in &confirmed_roles {
+            let mention_count = prompt.matches(name).count();
+            if mention_count > 2 {
+                return Err(GenerationProviderError::new(format!(
+                    "provider 输出 {location} 插图提示词中「{name}」被点名 {mention_count} 次，模型会把反复点名的角色画成多个；请把它的动作、表情合并进同一组描述，全页合计点名不超过 2 次"
+                )));
+            }
+        }
     }
 
     // 单页重写：相邻页存在群体场景时，新描述必须交代在场群体，防止人群跨页凭空消失。
     if job_type == "storybook_page_prompt" {
         let crowd_markers = [
-            "一群", "挤", "人群", "大家", "小动物们", "孩子们", "排队", "簇拥", "涌",
+            "一群",
+            "挤",
+            "人群",
+            "大家",
+            "小动物们",
+            "孩子们",
+            "排队",
+            "簇拥",
+            "涌",
         ];
         let neighbor_text = input
             .get("neighbor_pages")
@@ -404,10 +430,18 @@ pub(crate) fn validate_output_against_input(
             })
             .unwrap_or_default();
         let neighbor_has_crowd = !neighbor_text.is_empty()
-            && crowd_markers.iter().any(|marker| neighbor_text.contains(marker));
+            && crowd_markers
+                .iter()
+                .any(|marker| neighbor_text.contains(marker));
         if neighbor_has_crowd {
-            let new_prompt = targets.first().map(|(_, _, _, prompt)| prompt.as_str()).unwrap_or("");
-            if !crowd_markers.iter().any(|marker| new_prompt.contains(marker)) {
+            let new_prompt = targets
+                .first()
+                .map(|(_, _, _, prompt)| prompt.as_str())
+                .unwrap_or("");
+            if !crowd_markers
+                .iter()
+                .any(|marker| new_prompt.contains(marker))
+            {
                 return Err(GenerationProviderError::new(format!(
                     "provider 输出 {job_type}.page 插图提示词未交代在场群体：相邻页存在人群场景，本页人群可以退到后排但不能凭空消失，请在 crowd 槽位写明人在哪里（或说明人群为何散去）"
                 )));
@@ -430,12 +464,12 @@ pub(crate) fn format_deepseek_endpoint(base_url: &str, endpoint_path: &str) -> S
 }
 
 /// 分页图文与单页重写的插图槽位写法指引，保持同一套标准。
-const ILLUSTRATION_SLOT_GUIDE: &str = "每页的插图设定必须输出为 illustration 对象，按以下 7 个槽位分别填写，槽位之间不要重复内容：\n- camera：镜头与构图，一句话，例如“中近景，画面紧凑，角色相互遮挡”；角色多或画面拥挤时优先中近景。\n- scene_state：场景此刻正在发生什么，必须写状态而不是场景名词；有群体时必须写出密度（身体紧紧挨着、你推我搡、卡成一团）。\n- contact_chain：主角与周围角色之间的接触和遮挡关系，例如“身后的小熊被人群推着贴上小猫的背”；主角必须被写进关系里，不能孤立在人群之外。\n- crowd：在场群体交代，必须写明画面里除主要角色外还有哪些人、在画面什么位置（例如“后排还有五六只小动物踮脚张望，门口小路上仍有人赶来”）；如果故事此刻处于人群场景中（拥挤、排队、一群），本页人群必须仍在场，可以退到后排或让出画面中心，但不能凭空消失；确实只剩少量角色时，必须写明原因（例如“其他小动物已经进教室了，门口只剩小猫和小兔”）。\n- action：主要角色的动作，必须写成身体语言（踮起脚尖、肩膀前倾、扒着门框、踉跄后仰），不能只写动作名称。\n- expression：主要角色的表情，必须写成具体五官细节（眉头紧皱、眼睛瞪圆、嘴巴张成 O 形），禁止只写“慌张”“着急”“开心”这类总结词。\n- prop_detail：一个增强现场感的小道具细节，例如“地上有一只被挤掉的小书包”；没有合适的就填空字符串。\n\n跨页连续性：同一事件内，地点、时间和在场群体规模不得突变；前一页出现的人群在后一页必须仍在场（可以换位置、退到后排），次要角色可以换位但不能整群蒸发。\n\n情绪翻译词库（必须先把情绪翻译成身体语言再写）：着急=踮脚+身体前倾+眉头紧锁；慌张=眼睛瞪圆+耳朵后压+后仰失衡+手脚乱挥；开心=眯起笑眼+嘴角上扬+蹦跳离地；拥挤=身体紧挨+相互遮挡+你推我搡。\n\n禁止写法（出现即视为不合格）：“背景虚化”“背景模糊”“柔焦”“略显”“并排站”“面无表情”“人群最前面”“证件照”；禁止只写场景名词而不写场景状态。风格不用你写，由系统统一拼接，不要在任何槽位里写风格描述或“绘本风格”字样。\n\n合格示例（仅作写法示范，实际输出必须使用 input.confirmed_roles 里的角色）：\ncamera：中近景，画面紧凑，一群小动物挤在木门口相互遮挡\nscene_state：早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口，小路上还有人赶来\ncontact_chain：橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背；白色小兔紧挨着小猫，长耳朵被旁边的小动物压歪\ncrowd：门口还有五六只小动物踮脚张望排在后面，小路上仍有两三只小动物赶来\naction：小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤；小兔被挤得踉跄前倾、前爪慌乱挥舞\nexpression：小猫眉头紧皱、胡须绷直；小兔眼睛瞪圆、嘴巴张成 O 形\nprop_detail：地上有一只被挤掉的粉色书包";
+const ILLUSTRATION_SLOT_GUIDE: &str = "每页的插图设定必须输出为 illustration 对象，按以下 7 个槽位分别填写，槽位之间不要重复内容：\n- camera：镜头与构图，一句话，例如“中近景，画面紧凑，角色相互遮挡”；角色多或画面拥挤时优先中近景；避免“画面横向展开”这类宽幅全景构图，多角色时用中近景聚焦主要互动，防止画面被拆成多个小场景。\n- scene_state：场景此刻正在发生什么，必须写状态而不是场景名词；有群体时必须写出密度（身体紧紧挨着、你推我搡、卡成一团）。\n- contact_chain：主角与周围角色之间的接触和遮挡关系，例如“身后的小熊被人群推着贴上小猫的背”；主角必须被写进关系里，不能孤立在人群之外。\n- crowd：在场群体交代，必须写明画面里除主要角色外还有哪些人、在画面什么位置（例如“后排还有五六只小动物踮脚张望，门口小路上仍有人赶来”）；如果故事此刻处于人群场景中（拥挤、排队、一群），本页人群必须仍在场，可以退到后排或让出画面中心，但不能凭空消失；确实只剩少量角色时，必须写明原因（例如“其他小动物已经进教室了，门口只剩小猫和小兔”）；背景群体只用数量词和位置概括（例如“后排还有几只小动物”），不要给背景角色逐一分配动作、表情或外观细节。\n- action：主要角色的动作，必须写成身体语言（踮起脚尖、肩膀前倾、扒着门框、踉跄后仰），不能只写动作名称；必须写出主要角色手或前爪的具体动作（扒着、挥动、扶着、抱住、捂住、指向），不允许只写头部或躯干动作。\n- expression：主要角色的表情，必须写成具体五官细节（眉头紧皱、眼睛瞪圆、嘴巴张成 O 形），禁止只写“慌张”“着急”“开心”这类总结词。\n- prop_detail：一个增强现场感的小道具细节，例如“地上有一只被挤掉的小书包”；没有合适的就填空字符串。\n\n跨页连续性：同一事件内，地点、时间和在场群体规模不得突变；前一页出现的人群在后一页必须仍在场（可以换位置、退到后排），次要角色可以换位但不能整群蒸发。\n\n角色预算：每页有名角色（input.confirmed_roles 里的角色）最多 3 个，主角加 1~2 个互动对象，其余角色退为背景群体；同一个有名角色在全部槽位合计最多出现 2 次，把它的动作、表情集中写进同一组描述，不要在多个槽位反复点名，文生图模型会把反复点名的角色画成多个。\n\n情绪翻译词库（必须先把情绪翻译成身体语言再写）：着急=踮脚+身体前倾+眉头紧锁；慌张=眼睛瞪圆+耳朵后压+后仰失衡+手脚乱挥；开心=眯起笑眼+嘴角上扬+蹦跳离地；拥挤=身体紧挨+相互遮挡+你推我搡。\n\n禁止写法（出现即视为不合格）：“背景虚化”“背景模糊”“柔焦”“略显”“并排站”“面无表情”“人群最前面”“证件照”；禁止只写场景名词而不写场景状态。风格不用你写，由系统统一拼接，不要在任何槽位里写风格描述或“绘本风格”字样。\n\n合格示例（仅作写法示范，实际输出必须使用 input.confirmed_roles 里的角色）：\ncamera：中近景，画面紧凑，一群小动物挤在木门口相互遮挡\nscene_state：早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口，小路上还有人赶来\ncontact_chain：橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背；白色小兔紧挨着小猫，长耳朵被旁边的小动物压歪\ncrowd：门口还有五六只小动物踮脚张望排在后面，小路上仍有两三只小动物赶来\naction：小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤；小兔被挤得踉跄前倾、前爪慌乱挥舞\nexpression：小猫眉头紧皱、胡须绷直；小兔眼睛瞪圆、嘴巴张成 O 形\nprop_detail：地上有一只被挤掉的粉色书包\n\n安静场景对照示例（非拥挤剧情用这种简洁写法，有名角色少、构图单一焦点）：\ncamera：中近景，画面聚焦两个角色，背景简洁\nscene_state：午后安静的活动室，小猫坐在窗边拼图，阳光落在桌面上\ncontact_chain：小兔侧身挨着小猫坐下，一只前爪轻轻搭在小猫背上\ncrowd：其他小动物已经去午睡区了，教室里只剩小猫和小兔\naction：小猫低头捏起一块拼图，指尖对准缺口轻轻放下\nexpression：小猫眯起笑眼、嘴角上扬；小兔耳朵放松垂下、眼睛弯成弧线\nprop_detail：桌角放着一杯冒着热气的温水";
 
 pub(crate) fn prompt_for(job_type: &str) -> String {
     match job_type {
         "storybook_plan" => {
-            "根据 input.title、input.theme、input.use_scene、input.style 生成普通绘本方案。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。先给故事主线，再给分页节奏和老师审核点。"
+            "根据 input.title、input.theme、input.use_scene、input.style 生成普通绘本方案。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。先给故事主线，再给分页节奏和老师审核点。分页节奏（outline）必须一页一条，共 page_count 条：每条 page_range 只写单个页码数字（如 \"3\"），禁止写 \"1-2\"、\"3-4\" 这类跨页区间；每条的 goal 和 beat 只描述这一页的画面与剧情，不要把两页内容合并进一条。"
                 .to_string()
         }
         "storybook_roles" => {
@@ -469,7 +503,7 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
                 "age_group": "string",
                 "summary": "string",
                 "page_count": "number",
-                "outline": [{"page_range": "string", "goal": "string", "beat": "string"}],
+                "outline": [{"page_range": "string（单页页码，如 \"3\"，禁止 \"1-2\" 跨页区间）", "goal": "string", "beat": "string"}],
                 "role_requirements": ["string"],
                 "review_points": ["string"]
             }

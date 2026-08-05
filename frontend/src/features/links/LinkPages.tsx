@@ -216,7 +216,12 @@ export function ShareLinkPage() {
                 <span>第 {page.pageNumber} 页</span>
                 <h3>{page.title}</h3>
                 <p>{page.body}</p>
-                {page.illustrationPrompt && <small>插图：{page.illustrationPrompt}</small>}
+                {page.illustrationPrompt && (
+                  <details className="prompt-details">
+                    <summary>插图描述</summary>
+                    <p>{page.illustrationPrompt}</p>
+                  </details>
+                )}
               </article>
             ))
           ) : (

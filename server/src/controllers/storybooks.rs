@@ -25,7 +25,7 @@ pub fn routes() -> Routes {
         )
         .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}",
-            get(get_storybook).patch(update_storybook),
+            get(get_storybook).patch(update_storybook).delete(delete_storybook),
         )
         .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/duplicate",
@@ -88,6 +88,15 @@ async fn update_storybook(
     let book = application::storybooks::update(&ctx, &headers, workspace_id, storybook_id, payload)
         .await?;
     Ok(Json(Envelope::new(book)))
+}
+
+async fn delete_storybook(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, storybook_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    application::storybooks::delete(&ctx, &headers, workspace_id, storybook_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn duplicate_storybook(

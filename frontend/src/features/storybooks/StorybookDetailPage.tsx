@@ -8,6 +8,7 @@ import {
   createRoleReferenceImageTask,
   createShareLink,
   createStorybookExport,
+  deleteStorybook,
   downloadGenerationImageFile,
   downloadStorybookExportFile,
   duplicateStorybook,
@@ -69,6 +70,8 @@ export function StorybookDetailPage() {
   const [shareExpiry, setShareExpiry] = useState<"7d" | "30d" | "never">("7d");
   const [exporting, setExporting] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [duplicateTitle, setDuplicateTitle] = useState("");
   const [deliverySaving, setDeliverySaving] = useState(false);
@@ -83,7 +86,8 @@ export function StorybookDetailPage() {
     coverTone: "",
   });
   const [imageGenerating, setImageGenerating] = useState(false);
-  const [promptRewriting, setPromptRewriting] = useState(false);
+  // 记录正在重写插图描述的页面 ID，避免切换绘本/分页后按钮状态残留。
+  const [promptRewritingPageId, setPromptRewritingPageId] = useState<string | null>(null);
   const [currentImagePreviewUrl, setCurrentImagePreviewUrl] = useState("");
   const [currentImagePreviewError, setCurrentImagePreviewError] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
@@ -180,7 +184,7 @@ export function StorybookDetailPage() {
         const [linksResult, exportsResult, jobsResult] = await Promise.allSettled([
           listShareLinksPage(workspace.id, item.id, { limit: 8 }),
           listStorybookExportsPage(workspace.id, item.id, { limit: 8 }),
-          listStorybookGenerationJobs(workspace.id, item.id, { limit: 8 }),
+          listStorybookGenerationJobs(workspace.id, item.id, { limit: 50 }),
         ]);
         if (!mounted) return;
         setShareLinks(linksResult.status === "fulfilled" ? linksResult.value.data : []);
@@ -283,7 +287,8 @@ export function StorybookDetailPage() {
 
   async function refreshGenerationJobs(storybookId = book?.id) {
     if (!storybookId) return;
-    setGenerationJobs(await listStorybookGenerationJobs(workspace.id, storybookId, { limit: 8 }));
+    // 当前页插图是从任务列表里按 page_id 反查的，窗口太小时旧插图任务会掉出列表导致图"消失"。
+    setGenerationJobs(await listStorybookGenerationJobs(workspace.id, storybookId, { limit: 50 }));
   }
 
   async function refreshStorybook(storybookId = book?.id) {
@@ -301,6 +306,7 @@ export function StorybookDetailPage() {
   const currentPageImage = extractImageResult(currentPageImageJob?.output);
   const imageActionBusy = imageGenerating || Boolean(activeCurrentPageImageJob);
   const shouldShowImageGenerationAction = Boolean(selectedPage);
+  const promptRewriting = promptRewritingPageId !== null && promptRewritingPageId === selectedPage?.id;
 
   useEffect(() => {
     if (!currentPageImage) {
@@ -537,7 +543,7 @@ export function StorybookDetailPage() {
       && !window.confirm("本页还有未保存的修改，AI 重写会基于已保存的正文生成新插图描述，未保存的修改可能被覆盖。仍要继续吗？")) {
       return;
     }
-    setPromptRewriting(true);
+    setPromptRewritingPageId(selectedPage.id);
     try {
       const job = await createGenerationJob(workspace.id, {
         jobType: "storybook_page_prompt",
@@ -586,7 +592,7 @@ export function StorybookDetailPage() {
     } catch (err) {
       setNotice({ title: "插图描述重写失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
-      setPromptRewriting(false);
+      setPromptRewritingPageId(null);
     }
   }
 
@@ -866,6 +872,19 @@ export function StorybookDetailPage() {
     return <div className="page-stack"><Notice title="绘本详情加载失败" copy={error || "当前绘本不存在"} tone="info" /></div>;
   }
 
+  async function confirmDeleteBook() {
+    if (!book) return;
+    setDeleting(true);
+    try {
+      await deleteStorybook(workspace.id, book.id);
+      navigate("../storybooks", { replace: true });
+    } catch (err) {
+      setDeleting(false);
+      setDeleteOpen(false);
+      setNotice({ title: "删除失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+    }
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -885,6 +904,7 @@ export function StorybookDetailPage() {
             <button className="button secondary" type="button" disabled={duplicating} onClick={() => { setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={16} />{duplicating ? "复制中..." : "复制副本"}</button>
             <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</ActionButton>
             <ActionButton className={book.type === "plain" ? "button secondary" : "button primary"} disabled={exporting || !canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || (exporting ? "导出进行中" : undefined)} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</ActionButton>
+            <button className="button text-danger" type="button" onClick={() => setDeleteOpen(true)}>删除</button>
           </>
         }
       />
@@ -895,6 +915,18 @@ export function StorybookDetailPage() {
           tone={retryImageJob ? "danger" : visibleNotice.tone || "good"}
           action={retryImageJob ? <button className="button secondary" type="button" disabled={imageGenerating} onClick={retryIllustration}>重新生成插图</button> : visibleNotice.action}
         />
+      )}
+
+      {deleteOpen && (
+        <Modal title={`删除《${book.title}》？`} onClose={() => !deleting && setDeleteOpen(false)}>
+          <div className="form-stack">
+            <p>删除后不可恢复：这本绘本的分页、角色、生成记录、分享链接和导出记录会一并移除。</p>
+            <div className="modal-actions">
+              <button className="button secondary" type="button" disabled={deleting} onClick={() => setDeleteOpen(false)}>取消</button>
+              <button className="button danger" type="button" disabled={deleting} onClick={() => void confirmDeleteBook()}>{deleting ? "删除中..." : "确认删除"}</button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {metaOpen && (
@@ -952,13 +984,25 @@ export function StorybookDetailPage() {
               </div>
             </div>
             <div className="form-stack">
-              <div className="inline-actions editor-actions modal-editor-actions">
-                <button className="button secondary" type="button" disabled={roleSaving} onClick={saveRole}>{roleSaving ? "保存中..." : "保存角色设定"}</button>
-                <ActionButton className="button primary" disabled={selectedRoleReferenceGenerating || !selectedRoleNeedsReference} disabledHint={!selectedRoleNeedsReference ? "只出现一次的角色或道具不需要参考图" : "生成进行中，请稍候"} onClick={generateRoleReferenceImage}>
-                  {selectedRoleReferenceGenerating ? "生成中..." : !selectedRoleNeedsReference ? "无需参考图" : selectedRole.referenceImageUrl ? "重绘参考图" : "生成参考图"}
-                </ActionButton>
-              </div>
-              <div className="reference-preview">
+              <section className="share-section">
+                <h4 className="share-section-title">角色设定</h4>
+                <label>角色名称<input name="name" value={roleForm.name} onChange={updateRoleForm} /></label>
+                <label>
+                  视觉类型
+                  <select name="roleType" value={roleForm.roleType} onChange={updateRoleForm}>
+                    <option value="protagonist">主角</option>
+                    <option value="supporting">配角</option>
+                    <option value="peer">同伴角色</option>
+                    <option value="teacher">老师形象</option>
+                    <option value="prop">关键道具</option>
+                  </select>
+                </label>
+                <label>稳定外观<textarea name="appearance" rows={4} value={roleForm.appearance} onChange={updateRoleForm} /></label>
+                <label className="check-row"><input type="checkbox" checked={roleForm.needsConsistency} onChange={(event) => setRoleForm((current) => ({ ...current, needsConsistency: event.target.checked }))} />跨页保持一致（出现 2 页以上才需要参考图）</label>
+              </section>
+              <section className="share-section">
+                <h4 className="share-section-title">参考图</h4>
+                <div className="reference-preview">
                 {!selectedRoleNeedsReference ? (
                   <div className="reference-empty">无需参考图</div>
                 ) : selectedRoleReferenceGenerating ? (
@@ -983,25 +1027,16 @@ export function StorybookDetailPage() {
                   <p>{selectedRoleReferenceGenerating ? "参考图任务还在生成，完成后会写回角色并用于后续分页插图。" : selectedRoleNeedsReference ? "先确认角色参考图，再生成分页插图，可以显著提高跨页形象一致性。" : selectedRole.referenceImageUrl ? "这个角色或道具当前没有跨页重复出现，已有历史参考图不会用于分页插图。" : "这个角色或道具当前没有跨页重复出现，不需要单独生成参考图。"}</p>
                 </div>
               </div>
-              <label>角色名称<input name="name" value={roleForm.name} onChange={updateRoleForm} /></label>
-              <label>
-                视觉类型
-                <select name="roleType" value={roleForm.roleType} onChange={updateRoleForm}>
-                  <option value="protagonist">主角</option>
-                  <option value="supporting">配角</option>
-                  <option value="peer">同伴角色</option>
-                  <option value="teacher">老师形象</option>
-                  <option value="prop">关键道具</option>
-                </select>
-              </label>
-              <label>稳定外观<textarea name="appearance" rows={4} value={roleForm.appearance} onChange={updateRoleForm} /></label>
               {selectedRoleNeedsReference ? (
                 <div className="reference-prompt-preview">
                   <div>
                     <strong>参考图生成依据</strong>
                     <span>由角色名称、视觉类型和外观设定自动生成；故事作用不参与参考图，避免把剧情动作画进角色标准照。</span>
                   </div>
-                  <p>{roleReferencePromptPreview}</p>
+                  <details className="prompt-details">
+                    <summary>查看完整生成提示词</summary>
+                    <p>{roleReferencePromptPreview}</p>
+                  </details>
                 </div>
               ) : (
                 <div className="reference-prompt-preview muted">
@@ -1011,7 +1046,15 @@ export function StorybookDetailPage() {
                   </div>
                 </div>
               )}
-              <label className="check-row"><input type="checkbox" checked={roleForm.needsConsistency} onChange={(event) => setRoleForm((current) => ({ ...current, needsConsistency: event.target.checked }))} />跨页保持一致（出现 2 页以上才需要参考图）</label>
+              </section>
+              <section className="share-section">
+                <div className="inline-actions editor-actions modal-editor-actions share-actions">
+                  <button className="button secondary" type="button" disabled={roleSaving} onClick={saveRole}>{roleSaving ? "保存中..." : "保存角色设定"}</button>
+                  <ActionButton className="button primary" disabled={selectedRoleReferenceGenerating || !selectedRoleNeedsReference} disabledHint={!selectedRoleNeedsReference ? "只出现一次的角色或道具不需要参考图" : "生成进行中，请稍候"} onClick={generateRoleReferenceImage}>
+                    {selectedRoleReferenceGenerating ? "生成中..." : !selectedRoleNeedsReference ? "无需参考图" : selectedRole.referenceImageUrl ? "重绘参考图" : "生成参考图"}
+                  </ActionButton>
+                </div>
+              </section>
             </div>
           </div>
         </Modal>
@@ -1068,7 +1111,10 @@ export function StorybookDetailPage() {
                     任务{generationStatusLabel(activeCurrentPageImageJob.status)}，请稍等。任务编号：{activeCurrentPageImageJob.id.slice(0, 8)}。
                   </span>
                 </div>
-                <p>{pageForm.illustrationPrompt || selectedPage.illustrationPrompt}</p>
+                <details className="prompt-details">
+                  <summary>查看生成中的插图描述</summary>
+                  <p>{pageForm.illustrationPrompt || selectedPage.illustrationPrompt}</p>
+                </details>
                 <small>完成后这里会自动刷新为真实插图。</small>
               </div>
             ) : currentPageImage && (
@@ -1083,7 +1129,10 @@ export function StorybookDetailPage() {
                 ) : (
                   <p>正在读取当前登录态下的插图文件。</p>
                 )}
-                <p>{currentPageImage.prompt}</p>
+                <details className="prompt-details">
+                  <summary>查看完整生成提示词</summary>
+                  <p>{currentPageImage.prompt}</p>
+                </details>
                 <small>{currentPageImage.styleNotes.join(" · ")}</small>
               </div>
             )}
@@ -1168,151 +1217,155 @@ export function StorybookDetailPage() {
 
       {shareOpen && (
         <Modal title="管理分享链接" onClose={() => setShareOpen(false)}>
-          <p>分享范围：获得链接的人可查看当前绘本版本。</p>
-          <p>当前空间：<strong>{workspace.name}</strong></p>
-          <div className="review-list">
-            <div><span>当前可见性</span><strong>{visibilityLabel(book.visibility)}</strong></div>
-            <div><span>导出状态</span><strong>{exportJobs.length ? exportStatusLabel(exportJobs[0].status) : "暂无记录"}</strong></div>
-            <div><span>分享链接</span><strong>{shareLinks.length ? `${shareLinks.length} 个有效链接` : "未创建"}</strong></div>
-            <div><span>老师复核</span><strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong></div>
-          </div>
-          <div className="delivery-status-main modal-delivery-status">
-            <div>
-              <p className="eyebrow">分享前检查</p>
-              <h3>{effectiveDeliveryBlocker ? "先处理阻断项，再分享" : book.teacherReviewStatus === "confirmed" ? "已复核，可以分享" : "建议老师复核后分享"}</h3>
-              <p>{effectiveDeliveryBlocker || deliveryWarnings[0] || reviewDeliveryReminder || "页面、角色和插图检查已通过，可以创建分享链接。"}</p>
+          <section className="share-section">
+            <p className="share-meta">分享范围：获得链接的人可查看当前绘本版本 · 当前空间：<strong>{workspace.name}</strong></p>
+            <p className="share-meta">
+              可见性 <strong>{visibilityLabel(book.visibility)}</strong>
+              <span className="share-meta-sep">·</span>导出 <strong>{exportJobs.length ? exportStatusLabel(exportJobs[0].status) : "暂无记录"}</strong>
+              <span className="share-meta-sep">·</span>分享链接 <strong>{shareLinks.length ? `${shareLinks.length} 个有效链接` : "未创建"}</strong>
+              <span className="share-meta-sep">·</span>复核 <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
+            </p>
+            <div className="delivery-status-main modal-delivery-status">
+              <div>
+                <p className="eyebrow">分享前检查</p>
+                <h3>{effectiveDeliveryBlocker ? "先处理阻断项，再分享" : book.teacherReviewStatus === "confirmed" ? "已复核，可以分享" : "建议老师复核后分享"}</h3>
+                <p>{effectiveDeliveryBlocker || deliveryWarnings[0] || reviewDeliveryReminder || "页面、角色和插图检查已通过，可以创建分享链接。"}</p>
+              </div>
+              {quality && (
+                <div className="delivery-status-actions">
+                  <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>
+                  <button
+                    className={book.teacherReviewStatus === "confirmed" ? "button secondary" : "button primary"}
+                    type="button"
+                    disabled={reviewSaving || (book.teacherReviewStatus !== "confirmed" && quality.status === "blocked")}
+                    title={book.teacherReviewStatus !== "confirmed" && quality.status === "blocked" ? "请先修正生成质量阻断项" : undefined}
+                    onClick={() => saveTeacherReview(book.teacherReviewStatus === "confirmed" ? "pending" : "confirmed")}
+                  >
+                    {reviewSaving ? "保存中..." : book.teacherReviewStatus === "confirmed" ? "重新设为待复核" : quality.status === "blocked" ? "先修正阻断项" : "老师已复核"}
+                  </button>
+                </div>
+              )}
             </div>
-            {quality && (
-              <div className="delivery-status-actions">
-                <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>
-                <button
-                  className={book.teacherReviewStatus === "confirmed" ? "button secondary" : "button primary"}
-                  type="button"
-                  disabled={reviewSaving || (book.teacherReviewStatus !== "confirmed" && quality.status === "blocked")}
-                  title={book.teacherReviewStatus !== "confirmed" && quality.status === "blocked" ? "请先修正生成质量阻断项" : undefined}
-                  onClick={() => saveTeacherReview(book.teacherReviewStatus === "confirmed" ? "pending" : "confirmed")}
-                >
-                  {reviewSaving ? "保存中..." : book.teacherReviewStatus === "confirmed" ? "重新设为待复核" : quality.status === "blocked" ? "先修正阻断项" : "老师已复核"}
-                </button>
+            {quality && (firstActionableQualityPage || firstRoleNeedingReference) && (
+              <div className="delivery-next-step">
+                <div>
+                  <strong>{quality.status === "blocked" ? "需要处理" : "建议查看"}</strong>
+                  <span>
+                    {firstActionableQualityPage
+                      ? `第 ${firstActionableQualityPage.pageNumber} 页：${firstActionableQualityPage.issues[0] || firstActionableQualityPage.suggestions[0] || "请核对分页内容。"}`
+                      : `${firstRoleNeedingReference?.name} 还没有可用参考图。`}
+                  </span>
+                </div>
+                <div className="inline-actions">
+                  {firstActionableQualityPage && (
+                    <button className="button secondary" type="button" onClick={() => { setShareOpen(false); focusQualityPage(firstActionableQualityPage); }}>
+                      定位问题页
+                    </button>
+                  )}
+                  {firstRoleNeedingReference && (
+                    <button className="button secondary" type="button" onClick={() => { setShareOpen(false); focusRoleReference(firstRoleNeedingReference); }}>
+                      定位角色参考图
+                    </button>
+                  )}
+                </div>
               </div>
             )}
-          </div>
-          {quality && (firstActionableQualityPage || firstRoleNeedingReference) && (
-            <div className="delivery-next-step">
-              <div>
-                <strong>{quality.status === "blocked" ? "需要处理" : "建议查看"}</strong>
-                <span>
-                  {firstActionableQualityPage
-                    ? `第 ${firstActionableQualityPage.pageNumber} 页：${firstActionableQualityPage.issues[0] || firstActionableQualityPage.suggestions[0] || "请核对分页内容。"}`
-                    : `${firstRoleNeedingReference?.name} 还没有可用参考图。`}
-                </span>
-              </div>
-              <div className="inline-actions">
-                {firstActionableQualityPage && (
-                  <button className="button secondary" type="button" onClick={() => { setShareOpen(false); focusQualityPage(firstActionableQualityPage); }}>
-                    定位问题页
-                  </button>
-                )}
-                {firstRoleNeedingReference && (
-                  <button className="button secondary" type="button" onClick={() => { setShareOpen(false); focusRoleReference(firstRoleNeedingReference); }}>
-                    定位角色参考图
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-          <div className="privacy-callout">
-            分享前请确认不包含未授权儿童信息或家庭隐私。{reviewDeliveryReminder ? ` 分享弹窗提醒：${reviewDeliveryReminder}` : ""}
-          </div>
-          {quality && (
-            <details className="quality-details compact">
-              <summary>查看交付检查详情</summary>
-              <div className="quality-check-grid">
-                {quality.checks.map((check) => (
-                  <div className="quality-check-item" key={check.key}>
-                    <Badge tone={qualityTone(check.status)}>{qualityStatusLabel(check.status)}</Badge>
-                    <strong>{check.label}</strong>
-                    <span>{check.message}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="quality-page-list">
-                {quality.pages.map((page) => (
-                  <button className="quality-page-row" type="button" key={page.pageId} onClick={() => { setShareOpen(false); focusQualityPage(page); }}>
-                    <div>
-                      <strong>第 {page.pageNumber} 页</strong>
-                      <span>{qualityPageSummary(page)}</span>
-                      {(page.issues.length > 0 || page.suggestions.length > 0) && (
-                        <div className="quality-page-notes">
-                          {page.issues.map((issue) => (
-                            <small className="quality-page-note issue" key={`issue-${issue}`}>问题：{issue}</small>
-                          ))}
-                          {page.suggestions.map((suggestion) => (
-                            <small className="quality-page-note suggestion" key={`suggestion-${suggestion}`}>建议：{suggestion}</small>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <Badge tone={qualityTone(page.status)}>{qualityStatusLabel(page.status)}</Badge>
-                  </button>
-                ))}
-              </div>
-            </details>
-          )}
-          <div className="form-grid">
-            <label>
-              整本绘本可见范围
-              <select value={visibilityValue} onChange={(event) => setVisibilityValue(event.target.value as Storybook["visibility"])}>
-                <option value="private">仅当前空间私有</option>
-                <option value="workspace">园所/空间内共享</option>
-              </select>
-            </label>
-            <button className="button secondary" type="button" disabled={visibilitySaving || visibilityValue === book.visibility} onClick={saveVisibility}>
-              {visibilitySaving ? "保存中..." : visibilityValue === book.visibility ? "可见范围已保存" : "保存可见范围"}
-            </button>
-          </div>
-          <div className="form-grid">
-            <div>
-              当前有效链接
-              {shareLinks.length ? (
-                <div className="share-link-list">
-                  {shareLinks.map((link, index) => (
-                    <div className="share-link-row" key={link.id}>
-                      <div>
-                        <strong>分享链接 {index + 1}</strong>
-                        <span>{shareExpiryLabel(link.expiresAt)}</span>
-                        <span>{shareAccessLabel(link)}</span>
-                      </div>
-                      <div className="inline-actions">
-                        <a className="button secondary" href={link.url} target="_blank" rel="noreferrer">打开</a>
-                        <button className="button secondary" type="button" onClick={() => copyShareUrl(link)}>复制链接</button>
-                        <button className="button secondary" type="button" disabled={shareSaving} onClick={() => revokeShare(link)}>
-                          {revokingShareId === link.id ? "撤回中..." : "撤回"}
-                        </button>
-                      </div>
+            <p className="share-meta privacy-note">分享前请确认不包含未授权儿童信息或家庭隐私。</p>
+            {quality && (
+              <details className="quality-details compact">
+                <summary>查看交付检查详情</summary>
+                <div className="quality-check-grid">
+                  {quality.checks.map((check) => (
+                    <div className="quality-check-item" key={check.key}>
+                      <Badge tone={qualityTone(check.status)}>{qualityStatusLabel(check.status)}</Badge>
+                      <strong>{check.label}</strong>
+                      <span>{check.message}</span>
                     </div>
                   ))}
                 </div>
-              ) : (
-                <span>还没有有效分享链接。</span>
-              )}
+                <div className="quality-page-list">
+                  {quality.pages.map((page) => (
+                    <button className="quality-page-row" type="button" key={page.pageId} onClick={() => { setShareOpen(false); focusQualityPage(page); }}>
+                      <div>
+                        <strong>第 {page.pageNumber} 页</strong>
+                        <span>{qualityPageSummary(page)}</span>
+                        {(page.issues.length > 0 || page.suggestions.length > 0) && (
+                          <div className="quality-page-notes">
+                            {page.issues.map((issue) => (
+                              <small className="quality-page-note issue" key={`issue-${issue}`}>问题：{issue}</small>
+                            ))}
+                            {page.suggestions.map((suggestion) => (
+                              <small className="quality-page-note suggestion" key={`suggestion-${suggestion}`}>建议：{suggestion}</small>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <Badge tone={qualityTone(page.status)}>{qualityStatusLabel(page.status)}</Badge>
+                    </button>
+                  ))}
+                </div>
+              </details>
+            )}
+          </section>
+
+          <section className="share-section">
+            <h3 className="share-section-title">分享设置</h3>
+            <div className="form-grid">
+              <label>
+                整本绘本可见范围
+                <select value={visibilityValue} onChange={(event) => setVisibilityValue(event.target.value as Storybook["visibility"])}>
+                  <option value="private">仅当前空间私有</option>
+                  <option value="workspace">园所/空间内共享</option>
+                </select>
+              </label>
+              <button className="button secondary" type="button" disabled={visibilitySaving || visibilityValue === book.visibility} onClick={saveVisibility}>
+                {visibilitySaving ? "保存中..." : visibilityValue === book.visibility ? "可见范围已保存" : "保存可见范围"}
+              </button>
             </div>
-            <label>
-              链接有效期
-              <select value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value as "7d" | "30d" | "never")}>
-                <option value="7d">7 天有效</option>
-                <option value="30d">30 天有效</option>
-                <option value="never">不过期</option>
-              </select>
-            </label>
-          </div>
-          <div className="modal-actions">
-            <button className="button secondary" type="button" onClick={() => setShareOpen(false)}>取消</button>
-            {createdShareUrl && <a className="button secondary" href={createdShareUrl} target="_blank" rel="noreferrer">打开最新分享页</a>}
-            <ActionButton className="button primary" disabled={shareSaving || Boolean(qualityDeliveryBlocker)} disabledHint={qualityDeliveryBlocker || (shareSaving ? "处理中，请稍候" : undefined)} onClick={createShare}>
-              {shareSaving ? "处理中..." : "创建新的分享链接"}
-            </ActionButton>
-          </div>
+          </section>
+
+          <section className="share-section">
+            <h3 className="share-section-title">分享链接</h3>
+            {shareLinks.length ? (
+              <div className="share-link-list">
+                {shareLinks.map((link, index) => (
+                  <div className="share-link-row" key={link.id}>
+                    <div>
+                      <strong>分享链接 {index + 1}</strong>
+                      <span>{shareExpiryLabel(link.expiresAt)}</span>
+                      <span>{shareAccessLabel(link)}</span>
+                    </div>
+                    <div className="inline-actions">
+                      <a className="button secondary" href={link.url} target="_blank" rel="noreferrer">打开</a>
+                      <button className="button secondary" type="button" onClick={() => copyShareUrl(link)}>复制链接</button>
+                      <button className="button secondary" type="button" disabled={shareSaving} onClick={() => revokeShare(link)}>
+                        {revokingShareId === link.id ? "撤回中..." : "撤回"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="share-meta">还没有有效分享链接。</p>
+            )}
+            <div className="form-grid">
+              <label>
+                链接有效期
+                <select value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value as "7d" | "30d" | "never")}>
+                  <option value="7d">7 天有效</option>
+                  <option value="30d">30 天有效</option>
+                  <option value="never">不过期</option>
+                </select>
+              </label>
+            </div>
+            <div className="modal-actions share-actions">
+              <button className="button secondary" type="button" onClick={() => setShareOpen(false)}>关闭</button>
+              {createdShareUrl && <a className="button secondary" href={createdShareUrl} target="_blank" rel="noreferrer">打开最新分享页</a>}
+              <ActionButton className="button primary" disabled={shareSaving || Boolean(qualityDeliveryBlocker)} disabledHint={qualityDeliveryBlocker || (shareSaving ? "处理中，请稍候" : undefined)} onClick={createShare}>
+                {shareSaving ? "处理中..." : "创建新的分享链接"}
+              </ActionButton>
+            </div>
+          </section>
         </Modal>
       )}
       {zoomedImage && (

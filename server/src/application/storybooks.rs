@@ -14,12 +14,12 @@ use crate::{
     error::ApiError,
     models::{
         CreateStorybookRequest, DuplicateStorybookRequest, Storybook, StorybookListQuery,
-        UpdateStorybookRequest,
+        StorybookStatus, UpdateStorybookRequest,
     },
 };
 
 #[cfg(not(feature = "db"))]
-use crate::models::{StorybookPage, StorybookRole, StorybookStatus, StorybookType, Visibility};
+use crate::models::{StorybookPage, StorybookRole, StorybookType, Visibility};
 
 pub use crate::application::storybook_customization::{derive_custom, derive_custom_batch};
 pub use crate::application::storybook_editing::{update_page, update_role};
@@ -341,6 +341,70 @@ pub async fn duplicate(
         }
         state.storybooks.push(book.clone());
         Ok(book)
+    }
+}
+
+pub async fn delete(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+) -> Result<(), ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_editor_db(ctx, headers, workspace_id).await?;
+        let book = crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
+            .await
+            .map_err(common::db_error)?;
+        // 已投稿/已上架的绘本被 marketplace 投稿或模板引用，不能直接删除。
+        if matches!(
+            book.status,
+            StorybookStatus::Submitted | StorybookStatus::Listed
+        ) {
+            return Err(ApiError::state_conflict(
+                "已投稿或已上架的绘本不能直接删除，请先撤回投稿或下架",
+            ));
+        }
+        crate::repositories::storybooks::delete(&ctx.db, workspace_id, storybook_id)
+            .await
+            .map_err(common::db_error)?;
+        crate::repositories::audit::log(
+            &ctx.db,
+            Some(workspace_id),
+            Some(common::actor_user_id(headers)?),
+            "storybook.deleted",
+            "storybook",
+            Some(storybook_id),
+            json!({
+                "title": book.title,
+                "status": storybook_status_name(&book.status),
+            }),
+        )
+        .await
+        .map_err(common::db_error)?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let state = shared_state(ctx)?;
+        common::require_editor(&state, headers, workspace_id)?;
+        let mut state = state.write().expect("state lock poisoned");
+        let index = state
+            .storybooks
+            .iter()
+            .position(|item| item.workspace_id == workspace_id && item.id == storybook_id)
+            .ok_or_else(|| ApiError::not_found("storybook"))?;
+        if matches!(
+            state.storybooks[index].status,
+            StorybookStatus::Submitted | StorybookStatus::Listed
+        ) {
+            return Err(ApiError::state_conflict(
+                "已投稿或已上架的绘本不能直接删除，请先撤回投稿或下架",
+            ));
+        }
+        state.storybooks.remove(index);
+        Ok(())
     }
 }
 

@@ -26,6 +26,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 base64 = "0.22"
 hmac = "0.12"
+jpeg-encoder = "0.6"
 png = "0.17"
 sha2 = "0.10"
 

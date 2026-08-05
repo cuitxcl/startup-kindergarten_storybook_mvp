@@ -49,7 +49,8 @@ pub fn provider_summary(provider: &ConfiguredGenerationProvider) -> GenerationPr
                 missing_configuration: missing_configuration(false, image_ready),
                 components: generation_provider_components(),
                 diagnostic: if image_ready {
-                    "插图生成已接入真实 provider；文本生成未配置（缺少 DEEPSEEK_API_KEY）".to_string()
+                    "插图生成已接入真实 provider；文本生成未配置（缺少 DEEPSEEK_API_KEY）"
+                        .to_string()
                 } else {
                     "缺少 SEEDREAM_API_KEY 或 ARK_API_KEY，插图生成不可用".to_string()
                 },

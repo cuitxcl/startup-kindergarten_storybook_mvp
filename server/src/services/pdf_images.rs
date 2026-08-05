@@ -1,15 +1,21 @@
 use std::{fs::File, path::Path};
 
-const IMAGE_BOX_X: f64 = 64.0;
-const IMAGE_BOX_Y: f64 = 468.0;
-const IMAGE_BOX_WIDTH: f64 = 467.0;
-const IMAGE_BOX_HEIGHT: f64 = 226.0;
+// 正文页插图区：页面顶部 48,440 ~ 547,770，标题与正文排在其下方（见 pdf.rs 版式常量）。
+const IMAGE_BOX_X: f64 = 48.0;
+const IMAGE_BOX_Y: f64 = 440.0;
+const IMAGE_BOX_WIDTH: f64 = 499.0;
+const IMAGE_BOX_HEIGHT: f64 = 330.0;
+
+/// PDF 插图 JPEG 质量（1-100）：85 对水彩绘本风格观感无损，体积约为原始 RGB 的 1/30。
+const PDF_IMAGE_JPEG_QUALITY: u8 = 85;
 
 pub(crate) struct PdfImage {
     pub(crate) name: String,
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) rgb: Vec<u8>,
+    /// JPEG（DCTDecode）字节流。原始 RGB 直接嵌入会让 6 页绘本 PDF 超过 50MB 导出上限，
+    /// 绘本水彩插图经 JPEG 高质量压缩后观感无损、体积缩小一个数量级。
+    pub(crate) data: Vec<u8>,
 }
 
 pub(crate) struct ImagePlacement {
@@ -51,11 +57,20 @@ pub(crate) fn decode_png_for_pdf(path: &Path) -> Result<PdfImage, String> {
         .map_err(|err| format!("解码 PNG 失败：{err}"))?;
     let bytes = &buf[..info.buffer_size()];
     let rgb = png_bytes_to_rgb(bytes, info.color_type, info.bit_depth)?;
+    let mut data = Vec::new();
+    jpeg_encoder::Encoder::new(&mut data, PDF_IMAGE_JPEG_QUALITY)
+        .encode(
+            &rgb,
+            info.width as u16,
+            info.height as u16,
+            jpeg_encoder::ColorType::Rgb,
+        )
+        .map_err(|err| format!("JPEG 压缩插图失败：{err}"))?;
     Ok(PdfImage {
         name: String::new(),
         width: info.width,
         height: info.height,
-        rgb,
+        data,
     })
 }
 

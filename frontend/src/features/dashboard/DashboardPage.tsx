@@ -101,6 +101,13 @@ function getPrimary(workspace: Workspace, books: Storybook[], childItems: ChildP
   const exportable = books.find((book) => book.status === "exportable");
   const incompleteChild = childItems.find((child) => child.completeness < 85);
 
+  // 向导阶段（方案/角色/分页）的绘本，「继续编辑」应回到向导续作，
+  // 而不是进入只有占位内容的详情页。
+  const continueTarget = (book: Storybook) =>
+    ["draft", "plan_pending", "roles_pending"].includes(book.status)
+      ? `../storybooks/new?bookId=${book.id}`
+      : `../storybooks/${book.id}`;
+
   if (workspace.role === "school_admin") {
     return {
       icon: <ShieldCheck size={20} />,
@@ -129,7 +136,7 @@ function getPrimary(workspace: Workspace, books: Storybook[], childItems: ChildP
     copy: editable
       ? storybookNextAction(editable)
       : "先做普通绘本，再按孩子资料生成定制副本，适合验证完整创作流程。",
-    action: { label: editable ? "继续编辑" : "新建普通绘本", to: editable ? `../storybooks/${editable.id}` : "../storybooks/new" },
+    action: { label: editable ? "继续编辑" : "新建普通绘本", to: editable ? continueTarget(editable) : "../storybooks/new" },
     meta: "个人空间重点",
   };
 }
@@ -197,7 +204,9 @@ function getTasks(workspace: Workspace, books: Storybook[], childItems: ChildPro
     ...editable.slice(0, 1).map((book) => ({
       title: `继续编辑《${book.title}》`,
       copy: storybookNextAction(book),
-      to: `../storybooks/${book.id}`,
+      to: ["draft", "plan_pending", "roles_pending"].includes(book.status)
+        ? `../storybooks/new?bookId=${book.id}`
+        : `../storybooks/${book.id}`,
       badge: storybookStatusLabel[book.status],
       tone: statusTone(book.status),
     })),

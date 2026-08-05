@@ -10,12 +10,45 @@ use uuid::Uuid;
 const PAGE_WIDTH: i32 = 595;
 const PAGE_HEIGHT: i32 = 842;
 const LEFT: i32 = 48;
-const TOP: i32 = 790;
-const LINE_HEIGHT: i32 = 24;
 const CONTENT_WIDTH: i32 = PAGE_WIDTH - LEFT * 2;
+
+// 正文页版式：插图在上（48,440 ~ 547,770），标题与正文在下，页脚在 y=36。
+const IMAGE_FRAME_X: i32 = 44;
+const IMAGE_FRAME_Y: i32 = 436;
+const IMAGE_FRAME_WIDTH: i32 = CONTENT_WIDTH + 8;
+const IMAGE_FRAME_HEIGHT: i32 = 338;
+const STORY_TEXT_TOP: i32 = 402;
+const STORY_TEXT_BOTTOM: i32 = 64;
+
+// 封面版式：边框 54,190 ~ 541,690。
+const COVER_FRAME_X: i32 = 54;
+const COVER_FRAME_Y: i32 = 190;
+const COVER_FRAME_WIDTH: i32 = PAGE_WIDTH - COVER_FRAME_X * 2;
+const COVER_FRAME_HEIGHT: i32 = 500;
+const COVER_TEXT_TOP: i32 = 648;
+const COVER_TEXT_BOTTOM: i32 = 220;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Align {
+    Left,
+    Center,
+}
+
+struct PdfLine {
+    text: String,
+    size: i32,
+    /// 与上一行基线的间距；首行相对 text_top 的下移量。
+    gap: i32,
+    align: Align,
+}
+
 struct PdfPage {
     background: Vec<String>,
-    lines: Vec<(String, i32)>,
+    text_top: i32,
+    text_bottom: i32,
+    lines: Vec<PdfLine>,
+    /// 无插图时在插图区内显示占位提示。
+    image_placeholder: bool,
     footer: Option<String>,
     image: Option<usize>,
 }
@@ -36,41 +69,10 @@ fn storybook_pdf_pages(
     storybook: &Storybook,
     image_paths: &HashMap<Uuid, PathBuf>,
 ) -> (Vec<PdfPage>, Vec<PdfImage>) {
-    let role_names = storybook
-        .roles
-        .iter()
-        .map(|role| role.name.as_str())
-        .collect::<Vec<_>>()
-        .join("、");
-    let mut pages = vec![PdfPage {
-        background: cover_background(),
-        lines: vec![
-            ("Kindleaf 绘本导出".to_string(), 22),
-            (storybook.title.clone(), 28),
-            (format!("年龄段：{}", storybook.age_group), 14),
-            (format!("使用场景：{}", storybook.use_scene), 14),
-            (format!("教学目标：{}", storybook.teaching_goal), 14),
-            (format!("主要角色：{}", empty_label(&role_names)), 14),
-            (format!("画面风格：{}", storybook.cover_tone), 14),
-            (format!("共 {} 页", storybook.pages.len()), 14),
-        ],
-        footer: Some("Kindleaf 生成导出版".to_string()),
-        image: None,
-    }];
+    let mut pages = vec![cover_page(storybook)];
     let mut images = Vec::new();
 
     for page in &storybook.pages {
-        let mut lines = vec![
-            (format!("第 {} 页", page.page_number), 14),
-            (page.title.clone(), 24),
-        ];
-        lines.extend(wrap_text(&page.body, 28).into_iter().map(|line| (line, 15)));
-        lines.push(("插图画面".to_string(), 14));
-        lines.extend(
-            wrap_text(&page.illustration_prompt, 30)
-                .into_iter()
-                .map(|line| (line, 12)),
-        );
         let image = image_paths
             .get(&page.id)
             .and_then(|path| decode_png_for_pdf(path).ok())
@@ -80,15 +82,97 @@ fn storybook_pdf_pages(
                 images.push(image);
                 index
             });
-        pages.push(PdfPage {
-            background: story_page_background(),
-            lines,
-            footer: Some(format!("{} / 第 {} 页", storybook.title, page.page_number)),
-            image,
-        });
+        pages.push(story_page(storybook, page, image));
     }
 
     (pages, images)
+}
+
+fn cover_page(storybook: &Storybook) -> PdfPage {
+    let role_names = storybook
+        .roles
+        .iter()
+        .map(|role| role.name.as_str())
+        .collect::<Vec<_>>()
+        .join("、");
+
+    let mut lines = vec![PdfLine {
+        text: "KINDLEAF 绘本".to_string(),
+        size: 12,
+        gap: 0,
+        align: Align::Center,
+    }];
+    // 书名最长两行，居中大字。
+    for (index, title_line) in wrap_text(&storybook.title, 14).into_iter().take(2).enumerate() {
+        lines.push(PdfLine {
+            text: title_line,
+            size: 30,
+            gap: if index == 0 { 70 } else { 40 },
+            align: Align::Center,
+        });
+    }
+    let meta = [
+        format!("年龄段：{}", storybook.age_group),
+        format!("使用场景：{}", storybook.use_scene),
+        format!("教学目标：{}", storybook.teaching_goal),
+        format!("主要角色：{}", empty_label(&role_names)),
+        format!("画面风格：{}", storybook.cover_tone),
+        format!("共 {} 页", storybook.pages.len()),
+    ];
+    for (index, item) in meta.iter().enumerate() {
+        for (wrapped_index, wrapped) in wrap_text(item, 30).into_iter().enumerate() {
+            lines.push(PdfLine {
+                text: wrapped,
+                size: 13,
+                gap: if index == 0 && wrapped_index == 0 { 56 } else { 24 },
+                align: Align::Center,
+            });
+        }
+    }
+
+    PdfPage {
+        background: cover_background(),
+        text_top: COVER_TEXT_TOP,
+        text_bottom: COVER_TEXT_BOTTOM,
+        lines,
+        image_placeholder: false,
+        footer: Some("Kindleaf 生成导出版".to_string()),
+        image: None,
+    }
+}
+
+fn story_page(
+    storybook: &Storybook,
+    page: &crate::models::StorybookPage,
+    image: Option<usize>,
+) -> PdfPage {
+    // 交付版 PDF 只呈现读者可见内容：页码标题、正文与插图。
+    // illustration_prompt 是内部生成指令，不写入成品。
+    let mut lines = vec![PdfLine {
+        text: format!("第 {} 页　{}", page.page_number, page.title),
+        size: 18,
+        gap: 0,
+        align: Align::Left,
+    }];
+    lines.extend(
+        wrap_text(&page.body, 33)
+            .into_iter()
+            .map(|line| PdfLine {
+                text: line,
+                size: 13,
+                gap: 22,
+                align: Align::Left,
+            }),
+    );
+    PdfPage {
+        background: story_page_background(),
+        text_top: STORY_TEXT_TOP,
+        text_bottom: STORY_TEXT_BOTTOM,
+        lines,
+        image_placeholder: image.is_none(),
+        footer: Some(format!("{} / 第 {} 页", storybook.title, page.page_number)),
+        image,
+    }
 }
 
 fn minimal_pdf(pages: &[PdfPage], images: &[PdfImage], searchable_text: &str) -> Vec<u8> {
@@ -146,14 +230,14 @@ fn minimal_pdf(pages: &[PdfPage], images: &[PdfImage], searchable_text: &str) ->
     for (index, image) in images.iter().enumerate() {
         let image_obj = first_image_obj + index;
         let header = format!(
-            "{image_obj} 0 obj << /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length {} >> stream\n",
+            "{image_obj} 0 obj << /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {} >> stream\n",
             image.width,
             image.height,
-            image.rgb.len()
+            image.data.len()
         );
         let mut object = Vec::new();
         object.extend_from_slice(header.as_bytes());
-        object.extend_from_slice(&image.rgb);
+        object.extend_from_slice(&image.data);
         object.extend_from_slice(b"\nendstream\nendobj\n");
         objects.push(object);
     }
@@ -197,19 +281,38 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
             pdf_number(placement.y),
             image.name
         ));
+    } else if page.image_placeholder {
+        let label = "插图待生成";
+        content.push_str("BT\n/F1 14 Tf\n0.55 0.45 0.4 rg\n");
+        content.push_str(&format!(
+            "1 0 0 1 {} {} Tm\n<{}> Tj\n",
+            pdf_number(centered_x(label, 14)),
+            IMAGE_FRAME_Y + IMAGE_FRAME_HEIGHT / 2,
+            utf16be_hex(label)
+        ));
+        content.push_str("ET\n");
     }
-    content.push_str("BT\n");
-    let mut y = TOP;
-    for (index, (line, size)) in page.lines.iter().enumerate() {
-        if index > 0 {
-            y -= LINE_HEIGHT;
+    content.push_str("BT\n0.2 0.14 0.12 rg\n");
+    let mut y = page.text_top;
+    for line in &page.lines {
+        y -= line.gap;
+        if y < page.text_bottom {
+            break;
         }
-        content.push_str(&format!("/F1 {size} Tf\n1 0 0 1 {LEFT} {y} Tm\n"));
-        content.push_str(&format!("<{}> Tj\n", utf16be_hex(line)));
+        let x = match line.align {
+            Align::Left => LEFT as f64,
+            Align::Center => centered_x(&line.text, line.size),
+        };
+        content.push_str(&format!(
+            "/F1 {} Tf\n1 0 0 1 {} {y} Tm\n",
+            line.size,
+            pdf_number(x)
+        ));
+        content.push_str(&format!("<{}> Tj\n", utf16be_hex(&line.text)));
     }
     content.push_str("ET\n");
     if let Some(footer) = &page.footer {
-        content.push_str("BT\n/F1 10 Tf\n");
+        content.push_str("BT\n/F1 10 Tf\n0.5 0.42 0.38 rg\n");
         content.push_str(&format!(
             "1 0 0 1 {LEFT} 36 Tm\n<{}> Tj\n",
             utf16be_hex(footer)
@@ -217,6 +320,19 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
         content.push_str("ET\n");
     }
     content
+}
+
+/// STSong 无内嵌字宽表，用 CJK≈1em、ASCII≈0.55em 估算居中位置。
+fn estimate_text_width(text: &str, size: i32) -> f64 {
+    let units: f64 = text
+        .chars()
+        .map(|ch| if ch.is_ascii() { 0.55 } else { 1.0 })
+        .sum();
+    units * size as f64
+}
+
+fn centered_x(text: &str, size: i32) -> f64 {
+    ((PAGE_WIDTH as f64 - estimate_text_width(text, size)) / 2.0).max(LEFT as f64)
 }
 
 fn pdf_number(value: f64) -> String {
@@ -233,19 +349,25 @@ fn pdf_number(value: f64) -> String {
 
 fn cover_background() -> Vec<String> {
     vec![
-        // Warm paper background and title panel.
+        // 暖纸底色 + 居中边框 + 标题分隔线。
         "0.98 0.96 0.91 rg\n0 0 595 842 re f\n".to_string(),
-        format!("0.72 0.33 0.28 RG\n1.5 w\n{LEFT} 438 {CONTENT_WIDTH} 284 re S\n"),
-        "0.92 0.78 0.67 rg\n64 454 467 84 re f\n".to_string(),
+        format!(
+            "0.72 0.33 0.28 RG\n1.5 w\n{COVER_FRAME_X} {COVER_FRAME_Y} {COVER_FRAME_WIDTH} {COVER_FRAME_HEIGHT} re S\n"
+        ),
+        "0.72 0.33 0.28 RG\n0.8 w\n220 616 m 375 616 l S\n".to_string(),
     ]
 }
 
 fn story_page_background() -> Vec<String> {
     vec![
         "0.99 0.98 0.95 rg\n0 0 595 842 re f\n".to_string(),
-        format!("0.72 0.33 0.28 RG\n1 w\n{LEFT} 452 {CONTENT_WIDTH} 258 re S\n"),
-        "0.94 0.86 0.78 rg\n64 468 467 226 re f\n".to_string(),
-        "0.86 0.67 0.56 RG\n0.8 w\n64 468 467 226 re S\n".to_string(),
+        // 插图区浅色衬底（有图时会被图片盖住，无图时作为占位底）。
+        format!(
+            "0.95 0.9 0.83 rg\n{LEFT} 440 {CONTENT_WIDTH} 330 re f\n"
+        ),
+        format!(
+            "0.72 0.33 0.28 RG\n1.2 w\n{IMAGE_FRAME_X} {IMAGE_FRAME_Y} {IMAGE_FRAME_WIDTH} {IMAGE_FRAME_HEIGHT} re S\n"
+        ),
     ]
 }
 
@@ -345,20 +467,71 @@ mod tests {
     }
 
     #[test]
-    fn page_content_positions_each_line_absolutely() {
+    fn page_content_positions_each_line_below_image_area() {
         let content = page_content(
             &PdfPage {
                 background: Vec::new(),
-                lines: vec![("标题".to_string(), 22), ("正文".to_string(), 14)],
+                text_top: STORY_TEXT_TOP,
+                text_bottom: STORY_TEXT_BOTTOM,
+                lines: vec![
+                    PdfLine { text: "标题".to_string(), size: 18, gap: 0, align: Align::Left },
+                    PdfLine { text: "正文".to_string(), size: 13, gap: 22, align: Align::Left },
+                ],
+                image_placeholder: false,
                 footer: None,
                 image: None,
             },
             &[],
         );
 
-        assert!(content.contains("1 0 0 1 48 790 Tm"));
-        assert!(content.contains("1 0 0 1 48 766 Tm"));
+        // 标题在插图框（顶 770 / 底 436）之下，正文再往下排，不会压图。
+        assert!(content.contains("1 0 0 1 48 402 Tm"));
+        assert!(content.contains("1 0 0 1 48 380 Tm"));
         assert!(!content.contains(" Td"));
+    }
+
+    #[test]
+    fn story_page_does_not_render_internal_illustration_prompt() {
+        let storybook = test_storybook();
+        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new());
+        let story_page = &pages[1];
+        let content = page_content(story_page, &[]);
+
+        assert!(!content.contains(&utf16be_hex("温暖幼儿园教室，纸感水彩。")));
+        assert!(content.contains(&utf16be_hex("孩子们一起讨论怎样轮流玩。")));
+        assert!(content.contains(&utf16be_hex("第 1 页　小汽车来到教室")));
+    }
+
+    #[test]
+    fn story_page_without_image_draws_placeholder_label() {
+        let storybook = test_storybook();
+        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new());
+        let content = page_content(&pages[1], &[]);
+
+        assert!(content.contains(&utf16be_hex("插图待生成")));
+    }
+
+    #[test]
+    fn text_that_overflows_page_bottom_is_clipped() {
+        let lines = (0..30)
+            .map(|_| PdfLine { text: "一行正文".to_string(), size: 13, gap: 22, align: Align::Left })
+            .collect::<Vec<_>>();
+        let content = page_content(
+            &PdfPage {
+                background: Vec::new(),
+                text_top: STORY_TEXT_TOP,
+                text_bottom: STORY_TEXT_BOTTOM,
+                lines,
+                image_placeholder: false,
+                footer: None,
+                image: None,
+            },
+            &[],
+        );
+
+        // 从 y=402 开始每行下移 22，最后一行不低于 64：402-22*n >= 64 → n <= 15。
+        assert!(!content.contains("1 0 0 1 48 60 Tm"));
+        assert!(!content.contains("1 0 0 1 48 46 Tm"));
     }
 
     #[test]
@@ -367,8 +540,8 @@ mod tests {
         let bytes = encode_storybook_pdf(&storybook);
         let text = String::from_utf8_lossy(&bytes);
 
-        assert!(text.contains("48 452 499 258 re S"));
-        assert!(text.contains("64 468 467 226 re f"));
+        assert!(text.contains("44 436 507 338 re S"));
+        assert!(text.contains("48 440 499 330 re f"));
         assert!(text.contains("KindleafText: Smoke"));
     }
 
@@ -391,6 +564,7 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
 
         assert!(text.contains("/Subtype /Image"));
+        assert!(text.contains("/Filter /DCTDecode"));
         assert!(text.contains("/XObject << /Im1"));
         assert!(text.contains("/Im1 Do"));
         let _ = std::fs::remove_file(image_path);
@@ -402,15 +576,15 @@ mod tests {
             name: "Im1".to_string(),
             width: 1920,
             height: 1920,
-            rgb: Vec::new(),
+            data: Vec::new(),
         };
 
         let placement = image_placement(&image);
 
-        assert_eq!(pdf_number(placement.width), "226");
-        assert_eq!(pdf_number(placement.height), "226");
-        assert_eq!(pdf_number(placement.x), "184.5");
-        assert_eq!(pdf_number(placement.y), "468");
+        assert_eq!(pdf_number(placement.width), "330");
+        assert_eq!(pdf_number(placement.height), "330");
+        assert_eq!(pdf_number(placement.x), "132.5");
+        assert_eq!(pdf_number(placement.y), "440");
     }
 
     #[test]
@@ -419,24 +593,24 @@ mod tests {
             name: "Im1".to_string(),
             width: 1600,
             height: 800,
-            rgb: Vec::new(),
+            data: Vec::new(),
         };
         let tall = PdfImage {
             name: "Im2".to_string(),
             width: 800,
             height: 1600,
-            rgb: Vec::new(),
+            data: Vec::new(),
         };
 
         let wide_placement = image_placement(&wide);
         let tall_placement = image_placement(&tall);
 
-        assert_eq!(pdf_number(wide_placement.width), "452");
-        assert_eq!(pdf_number(wide_placement.height), "226");
-        assert_eq!(pdf_number(wide_placement.x), "71.5");
-        assert_eq!(pdf_number(tall_placement.width), "113");
-        assert_eq!(pdf_number(tall_placement.height), "226");
-        assert_eq!(pdf_number(tall_placement.x), "241");
+        assert_eq!(pdf_number(wide_placement.width), "499");
+        assert_eq!(pdf_number(wide_placement.height), "249.5");
+        assert_eq!(pdf_number(wide_placement.x), "48");
+        assert_eq!(pdf_number(tall_placement.width), "165");
+        assert_eq!(pdf_number(tall_placement.height), "330");
+        assert_eq!(pdf_number(tall_placement.x), "215");
     }
 
     #[test]
@@ -444,7 +618,10 @@ mod tests {
         let content = page_content(
             &PdfPage {
                 background: Vec::new(),
+                text_top: STORY_TEXT_TOP,
+                text_bottom: STORY_TEXT_BOTTOM,
                 lines: Vec::new(),
+                image_placeholder: false,
                 footer: None,
                 image: Some(0),
             },
@@ -452,13 +629,24 @@ mod tests {
                 name: "Im1".to_string(),
                 width: 1920,
                 height: 1920,
-                rgb: Vec::new(),
+                data: Vec::new(),
             }],
         );
 
-        assert!(content.contains("226 0 0 226 184.5 468 cm"));
+        assert!(content.contains("330 0 0 330 132.5 440 cm"));
         assert!(content.contains("/Im1 Do"));
-        assert!(!content.contains("467 0 0 226 64 468 cm"));
+        assert!(!content.contains("499 0 0 330 48 440 cm"));
+    }
+
+    #[test]
+    fn cover_title_is_centered() {
+        let storybook = test_storybook();
+        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new());
+        let content = page_content(&pages[0], &[]);
+
+        // “Smoke 测试绘本” 宽 ≈ (6*0.55 + 4) * 30 = 219 → x ≈ (595-219)/2 = 188
+        assert!(content.contains("/F1 30 Tf\n1 0 0 1 188"));
+        assert!(content.contains(&utf16be_hex("KINDLEAF 绘本")));
     }
 
     fn write_test_transparent_png(path: &std::path::Path) {

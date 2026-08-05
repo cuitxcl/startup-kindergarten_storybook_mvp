@@ -53,6 +53,10 @@ pub fn routes() -> Routes {
             post(recover_generation_jobs),
         )
         .add(
+            "/api/workspaces/{workspace_id}/generation-jobs/clear-failed",
+            post(clear_failed_generation_jobs),
+        )
+        .add(
             "/generated-images/{file_name}",
             get(download_generated_image),
         )
@@ -150,6 +154,15 @@ async fn recover_generation_jobs(
 ) -> Result<Json<Envelope<serde_json::Value>>, ApiError> {
     let result =
         application::generation::recover_jobs(&ctx, &headers, workspace_id, payload).await?;
+    Ok(Json(Envelope::new(result)))
+}
+
+async fn clear_failed_generation_jobs(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<Uuid>,
+) -> Result<Json<Envelope<serde_json::Value>>, ApiError> {
+    let result = application::generation::clear_failed_jobs(&ctx, &headers, workspace_id).await?;
     Ok(Json(Envelope::new(result)))
 }
 

@@ -23,7 +23,7 @@ pub use crate::application::generation_image_access::{
     generation_image_file, public_generated_image_file, with_generation_image_download_url,
 };
 pub use crate::application::generation_job_actions::{
-    RecoverGenerationJobsRequest, cancel_job, recover_jobs, retry_job,
+    RecoverGenerationJobsRequest, cancel_job, clear_failed_jobs, recover_jobs, retry_job,
 };
 
 pub async fn create_page_image_task(

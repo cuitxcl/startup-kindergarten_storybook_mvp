@@ -199,7 +199,7 @@ fn composite_summary_reports_text_and_image_ready() {
 #[tokio::test]
 async fn deepseek_provider_parses_real_http_response() {
     let base_url = spawn_http_server(
-        r#"{"choices":[{"message":{"content":"{\"plan\":{\"title\":\"排队洗手\",\"theme\":\"排队洗手\",\"age_group\":\"4-5 岁\",\"summary\":\"孩子们学会排队洗手。\",\"page_count\":6,\"outline\":[{\"page_range\":\"1\",\"goal\":\"进入场景\",\"beat\":\"孩子看到洗手台\"}],\"role_requirements\":[\"主角儿童\"],\"review_points\":[\"教学目标是否准确\"]}}"}}]}"#,
+        r#"{"choices":[{"message":{"content":"{\"plan\":{\"title\":\"排队洗手\",\"theme\":\"排队洗手\",\"age_group\":\"4-5 岁\",\"summary\":\"孩子们学会排队洗手。\",\"page_count\":2,\"outline\":[{\"page_range\":\"1\",\"goal\":\"进入场景\",\"beat\":\"孩子看到洗手台\"},{\"page_range\":\"2\",\"goal\":\"理解规则\",\"beat\":\"大家排队洗手\"}],\"role_requirements\":[\"主角儿童\"],\"review_points\":[\"教学目标是否准确\"]}}"}}]}"#,
     );
     let provider = DeepSeekTextProvider {
         api_key: Some("test-key".to_string()),
@@ -868,10 +868,89 @@ fn provider_output_validates_every_plan_outline_item() {
     .expect_err("missing outline beat should fail");
 
     assert!(!err.retryable);
-    assert!(
-        err.safe_message()
-            .contains("storybook_plan.outline[1].beat")
-    );
+    assert!(err.safe_message().contains("storybook_plan.outline[1].beat"));
+}
+
+#[test]
+fn provider_output_rejects_multi_page_outline_range() {
+    let err = normalize_provider_output(
+        json!({
+            "plan": {
+                "title": "排队洗手",
+                "theme": "排队等待",
+                "summary": "孩子学习等待洗手。",
+                "page_count": 2,
+                "outline": [
+                    {"page_range": "1-2", "goal": "进入场景", "beat": "来到洗手区并排队"}
+                ],
+                "role_requirements": ["主角儿童", "老师"],
+                "review_points": ["教学目标准确"]
+            }
+        }),
+        "deepseek",
+        "storybook_plan",
+        None,
+        None,
+    )
+    .expect_err("multi-page range should fail");
+
+    assert!(!err.retryable);
+    assert!(err.safe_message().contains("page_range"));
+}
+
+#[test]
+fn provider_output_rejects_outline_count_mismatch_with_page_count() {
+    let err = normalize_provider_output(
+        json!({
+            "plan": {
+                "title": "排队洗手",
+                "theme": "排队等待",
+                "summary": "孩子学习等待洗手。",
+                "page_count": 4,
+                "outline": [
+                    {"page_range": "1", "goal": "进入场景", "beat": "来到洗手区"},
+                    {"page_range": "2", "goal": "理解规则", "beat": "排队等待"}
+                ],
+                "role_requirements": ["主角儿童", "老师"],
+                "review_points": ["教学目标准确"]
+            }
+        }),
+        "deepseek",
+        "storybook_plan",
+        None,
+        None,
+    )
+    .expect_err("outline count mismatch should fail");
+
+    assert!(!err.retryable);
+    assert!(err.safe_message().contains("page_count"));
+}
+
+#[test]
+fn provider_output_accepts_one_outline_item_per_page() {
+    let output = normalize_provider_output(
+        json!({
+            "plan": {
+                "title": "排队洗手",
+                "theme": "排队等待",
+                "summary": "孩子学习等待洗手。",
+                "page_count": 2,
+                "outline": [
+                    {"page_range": "1", "goal": "进入场景", "beat": "来到洗手区"},
+                    {"page_range": "2", "goal": "理解规则", "beat": "排队等待"}
+                ],
+                "role_requirements": ["主角儿童", "老师"],
+                "review_points": ["教学目标准确"]
+            }
+        }),
+        "deepseek",
+        "storybook_plan",
+        None,
+        None,
+    )
+    .expect("one item per page should pass");
+
+    assert_eq!(output["plan"]["outline"].as_array().map(Vec::len), Some(2));
 }
 
 #[test]
@@ -1480,6 +1559,100 @@ fn single_page_prompt_output_requires_confirmed_role_reference() {
         .expect_err("prompt without confirmed role name should fail");
 
     assert!(err.safe_message().contains("未包含已确认角色姓名"));
+}
+
+#[test]
+fn single_page_prompt_rejects_role_mentioned_too_many_times() {
+    let output = normalize_provider_output(
+        json!({
+            "page": {
+                "page_number": 2,
+                "illustration": {
+                    "camera": "中近景，画面紧凑",
+                    "scene_state": "米米在洗手台前排队",
+                    "contact_chain": "米米被队伍夹在中间",
+                    "crowd": "后排还有几只小动物排队",
+                    "action": "米米踮起脚尖看着水龙头",
+                    "expression": "米米眼睛半眯"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect("normalize should succeed");
+    let input = json!({
+        "page": {"page_id": "x", "page_number": 2, "title": "耐心等一等", "body": "米米排队洗手。", "illustration_prompt": "旧描述"},
+        "confirmed_roles": [{"name": "米米", "role_type": "protagonist", "appearance": "橘色条纹小猫", "story_function": "主角"}]
+    });
+    let err = validate_output_against_input(&output, &input, "storybook_page_prompt")
+        .expect_err("role mentioned too many times should fail");
+
+    assert!(err.safe_message().contains("被点名 4 次"));
+}
+
+#[test]
+fn single_page_prompt_rejects_role_mentioned_three_times() {
+    let output = normalize_provider_output(
+        json!({
+            "page": {
+                "page_number": 2,
+                "illustration": {
+                    "camera": "中近景，画面紧凑",
+                    "scene_state": "小动物们在洗手台前排队",
+                    "contact_chain": "米米被队伍夹在中间",
+                    "crowd": "后排还有几只小动物排队",
+                    "action": "米米踮起脚尖看着水龙头",
+                    "expression": "米米眼睛半眯"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect("normalize should succeed");
+    let input = json!({
+        "page": {"page_id": "x", "page_number": 2, "title": "耐心等一等", "body": "米米排队洗手。", "illustration_prompt": "旧描述"},
+        "confirmed_roles": [{"name": "米米", "role_type": "protagonist", "appearance": "橘色条纹小猫", "story_function": "主角"}]
+    });
+    let err = validate_output_against_input(&output, &input, "storybook_page_prompt")
+        .expect_err("three mentions should fail");
+
+    assert!(err.safe_message().contains("被点名 3 次"));
+}
+
+#[test]
+fn single_page_prompt_allows_role_mentioned_twice() {
+    let output = normalize_provider_output(
+        json!({
+            "page": {
+                "page_number": 2,
+                "illustration": {
+                    "camera": "中近景，画面紧凑",
+                    "scene_state": "小动物们在洗手台前排队",
+                    "contact_chain": "米米被队伍夹在中间",
+                    "crowd": "后排还有几只小动物排队",
+                    "action": "米米踮起脚尖看着水龙头",
+                    "expression": "他眼睛半眯"
+                }
+            }
+        }),
+        "deepseek",
+        "storybook_page_prompt",
+        None,
+        None,
+    )
+    .expect("normalize should succeed");
+    let input = json!({
+        "page": {"page_id": "x", "page_number": 2, "title": "耐心等一等", "body": "米米排队洗手。", "illustration_prompt": "旧描述"},
+        "confirmed_roles": [{"name": "米米", "role_type": "protagonist", "appearance": "橘色条纹小猫", "story_function": "主角"}]
+    });
+    validate_output_against_input(&output, &input, "storybook_page_prompt")
+        .expect("two mentions should pass");
 }
 
 #[test]

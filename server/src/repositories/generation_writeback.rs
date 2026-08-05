@@ -50,9 +50,7 @@ pub async fn apply_completed_generation(
     match job.job_type.as_str() {
         "storybook_roles" => replace_roles_from_generation(db, storybook_id, output).await,
         "storybook_pages" => replace_pages_from_generation(db, storybook_id, output).await,
-        "storybook_page_prompt" => {
-            apply_page_prompt_rewrite(db, storybook_id, job, output).await
-        }
+        "storybook_page_prompt" => apply_page_prompt_rewrite(db, storybook_id, job, output).await,
         "storybook_role_reference_image" => {
             apply_role_reference_image(db, storybook_id, job, output).await
         }
@@ -92,7 +90,11 @@ async fn apply_page_prompt_rewrite(
             end
         where storybook_id = $1 and id = $2
         "#,
-        [storybook_id.into(), page_id.into(), prompt.to_string().into()],
+        [
+            storybook_id.into(),
+            page_id.into(),
+            prompt.to_string().into(),
+        ],
     ))
     .await?;
 

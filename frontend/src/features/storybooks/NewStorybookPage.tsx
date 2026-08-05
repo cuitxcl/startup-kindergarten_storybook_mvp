@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useOutletContext } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import {
   createGenerationJob,
   createRoleReferenceImageTask,
@@ -81,6 +81,9 @@ export function NewStorybookPage() {
     useScene: "规则引导",
     style: "温暖、生活化，有清晰的老师引导。",
   });
+  const [searchParams] = useSearchParams();
+  const resumeBookId = searchParams.get("bookId");
+  const resumeLoadedRef = useRef(false);
   const targetBook = createdBookId;
   const generatedRoles = rolesFromOutput(generationOutputs.storybook_roles);
   const generatedPages = pagesFromOutput(generationOutputs.storybook_pages);
@@ -180,6 +183,72 @@ export function NewStorybookPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.id]);
+
+  // 从工作台「继续编辑」带 bookId 进入：恢复向导进度，
+  // 载入绘本信息和该绘本最近一次成功的方案/角色/分页产物，跳到对应步骤。
+  useEffect(() => {
+    if (!resumeBookId || resumeLoadedRef.current) return;
+    resumeLoadedRef.current = true;
+    let mounted = true;
+    void (async () => {
+      try {
+        const book = await getStorybook(workspace.id, resumeBookId);
+        if (!mounted) return;
+        setCreatedBookId(book.id);
+        setForm((current) => ({
+          ...current,
+          title: book.title || current.title,
+          theme: book.teachingGoal || current.theme,
+          ageGroup: book.ageGroup || current.ageGroup,
+          useScene: book.useScene || current.useScene,
+        }));
+        const jobsPage = await listGenerationJobsPage(workspace.id, { limit: 50 });
+        if (!mounted) return;
+        const latestByType = new Map<string, GenerationJob>();
+        [...jobsPage.data]
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+          .forEach((job) => {
+            if (job.storybookId !== book.id) return;
+            if (!["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)) return;
+            if (job.status !== "succeeded" || !job.output) return;
+            if (!latestByType.has(job.jobType)) latestByType.set(job.jobType, job);
+          });
+        const planJob = latestByType.get("storybook_plan");
+        const rolesJob = latestByType.get("storybook_roles");
+        const pagesJob = latestByType.get("storybook_pages");
+        const outputs: Record<string, unknown> = {};
+        if (planJob?.output) {
+          outputs.storybook_plan = planJob.output;
+          setPlanDraft(planDraftFromOutput(planJob.output, { title: book.title, theme: book.teachingGoal }));
+        }
+        if (rolesJob?.output) outputs.storybook_roles = rolesJob.output;
+        if (pagesJob?.output) outputs.storybook_pages = pagesJob.output;
+        setGenerationOutputs(outputs);
+        // 已写入绘本的角色/分页以绘本为准；否则回退到任务输出。
+        if (book.roles.length) setEditableRoles(rolesFromStorybook(book.roles));
+        if (pagesJob && book.pages.length) setEditablePages(pagesFromStorybook(book.pages));
+        goToStep(pagesJob ? 3 : rolesJob ? 2 : planJob ? 1 : 0);
+        setNotice({
+          title: "已恢复向导进度",
+          copy: pagesJob
+            ? "已载入上次的方案、角色和分页，可继续确认分页。"
+            : rolesJob
+              ? "已载入上次的方案和角色，可继续确认角色并生成分页。"
+              : planJob
+                ? "已载入上次确认的绘本方案，可继续生成角色与道具。"
+                : "这本绘本还没有生成记录，请从需求开始。",
+        });
+      } catch {
+        if (mounted) {
+          setNotice({ title: "恢复向导失败", copy: "无法读取该绘本的向导进度，请重新生成。" });
+        }
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace.id, resumeBookId]);
   const ensureStorybookCreated = async () => {
     if (createdBookId) return createdBookId;
     setCreating(true);
@@ -196,7 +265,11 @@ export function NewStorybookPage() {
       setCreating(false);
     }
   };
-  const runGeneration = async (jobType: string, title: string) => {
+  const runGeneration = async (
+    jobType: string,
+    title: string,
+    overrides?: { plan?: EditablePlan; roles?: EditableRole[] },
+  ): Promise<GenerationJob | null> => {
     setGeneratingStep(jobType);
     setRetryJob(null);
     setNotice(null);
@@ -207,17 +280,35 @@ export function NewStorybookPage() {
       const job = await createGenerationJob(workspace.id, {
         jobType,
         storybookId: bookId || undefined,
-        input: generationInputFor(jobType, form, planDraft, currentRoles, currentPages),
+        input: generationInputFor(jobType, form, overrides?.plan ?? planDraft, overrides?.roles ?? currentRoles, currentPages),
       });
       const settledJob = await waitForGenerationJob(job);
-      return await handleGenerationJob(settledJob, title);
+      const ok = await handleGenerationJob(settledJob, title);
+      return ok ? settledJob : null;
     } catch (err) {
       setRetryJob(null);
       setNotice({ title: "生成失败", copy: err instanceof Error ? err.message : "请稍后重试" });
-      return false;
+      return null;
     } finally {
       setGeneratingStep(null);
     }
+  };
+
+  // 方案重新生成后，下游的角色和分页仍是旧方案的产物，必须按新方案联动重生；
+  // 直接用新任务的输出作为下一步输入，避免闭包里旧的 planDraft/currentRoles。
+  const regeneratePlanWithCascade = async () => {
+    const hadRoles = Boolean(generationOutputs.storybook_roles) || currentRoles.length > 0;
+    const hadPages = Boolean(generationOutputs.storybook_pages) || currentPages.length > 0;
+    const planJob = await runGeneration("storybook_plan", "已重新生成方案");
+    if (!planJob?.output || !hadRoles) return;
+    const freshPlan = planDraftFromOutput(planJob.output, form);
+    const rolesJob = await runGeneration("storybook_roles", "角色与道具已按新方案联动更新", { plan: freshPlan });
+    if (!rolesJob?.output || !hadPages) return;
+    const freshRoles = rolesFromOutput(rolesJob.output);
+    await runGeneration("storybook_pages", "分页已按新方案联动更新", {
+      plan: freshPlan,
+      roles: freshRoles.length ? freshRoles : currentRoles,
+    });
   };
 
   const waitForGenerationJob = (initialJob: GenerationJob) =>
@@ -492,7 +583,7 @@ export function NewStorybookPage() {
               <label className="span-2">故事风格<textarea rows={3} value={form.style} onChange={(event) => updateRequestForm({ style: event.target.value })} /></label>
             </div>
           )}
-          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => runGeneration("storybook_plan", "已重新生成方案")} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} />} />}
+          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} />} />}
           {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} />} />}
           {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} />} />}
           {step === 4 && (

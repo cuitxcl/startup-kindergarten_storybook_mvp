@@ -388,6 +388,21 @@ pub async fn cancel_generation_job(
     crate::repositories::generation_jobs::cancel_job(db, workspace_id, job_id).await
 }
 
+/// 清理工作区内全部失败的生成任务记录，返回清理条数。
+pub async fn delete_failed_generation_jobs(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+) -> Result<u64, DbErr> {
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "delete from generation_jobs where workspace_id = $1 and status = 'failed'",
+            [workspace_id.into()],
+        ))
+        .await?;
+    Ok(result.rows_affected())
+}
+
 async fn execute_generation_record(
     db: &DatabaseConnection,
     job: GenerationJob,

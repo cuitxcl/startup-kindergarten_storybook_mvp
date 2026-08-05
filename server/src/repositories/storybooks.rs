@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 use uuid::Uuid;
 
 use crate::models::{
@@ -229,8 +229,48 @@ pub async fn duplicate(
     .await
 }
 
-pub async fn update_page(
+/// 删除绘本及其全部关联记录。数据库未建外键，需在事务内手工清理各子表。
+/// 已投稿或已上架的绘本不允许删除（marketplace 模板/投稿引用它），由应用层拦截。
+pub async fn delete(
     db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+) -> Result<(), DbErr> {
+    // 先按工作区校验存在性，保证工作区隔离。
+    find(db, workspace_id, storybook_id).await?;
+    let txn = db.begin().await?;
+    for table in [
+        "generation_cost_logs",
+        "generation_jobs",
+        "export_jobs",
+        "share_links",
+        "storybook_pages",
+        "storybook_roles",
+    ] {
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("delete from {table} where storybook_id = $1"),
+            [storybook_id.into()],
+        ))
+        .await?;
+    }
+    // 未进入投稿流程的草稿投稿一并清理。
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "delete from marketplace_submissions where source_storybook_id = $1",
+        [storybook_id.into()],
+    ))
+    .await?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "delete from storybooks where workspace_id = $1 and id = $2",
+        [workspace_id.into(), storybook_id.into()],
+    ))
+    .await?;
+    txn.commit().await
+}
+
+pub async fn update_page(    db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
     page_id: Uuid,
