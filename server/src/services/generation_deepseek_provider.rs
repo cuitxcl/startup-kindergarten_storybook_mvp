@@ -41,7 +41,7 @@ impl DeepSeekTextProvider {
             endpoint_path: first_non_empty_env(&["DEEPSEEK_ENDPOINT_PATH"], "/chat/completions"),
             model: first_non_empty_env(&["DEEPSEEK_MODEL"], "deepseek-v4-flash"),
             timeout_seconds: env_u64("DEEPSEEK_TIMEOUT_SECONDS", 180),
-            max_tokens: env_u64("DEEPSEEK_MAX_TOKENS", 8192),
+            max_tokens: env_u64("DEEPSEEK_MAX_TOKENS", 16384),
         }
     }
 
@@ -124,9 +124,19 @@ impl DeepSeekTextProvider {
             ],
             "response_format": {"type": "json_object"},
             "temperature": temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": self.max_tokens_for_job(request.job_type),
             "stream": false
         }))
+    }
+
+    fn max_tokens_for_job(&self, job_type: &str) -> u64 {
+        if matches!(job_type, "storybook_pages") {
+            env_u64("DEEPSEEK_PAGES_MAX_TOKENS", self.max_tokens.max(32768))
+        } else if matches!(job_type, "storybook_page_prompt") {
+            env_u64("DEEPSEEK_PAGE_PROMPT_MAX_TOKENS", self.max_tokens.max(16384))
+        } else {
+            self.max_tokens
+        }
     }
 
     pub(crate) fn endpoint(&self) -> String {

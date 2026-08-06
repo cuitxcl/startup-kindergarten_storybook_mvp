@@ -1236,6 +1236,10 @@ fn deepseek_pages_payload_uses_lower_temperature() {
         })
         .expect("pages payload should be built");
     assert_eq!(pages_payload["temperature"], json!(0.35));
+    assert!(
+        pages_payload["max_tokens"].as_u64().unwrap_or_default() >= 32768,
+        "storybook_pages should reserve enough output budget for complete page JSON"
+    );
 
     let plan_payload = provider
         .build_chat_payload(&GenerationRequest {
@@ -1244,6 +1248,7 @@ fn deepseek_pages_payload_uses_lower_temperature() {
         })
         .expect("plan payload should be built");
     assert_eq!(plan_payload["temperature"], json!(0.7));
+    assert_eq!(plan_payload["max_tokens"], json!(4096));
 }
 
 #[test]

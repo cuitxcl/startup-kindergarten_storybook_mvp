@@ -320,6 +320,15 @@ export function NewStorybookPage() {
               ? 1
               : 0;
         goToStep(restoredStep);
+        setEditingReview(
+          restoredStep === 1
+            ? "plan"
+            : restoredStep === 2
+              ? "roles"
+              : restoredStep === 3 && !["exportable", "submitted", "listed"].includes(book.status)
+                ? "pages"
+                : null,
+        );
         setNotice({
           title: "已恢复向导进度",
           copy: pagesJob || book.pages.length
@@ -864,8 +873,9 @@ function storybookRoleItems(output: unknown, editableRoles: EditableRole[] = [],
     consistency_guide?: string[];
   } | undefined;
   if (editableRoles.length) {
+    const sortedRoles = sortRolesByImportance(editableRoles);
     return [
-      ...editableRoles.map((role) => `${role.name}：${role.appearance}；故事作用：${role.storyFunction}；参考图提示：${role.referenceImagePrompt || "沿用外观设定生成稳定参考图"}`),
+      ...sortedRoles.map((role) => `${role.name}：${role.appearance}；故事作用：${role.storyFunction}；参考图提示：${role.referenceImagePrompt || "沿用外观设定生成稳定参考图"}`),
       "一致性要求：分页正文和插图描述必须使用上面确认的角色名称，不新增替代动物或泛称角色。",
     ];
   }
@@ -963,24 +973,63 @@ function OutlineLinesEditor({ text, onChange }: { text: string; onChange: (text:
 }
 
 function RoleEditor({ roles, onChange }: { roles: EditableRole[]; onChange: (roles: EditableRole[]) => void }) {
+  const sortedRoleEntries = sortRoleEntriesByImportance(roles);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const selectedEntry = sortedRoleEntries.find((entry) => entry.index === selectedIndex) || sortedRoleEntries[0];
+  const selectedRole = selectedEntry?.role;
+  const activeIndex = selectedEntry?.index ?? 0;
   const update = (index: number, patch: Partial<EditableRole>) => {
     onChange(roles.map((role, roleIndex) => roleIndex === index ? { ...role, ...patch } : role));
   };
+  useEffect(() => {
+    if (selectedIndex === -1 && sortedRoleEntries.length) {
+      setSelectedIndex(sortedRoleEntries[0].index);
+    }
+  }, [selectedIndex, sortedRoleEntries]);
+  if (!selectedRole) {
+    return (
+      <div className="review-editor role-editor-empty">
+        <p>还没有角色内容，请先重新生成角色与道具。</p>
+      </div>
+    );
+  }
   return (
     <div className="review-editor role-editor">
-      {roles.map((role, index) => (
-        <div className="editable-review-card" key={`${role.id || role.name}-${index}`}>
-          <div className="section-head compact">
-            <div>
-              <p className="eyebrow">角色 {index + 1}</p>
-              <h3>{role.name || "未命名角色"}</h3>
-            </div>
-            <Badge tone={role.needsConsistency ? "info" : "neutral"}>{role.needsConsistency ? "跨页一致" : "可变化"}</Badge>
+      <aside className="role-editor-list" aria-label="角色列表">
+        <div className="role-editor-list-head">
+          <strong>角色与关键道具</strong>
+          <span>{roles.length} 个</span>
+        </div>
+        {sortedRoleEntries.map(({ role, index }) => (
+          <button
+            key={`${role.id || role.name}-${index}`}
+            type="button"
+            className={`role-editor-item ${index === activeIndex ? "active" : ""}`}
+            onClick={() => setSelectedIndex(index)}
+          >
+            <span className="role-editor-item-main">
+              <strong>{role.name || "未命名角色"}</strong>
+              <small>{roleTypeLabel(role.roleType)} · {role.needsConsistency ? "跨页保持一致" : "单页或可变化"}</small>
+            </span>
+          </button>
+        ))}
+      </aside>
+      <section className="role-editor-detail">
+        <div className="role-editor-detail-head">
+          <div>
+            <p className="eyebrow">当前编辑</p>
+            <h3>{selectedRole.name || "未命名角色"}</h3>
           </div>
-          <label>名称<input value={role.name} onChange={(event) => update(index, { name: event.target.value })} /></label>
+          <Badge tone={selectedRole.needsConsistency ? "info" : "neutral"}>{selectedRole.needsConsistency ? "跨页一致" : "可变化"}</Badge>
+        </div>
+        <div className="role-editor-basic">
+          <label>
+            名称
+            <input value={selectedRole.name} onChange={(event) => update(activeIndex, { name: event.target.value })} />
+          </label>
           <label>
             类型
-            <select value={role.roleType} onChange={(event) => update(index, { roleType: event.target.value as StorybookRole["roleType"] })}>
+            <select value={selectedRole.roleType} onChange={(event) => update(activeIndex, { roleType: event.target.value as StorybookRole["roleType"] })}>
               <option value="protagonist">主角</option>
               <option value="supporting">配角</option>
               <option value="peer">同伴角色</option>
@@ -988,13 +1037,63 @@ function RoleEditor({ roles, onChange }: { roles: EditableRole[]; onChange: (rol
               <option value="prop">关键道具</option>
             </select>
           </label>
-          <label className="span-2">稳定外观<textarea rows={4} value={role.appearance} onChange={(event) => update(index, { appearance: event.target.value })} /></label>
-          <label className="span-2">故事作用<textarea rows={3} value={role.storyFunction} onChange={(event) => update(index, { storyFunction: event.target.value })} /></label>
-          <label className="check-row"><input type="checkbox" checked={role.needsConsistency} onChange={(event) => update(index, { needsConsistency: event.target.checked })} />后续分页插图保持同一形象</label>
         </div>
-      ))}
+        <label className="role-editor-field">
+          <span>稳定外观</span>
+          <small>只写长相、颜色、服饰、固定识别特征，不写剧情动作。</small>
+          <textarea rows={4} value={selectedRole.appearance} onChange={(event) => update(activeIndex, { appearance: event.target.value })} />
+        </label>
+        <label className="role-editor-field">
+          <span>故事作用</span>
+          <small>说明它为什么出现在故事里，帮助老师判断是否符合教学目标。</small>
+          <textarea rows={3} value={selectedRole.storyFunction} onChange={(event) => update(activeIndex, { storyFunction: event.target.value })} />
+        </label>
+        <label className="role-consistency-toggle">
+          <input type="checkbox" checked={selectedRole.needsConsistency} onChange={(event) => update(activeIndex, { needsConsistency: event.target.checked })} />
+          <span>
+            <strong>后续分页插图保持同一形象</strong>
+            <small>主角、老师、反复出现的同伴建议开启；只出现一次的道具或群体可以关闭。</small>
+          </span>
+        </label>
+      </section>
     </div>
   );
+}
+
+function sortRolesByImportance(roles: EditableRole[]) {
+  return sortRoleEntriesByImportance(roles).map((entry) => entry.role);
+}
+
+function sortRoleEntriesByImportance(roles: EditableRole[]) {
+  const priority: Record<StorybookRole["roleType"], number> = {
+    protagonist: 0,
+    teacher: 1,
+    peer: 2,
+    supporting: 3,
+    prop: 4,
+  };
+  return roles
+    .map((role, index) => ({ role, index }))
+    .sort((left, right) => {
+      const leftPriority = priority[left.role.roleType] ?? 9;
+      const rightPriority = priority[right.role.roleType] ?? 9;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      if (left.role.needsConsistency !== right.role.needsConsistency) {
+        return left.role.needsConsistency ? -1 : 1;
+      }
+      return left.index - right.index;
+    });
+}
+
+function roleTypeLabel(roleType: StorybookRole["roleType"]) {
+  const labels: Record<StorybookRole["roleType"], string> = {
+    protagonist: "主角",
+    supporting: "配角",
+    peer: "同伴角色",
+    teacher: "老师形象",
+    prop: "关键道具",
+  };
+  return labels[roleType] || "角色";
 }
 
 function PageEditor({ pages, roles, onChange }: { pages: EditablePage[]; roles: EditableRole[]; onChange: (pages: EditablePage[]) => void }) {

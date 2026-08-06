@@ -295,8 +295,22 @@ textarea { resize: vertical; line-height: 1.55; }
 .skeleton-detail-header { height: 120px; }
 .skeleton-strip { height: 420px; }
 .skeleton-detail-main { height: 420px; }
-.button:disabled, .button.is-disabled { cursor: not-allowed; opacity: 0.48; }
-.button.is-disabled:hover { background: inherit; }
+.button:disabled, .button.is-disabled { cursor: not-allowed; opacity: 0.62; }
+.button.primary:disabled,
+.button.primary.is-disabled,
+.button.primary.is-disabled:hover {
+  color: #fff;
+  background: color-mix(in srgb, var(--action) 72%, #fff);
+  border-color: transparent;
+  box-shadow: none;
+}
+.button.secondary:disabled,
+.button.secondary.is-disabled,
+.button.secondary.is-disabled:hover {
+  color: #8f8579;
+  background: #f7f3ed;
+  border-color: var(--line);
+}
 /* 键盘可达性：全局可见焦点态 */
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--brand);
@@ -1195,6 +1209,141 @@ button.compact-row.active {
 .review-editor.page-editor {
   grid-template-columns: 1fr;
 }
+.review-editor.role-editor {
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px;
+  background: #fff;
+}
+.role-editor-empty {
+  display: block;
+  color: var(--muted);
+}
+.role-editor-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  border-right: 1px solid var(--line);
+  padding-right: 12px;
+}
+.role-editor-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+.role-editor-list-head span {
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--panel-soft);
+}
+.role-editor-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  align-items: center;
+  min-height: 62px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  color: var(--ink);
+  text-align: left;
+  background: var(--panel);
+  cursor: pointer;
+}
+.role-editor-item:hover {
+  border-color: rgba(182, 90, 82, 0.38);
+  background: #fff8f6;
+}
+.role-editor-item.active {
+  border-color: var(--brand);
+  background: #fff0ed;
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+.role-editor-item-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.role-editor-item-main strong,
+.role-editor-item-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.role-editor-item-main small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.role-editor-detail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.role-editor-detail-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--panel-muted);
+}
+.role-editor-detail-head h3 {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+}
+.role-editor-basic {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.role-editor-field {
+  display: grid;
+  gap: 7px;
+}
+.role-editor-field span {
+  font-weight: 900;
+}
+.role-editor-field small {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+.role-editor-field textarea {
+  min-height: 96px;
+}
+.role-consistency-toggle {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid rgba(182, 90, 82, 0.22);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fff8f6;
+}
+.role-consistency-toggle input {
+  width: auto;
+  min-height: auto;
+  margin-top: 3px;
+}
+.role-consistency-toggle span {
+  display: grid;
+  gap: 4px;
+}
+.role-consistency-toggle small {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.5;
+}
 /* 编辑态文本框随内容自动撑高，避免长文本挤在小框里滚动 */
 .review-editor textarea {
   field-sizing: content;
@@ -1640,6 +1789,22 @@ button.compact-row.active {
   .reference-guard-callout { grid-template-columns: 1fr; align-items: stretch; }
   .review-editor,
   .editable-review-card { grid-template-columns: 1fr; }
+  .review-editor.role-editor {
+    grid-template-columns: 1fr;
+  }
+  .role-editor-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding-right: 0;
+    padding-bottom: 12px;
+  }
+  .role-editor-basic {
+    grid-template-columns: 1fr;
+  }
+  .role-editor-detail-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
   .role-manager-content {
     grid-template-columns: 1fr;
   }
