@@ -599,7 +599,7 @@ fn deepseek_pages_output_must_reference_confirmed_roles() {
             "illustration_prompt": "小象 小兔 小猴 面前摆着彩色套圈"
         }]
     });
-    let normalized = normalize_provider_output(output, "deepseek", "storybook_pages", None, None)
+    let normalized = normalize_provider_output(output, "deepseek", "storybook_pages", None, None, None)
         .expect("shape is valid before role consistency check");
 
     let err = validate_output_against_input(&normalized, &input, "storybook_pages")
@@ -703,6 +703,7 @@ fn normalizes_provider_output_metadata() {
         "storybook_plan",
         None,
         None,
+        None,
     )
     .expect("provider output should normalize");
 
@@ -724,6 +725,7 @@ fn normalizes_provider_output_keeps_provider_usage() {
             "total_tokens": 200
         })),
         None,
+        None,
     )
     .expect("provider output should normalize");
 
@@ -743,6 +745,7 @@ fn normalizes_provider_output_keeps_privacy_audit() {
             "redacted": true,
             "labels": ["sensitive_field", "email"]
         })),
+        None,
     )
     .expect("provider output should normalize");
 
@@ -762,6 +765,7 @@ fn provider_output_content_safety_allows_normal_review_language() {
         }),
         "deepseek",
         "customization_plan",
+        None,
         None,
         None,
     )
@@ -787,6 +791,7 @@ fn provider_output_content_safety_blocks_address_keywords_in_story_content() {
         "storybook_pages",
         None,
         None,
+        None,
     )
     .expect_err("address keywords in story content should fail");
 
@@ -810,6 +815,7 @@ fn provider_output_content_safety_blocks_contact_details_before_writeback() {
         "storybook_pages",
         None,
         None,
+        None,
     )
     .expect_err("provider output with phone number should fail");
 
@@ -823,7 +829,7 @@ fn provider_output_content_safety_does_not_treat_long_ids_as_phone_numbers() {
     let mut output = valid_plan_output();
     output["plan"]["summary"] = json!("UI Smoke 普通绘本 1784538853883 会学习排队等待。");
 
-    let output = normalize_provider_output(output, "deepseek", "storybook_plan", None, None)
+    let output = normalize_provider_output(output, "deepseek", "storybook_plan", None, None, None)
         .expect("long ids should not be treated as phone numbers");
 
     assert_eq!(output["provider"], "deepseek");
@@ -835,6 +841,7 @@ fn provider_output_requires_plan_shape() {
         json!({"message": "缺少 plan"}),
         "deepseek",
         "storybook_plan",
+        None,
         None,
         None,
     )
@@ -864,6 +871,7 @@ fn provider_output_validates_every_plan_outline_item() {
         "storybook_plan",
         None,
         None,
+        None,
     )
     .expect_err("missing outline beat should fail");
 
@@ -889,6 +897,7 @@ fn provider_output_rejects_multi_page_outline_range() {
         }),
         "deepseek",
         "storybook_plan",
+        None,
         None,
         None,
     )
@@ -919,6 +928,7 @@ fn provider_output_rejects_outline_count_mismatch_with_page_count() {
         "storybook_plan",
         None,
         None,
+        None,
     )
     .expect_err("outline count mismatch should fail");
 
@@ -947,6 +957,7 @@ fn provider_output_accepts_one_outline_item_per_page() {
         "storybook_plan",
         None,
         None,
+        None,
     )
     .expect("one item per page should pass");
 
@@ -970,6 +981,7 @@ fn provider_output_validates_plan_review_points() {
         "storybook_plan",
         None,
         None,
+        None,
     )
     .expect_err("empty review point should fail");
 
@@ -986,6 +998,7 @@ fn provider_output_requires_non_empty_roles() {
         json!({"roles": []}),
         "deepseek",
         "storybook_roles",
+        None,
         None,
         None,
     )
@@ -1017,6 +1030,7 @@ fn provider_output_validates_every_role() {
         "storybook_roles",
         None,
         None,
+        None,
     )
     .expect_err("missing role appearance should fail");
 
@@ -1033,6 +1047,7 @@ fn provider_output_requires_page_fields() {
         json!({"pages": [{"title": "第 1 页", "body": "缺少插图提示"}]}),
         "deepseek",
         "storybook_pages",
+        None,
         None,
         None,
     )
@@ -1067,6 +1082,7 @@ fn provider_output_validates_every_page() {
         "storybook_pages",
         None,
         None,
+        None,
     )
     .expect_err("missing second page body should fail");
 
@@ -1096,6 +1112,7 @@ fn provider_output_assembles_illustration_slots_into_prompt() {
         }),
         "deepseek",
         "storybook_pages",
+        None,
         None,
         None,
     )
@@ -1138,6 +1155,7 @@ fn provider_output_requires_every_illustration_slot() {
         "storybook_pages",
         None,
         None,
+        None,
     )
     .expect_err("empty action slot should fail");
 
@@ -1170,6 +1188,7 @@ fn provider_output_rejects_forbidden_illustration_wording() {
         "storybook_pages",
         None,
         None,
+        None,
     )
     .expect_err("forbidden wording should fail");
 
@@ -1191,6 +1210,7 @@ fn provider_output_rejects_forbidden_wording_in_legacy_prompt() {
         }),
         "deepseek",
         "storybook_pages",
+        None,
         None,
         None,
     )
@@ -1261,6 +1281,7 @@ fn provider_output_requires_customization_strategy() {
         "customization_plan",
         None,
         None,
+        None,
     )
     .expect_err("missing customization strategy should fail");
 
@@ -1279,6 +1300,7 @@ fn provider_output_requires_customization_rewrite_points() {
         }),
         "deepseek",
         "customization_plan",
+        None,
         None,
         None,
     )
@@ -1303,6 +1325,7 @@ fn provider_output_validates_customization_risk_checks() {
         }),
         "deepseek",
         "customization_plan",
+        None,
         None,
         None,
     )
@@ -1465,6 +1488,7 @@ fn provider_output_assembles_single_page_prompt_from_slots() {
         "storybook_page_prompt",
         None,
         None,
+        None,
     )
     .expect("single page prompt should assemble");
 
@@ -1496,6 +1520,7 @@ fn provider_output_rejects_missing_slot_in_single_page_prompt() {
         "storybook_page_prompt",
         None,
         None,
+        None,
     )
     .expect_err("missing expression slot should fail");
 
@@ -1523,6 +1548,7 @@ fn provider_output_rejects_forbidden_wording_in_single_page_prompt() {
         "storybook_page_prompt",
         None,
         None,
+        None,
     )
     .expect_err("forbidden wording should fail");
 
@@ -1547,6 +1573,7 @@ fn single_page_prompt_output_requires_confirmed_role_reference() {
         }),
         "deepseek",
         "storybook_page_prompt",
+        None,
         None,
         None,
     )
@@ -1581,6 +1608,7 @@ fn single_page_prompt_rejects_role_mentioned_too_many_times() {
         "storybook_page_prompt",
         None,
         None,
+        None,
     )
     .expect("normalize should succeed");
     let input = json!({
@@ -1613,6 +1641,7 @@ fn single_page_prompt_rejects_role_mentioned_three_times() {
         "storybook_page_prompt",
         None,
         None,
+        None,
     )
     .expect("normalize should succeed");
     let input = json!({
@@ -1643,6 +1672,7 @@ fn single_page_prompt_allows_role_mentioned_twice() {
         }),
         "deepseek",
         "storybook_page_prompt",
+        None,
         None,
         None,
     )
@@ -1691,6 +1721,7 @@ fn provider_output_requires_crowd_slot() {
         }),
         "deepseek",
         "storybook_page_prompt",
+        None,
         None,
         None,
     )

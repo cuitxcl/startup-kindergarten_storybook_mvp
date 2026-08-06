@@ -11,6 +11,7 @@ pub(crate) fn normalize_provider_output(
     job_type: &str,
     provider_usage: Option<JsonValue>,
     privacy_audit: Option<JsonValue>,
+    style: Option<&str>,
 ) -> Result<JsonValue, GenerationProviderError> {
     let Some(mut object) = output.as_object().cloned() else {
         return Err(GenerationProviderError::new(
@@ -32,7 +33,7 @@ pub(crate) fn normalize_provider_output(
         object.insert("privacy_audit".to_string(), audit);
     }
     insert_if_missing(&mut object, "message", json!("生成任务已完成"));
-    normalize_provider_output_values(&mut object, job_type)?;
+    normalize_provider_output_values(&mut object, job_type, style)?;
     validate_provider_output_shape(&object, job_type)?;
     validate_provider_output_content_safety(&JsonValue::Object(object.clone()), job_type)?;
 
@@ -42,11 +43,12 @@ pub(crate) fn normalize_provider_output(
 fn normalize_provider_output_values(
     object: &mut JsonMap<String, JsonValue>,
     job_type: &str,
+    style: Option<&str>,
 ) -> Result<(), GenerationProviderError> {
     match job_type {
         "storybook_roles" => normalize_storybook_roles_values(object),
-        "storybook_pages" => normalize_storybook_pages_values(object)?,
-        "storybook_page_prompt" => normalize_storybook_page_prompt_values(object)?,
+        "storybook_pages" => normalize_storybook_pages_values(object, style)?,
+        "storybook_page_prompt" => normalize_storybook_page_prompt_values(object, style)?,
         _ => {}
     }
     Ok(())
@@ -55,6 +57,7 @@ fn normalize_provider_output_values(
 /// storybook_page_prompt 的插图设定从结构化槽位拼装为 page.illustration_prompt。
 fn normalize_storybook_page_prompt_values(
     object: &mut JsonMap<String, JsonValue>,
+    style: Option<&str>,
 ) -> Result<(), GenerationProviderError> {
     let Some(page_object) = object
         .get_mut("page")
@@ -62,7 +65,8 @@ fn normalize_storybook_page_prompt_values(
     else {
         return Ok(());
     };
-    let Some(assembled) = assemble_illustration_prompt(page_object, "storybook_page_prompt.page")?
+    let Some(assembled) =
+        assemble_illustration_prompt(page_object, "storybook_page_prompt.page", style)?
     else {
         // 缺失插图字段的情况交给结构校验统一报错。
         return Ok(());
@@ -76,6 +80,7 @@ fn normalize_storybook_page_prompt_values(
 fn assemble_illustration_prompt(
     page_object: &JsonMap<String, JsonValue>,
     location: &str,
+    style: Option<&str>,
 ) -> Result<Option<String>, GenerationProviderError> {
     let assembled = if let Some(illustration) = page_object
         .get("illustration")
@@ -106,7 +111,7 @@ fn assemble_illustration_prompt(
         format!(
             "儿童绘本插图，{}。{}",
             parts.join("，"),
-            ILLUSTRATION_STYLE_SUFFIX
+            illustration_style_suffix(style)
         )
     } else if let Some(prompt) = page_object
         .get("illustration_prompt")
@@ -148,7 +153,22 @@ fn normalize_storybook_roles_values(object: &mut JsonMap<String, JsonValue>) {
 }
 
 /// 插图提示词风格后缀由后端统一拼接，避免模型自由发挥导致风格漂移。
+/// 默认水彩风格；用户在需求里选择了画风时，改用用户画风 + 固定质量约束。
 const ILLUSTRATION_STYLE_SUFFIX: &str = "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，角色四肢完整、爪子或双手清晰可见，不要省略手臂，暖色调，画面充满动感和童趣。画面中不要出现文字。";
+/// 与画风无关的质量约束：肢体完整、无文字。任何画风都必须携带。
+const ILLUSTRATION_QUALITY_SUFFIX: &str = "角色四肢完整、爪子或双手清晰可见，不要省略手臂，画面充满动感和童趣。画面中不要出现文字。";
+
+/// 用户在需求里选择的画风（input.style）优先；为空时回退默认水彩风格。
+fn illustration_style_suffix(style: Option<&str>) -> String {
+    match style.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => format!(
+            "{}。{}",
+            value.trim_end_matches('。'),
+            ILLUSTRATION_QUALITY_SUFFIX
+        ),
+        None => ILLUSTRATION_STYLE_SUFFIX.to_string(),
+    }
+}
 
 const REQUIRED_ILLUSTRATION_SLOTS: &[&str] = &[
     "camera",
@@ -175,6 +195,7 @@ const FORBIDDEN_ILLUSTRATION_WORDING: &[&str] = &[
 /// 旧格式（只有 illustration_prompt 字符串）保持兼容，只做禁止写法检查。
 fn normalize_storybook_pages_values(
     object: &mut JsonMap<String, JsonValue>,
+    style: Option<&str>,
 ) -> Result<(), GenerationProviderError> {
     let Some(pages) = object
         .get_mut("pages")
@@ -187,7 +208,7 @@ fn normalize_storybook_pages_values(
             continue;
         };
         let location = format!("storybook_pages.pages[{index}]");
-        let Some(assembled) = assemble_illustration_prompt(page_object, &location)? else {
+        let Some(assembled) = assemble_illustration_prompt(page_object, &location, style)? else {
             // 缺失插图字段的情况交给结构校验统一报错。
             continue;
         };

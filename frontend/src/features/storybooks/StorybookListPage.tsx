@@ -8,7 +8,7 @@ import {
   type GenerationJob,
   type PaginationMeta,
 } from "../../api/client";
-import { Badge, Card, EmptyState, Notice, PageHeader, statusTone } from "../../components/ui";
+import { Badge, Card, EmptyState, Notice, PageHeader, SkeletonBlock, Toast, statusTone } from "../../components/ui";
 import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
 import { generationJobStatusLabel, generationJobTypeLabel, storybookNextAction, storybookSourceLabel, storybookStatusLabel } from "../../utils/labels";
 import { useDebouncedValue } from "../../utils/useDebouncedValue";
@@ -61,7 +61,8 @@ export function StorybookListPage() {
     const recent = generationJobs
       .filter((job) => job.storybookId === book.id)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
-    if (!recent) return null;
+    // 只在需要关注（排队/运行中/失败）时显示，成功任务不占用卡片空间。
+    if (!recent || recent.status === "succeeded" || recent.status === "canceled") return null;
     return `最近任务：${generationJobTypeLabel[recent.jobType] || recent.jobType} · ${generationJobStatusLabel[recent.status] || recent.status} · ${recent.finishedAt || recent.createdAt}`;
   }
 
@@ -138,7 +139,7 @@ export function StorybookListPage() {
         }
       />
       {error && filteredBooks.length > 0 && <Notice title="列表更新失败" copy={error} tone="danger" />}
-      {notice && <Notice title="操作完成" copy={notice} tone="good" />}
+      {notice && <Toast title={notice} onClose={() => setNotice("")} />}
       <Card>
         <div className="filter-row">
           {filterItems.map(([value, label]) => (
@@ -184,7 +185,11 @@ export function StorybookListPage() {
         />
       )}
       {initialLoading ? (
-        <EmptyState title="正在读取绘本" copy="正在从后端加载当前空间的绘本列表。" />
+        <section className="storybook-grid" aria-label="绘本加载中">
+          {Array.from({ length: 4 }, (_, index) => (
+            <SkeletonBlock key={index} className="skeleton-card" />
+          ))}
+        </section>
       ) : error && filteredBooks.length === 0 ? (
         <EmptyState title="绘本列表加载失败" copy={error} />
       ) : books.length === 0 ? (
@@ -216,53 +221,61 @@ export function StorybookListPage() {
               return (
                 <article className="storybook-card" key={book.id}>
                   <div className="cover-art"><span>{book.coverTone}</span><strong>{book.title.slice(0, 2)}</strong></div>
-                  <div className="storybook-card-body">
-                    <div className="card-line"><Badge tone={book.type === "plain" ? "info" : "good"}>{book.type === "plain" ? "普通绘本" : "定制绘本"}</Badge><Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge></div>
-                    <h3>{book.title}</h3>
-                    <p>{book.teachingGoal}</p>
-                    <p className="next-action">{storybookSourceLabel(book)}</p>
-                    <p className="next-action">{storybookNextAction(book)}</p>
-                    {recentTaskCopy(book) && <p className="task-summary">{recentTaskCopy(book)}</p>}
-                    {customizationBlocker && <p className="task-summary">定制条件：{customizationBlocker}</p>}
-                    {book.type === "custom" && exportBlocker && <p className="task-summary">导出条件：{exportBlocker}</p>}
-                    <div className="meta-line"><span>{book.ageGroup}</span><span>{book.useScene}</span><span>{book.updatedAt}</span></div>
-                    <div className="storybook-card-actions">
-                      {book.type === "plain" ? (
-                        <>
-                          {customizationBlocker ? (
-                            <Link className="button primary" to={book.id}>继续完成</Link>
-                          ) : (
-                            <Link className="button primary" to={`${book.id}/customize`}>生成定制版</Link>
-                          )}
-                          <Link className="button secondary" to={book.id}>查看详情</Link>
-                        </>
-                      ) : (
-                        <>
-                          <Link className="button primary" to={book.id}>继续编辑</Link>
-                          <Link className="button secondary" to={book.id}>{exportBlocker ? "查看详情" : "导出或分享"}</Link>
-                        </>
-                      )}
-                      {confirmingDeleteId === book.id ? (
-                        <>
+                  <div className="storybook-card-menu more-menu">
+                    <button className="button card-menu-trigger" type="button" aria-label="更多操作" onClick={() => { setNotice(""); setConfirmingDeleteId(confirmingDeleteId === book.id ? null : book.id); }}>⋯</button>
+                    {confirmingDeleteId === book.id && (
+                      <>
+                        <button className="menu-overlay" type="button" aria-label="关闭菜单" onClick={() => setConfirmingDeleteId(null)} />
+                        <div className="more-menu-pop">
                           <button
-                            className="button danger"
                             type="button"
+                            className="danger"
                             disabled={deletingId === book.id}
                             title="删除后不可恢复，分页、角色和生成记录会一并移除"
                             onClick={() => void handleDelete(book)}
                           >
-                            {deletingId === book.id ? "删除中..." : "确认删除"}
+                            {deletingId === book.id ? "删除中..." : "确认删除这本绘本"}
                           </button>
-                          <button className="button secondary" type="button" disabled={deletingId === book.id} onClick={() => setConfirmingDeleteId(null)}>取消</button>
+                          <button type="button" disabled={deletingId === book.id} onClick={() => setConfirmingDeleteId(null)}>取消</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="storybook-card-body">
+                    <div className="card-line"><Badge tone={book.type === "plain" ? "info" : "good"}>{book.type === "plain" ? "普通绘本" : "定制绘本"}</Badge><Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge></div>
+                    <h3>{book.title}</h3>
+                    <p className="card-goal">{book.teachingGoal}</p>
+                    <p className="next-action">{storybookNextAction(book)}</p>
+                    {(customizationBlocker || (book.type === "custom" && exportBlocker)) && (
+                      <p className="task-summary blocker">{customizationBlocker || exportBlocker}</p>
+                    )}
+                    {recentTaskCopy(book) && <p className="task-summary">{recentTaskCopy(book)}</p>}
+                    <div className="meta-line"><span>{storybookSourceLabel(book)}</span><span>{book.ageGroup}</span><span>{book.useScene}</span><span>{book.updatedAt}</span></div>
+                    <div className="storybook-card-actions">
+                      {book.type === "plain" ? (
+                        <>
+                          {customizationBlocker ? (
+                            <Link className="button primary" to={`new?bookId=${book.id}`}>继续完成</Link>
+                          ) : (
+                            <>
+                              <Link className="button primary" to={`${book.id}/customize`}>生成定制版</Link>
+                              <Link className="button secondary" to={book.id}>查看详情</Link>
+                            </>
+                          )}
                         </>
+                      ) : exportBlocker ? (
+                        <Link className="button primary" to={book.id}>继续编辑</Link>
                       ) : (
-                        <button className="button text-danger" type="button" onClick={() => { setNotice(""); setConfirmingDeleteId(book.id); }}>删除</button>
+                        <Link className="button primary" to={book.id}>导出或分享</Link>
                       )}
                     </div>
                   </div>
                 </article>
               );
             })}
+            {loading && offset > 0 && Array.from({ length: 2 }, (_, index) => (
+              <SkeletonBlock key={`loading-more-${index}`} className="skeleton-card" />
+            ))}
           </section>
         </>
       )}

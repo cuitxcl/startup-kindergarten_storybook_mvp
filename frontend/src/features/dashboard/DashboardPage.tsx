@@ -134,11 +134,23 @@ function getPrimary(workspace: Workspace, books: Storybook[], childItems: ChildP
     icon: <Sparkles size={20} />,
     title: editable ? `继续完成《${editable.title}》` : "生成或复用一套普通绘本",
     copy: editable
-      ? storybookNextAction(editable)
+      ? nextStepCopy(editable)
       : "先做普通绘本，再按孩子资料生成定制副本，适合验证完整创作流程。",
     action: { label: editable ? "继续编辑" : "新建普通绘本", to: editable ? continueTarget(editable) : "../storybooks/new" },
     meta: "个人空间重点",
   };
+}
+
+// 动作化的下一步文案：告诉用户「点进去要做什么」，而不是状态描述。
+function nextStepCopy(book: Storybook) {
+  switch (book.status) {
+    case "draft": return "还差一步：填写需求并生成绘本方案";
+    case "plan_pending": return "还差一步：确认方案，生成角色与道具";
+    case "roles_pending": return "还差一步：确认角色，生成分页图文";
+    case "editing": return "还差一步：逐页检查并标记可交付";
+    case "image_pending": return "还差一步：补齐分页插图";
+    default: return storybookNextAction(book);
+  }
 }
 
 function getTasks(workspace: Workspace, books: Storybook[], childItems: ChildProfile[], submissionItems: MarketplaceSubmission[]): DashboardTask[] {
@@ -203,7 +215,7 @@ function getTasks(workspace: Workspace, books: Storybook[], childItems: ChildPro
   return [
     ...editable.slice(0, 1).map((book) => ({
       title: `继续编辑《${book.title}》`,
-      copy: storybookNextAction(book),
+      copy: nextStepCopy(book),
       to: ["draft", "plan_pending", "roles_pending"].includes(book.status)
         ? `../storybooks/new?bookId=${book.id}`
         : `../storybooks/${book.id}`,
@@ -582,7 +594,7 @@ export function DashboardPage() {
                     <div>
                       <strong>{book.title}</strong>
                       <span>{book.useScene} · {book.ageGroup} · {book.updatedAt}</span>
-                      <small>{storybookNextAction(book)}</small>
+                      <small>{nextStepCopy(book)}</small>
                     </div>
                     <Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge>
                   </Link>

@@ -48,8 +48,28 @@ pub async fn apply_completed_generation(
     };
 
     match job.job_type.as_str() {
-        "storybook_roles" => replace_roles_from_generation(db, storybook_id, output).await,
-        "storybook_pages" => replace_pages_from_generation(db, storybook_id, output).await,
+        "storybook_roles" => {
+            replace_roles_from_generation(db, storybook_id, output).await?;
+            // 角色道具生成成功后流转到「角色待确认」；只从「方案待确认」前进，不回退更后面的状态。
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "update storybooks set status = 'roles_pending', updated_at = now() where id = $1 and status = 'plan_pending'",
+                [storybook_id.into()],
+            ))
+            .await?;
+            Ok(())
+        }
+        "storybook_pages" => {
+            replace_pages_from_generation(db, storybook_id, output).await?;
+            // 分页生成成功后流转到「编辑中」；只前进不回退（如已在插图/导出阶段则不动）。
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "update storybooks set status = 'editing', updated_at = now() where id = $1 and status in ('plan_pending', 'roles_pending')",
+                [storybook_id.into()],
+            ))
+            .await?;
+            Ok(())
+        }
         "storybook_page_prompt" => apply_page_prompt_rewrite(db, storybook_id, job, output).await,
         "storybook_role_reference_image" => {
             apply_role_reference_image(db, storybook_id, job, output).await

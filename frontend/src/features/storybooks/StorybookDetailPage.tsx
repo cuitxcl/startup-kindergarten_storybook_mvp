@@ -1,4 +1,4 @@
-import { ArrowRight, CheckCircle2, Copy, Download, Pencil, Send } from "lucide-react";
+import { ArrowRight, CheckCircle2, Copy, Download, MoreHorizontal, Pencil, Send } from "lucide-react";
 import { ChangeEvent, FormEvent, type ReactNode, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
@@ -26,7 +26,7 @@ import {
   type GenerationJob,
   type ShareLink,
 } from "../../api/client";
-import { ActionButton, Badge, Card, ImageLightbox, Modal, Notice, PageHeader, statusTone } from "../../components/ui";
+import { ActionButton, Badge, Card, ImageLightbox, Modal, Notice, PageHeader, SkeletonBlock, Toast, statusTone } from "../../components/ui";
 import type { Storybook, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
 import { absoluteAppUrl, copyText } from "../../utils/clipboard";
 import { cacheImagePreview, getCachedImagePreview } from "../../utils/imagePreviewCache";
@@ -72,6 +72,7 @@ export function StorybookDetailPage() {
   const [duplicating, setDuplicating] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [duplicateTitle, setDuplicateTitle] = useState("");
   const [deliverySaving, setDeliverySaving] = useState(false);
@@ -865,7 +866,15 @@ export function StorybookDetailPage() {
   }
 
   if (loading) {
-    return <div className="page-stack"><Notice title="正在读取绘本" copy="正在从后端加载绘本详情。" tone="info" /></div>;
+    return (
+      <div className="page-stack" aria-label="绘本加载中">
+        <SkeletonBlock className="skeleton-detail-header" />
+        <div className="detail-layout">
+          <SkeletonBlock className="skeleton-strip" />
+          <SkeletonBlock className="skeleton-detail-main" />
+        </div>
+      </div>
+    );
   }
 
   if (error || !book || !selectedPage) {
@@ -885,6 +894,10 @@ export function StorybookDetailPage() {
     }
   }
 
+  const scrollToWorkspace = () => {
+    document.getElementById("page-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -895,20 +908,45 @@ export function StorybookDetailPage() {
         className="storybook-detail-header"
         actions={
           <>
-            {book.type === "plain" && canCreateCustomVersion && <Link className="button primary" to="customize">生成定制版<ArrowRight size={16} /></Link>}
-            <button className="button secondary" type="button" onClick={() => setRoleManagerOpen(true)}><Pencil size={16} />管理角色</button>
-            <button className="button secondary" type="button" onClick={() => setMetaOpen(true)}><Pencil size={16} />编辑信息</button>
-            {(book.status === "editing" || book.status === "image_pending") && (
-              <ActionButton className="button secondary" disabled={deliverySaving || !canMarkDeliverable} disabledHint={deliveryBlockers.join("；") || "请等待当前绘本加载完成"} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "标记可交付"}</ActionButton>
+            {/* 主操作：按状态只保留一个 */}
+            {canDeliver ? (
+              <ActionButton className="button primary" disabled={exporting || !canStartDelivery} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || (exporting ? "导出进行中" : undefined)} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</ActionButton>
+            ) : (book.status === "editing" || book.status === "image_pending") ? (
+              <ActionButton className="button primary" disabled={deliverySaving || !canMarkDeliverable} disabledHint={deliveryBlockers.join("；") || "请等待当前绘本加载完成"} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "标记可交付"}</ActionButton>
+            ) : (
+              <button className="button primary" type="button" onClick={scrollToWorkspace}>继续处理分页</button>
             )}
-            <button className="button secondary" type="button" disabled={duplicating} onClick={() => { setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={16} />{duplicating ? "复制中..." : "复制副本"}</button>
-            <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</ActionButton>
-            <ActionButton className={book.type === "plain" ? "button secondary" : "button primary"} disabled={exporting || !canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || (exporting ? "导出进行中" : undefined)} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</ActionButton>
-            <button className="button text-danger" type="button" onClick={() => setDeleteOpen(true)}>删除</button>
+            {/* 次操作 */}
+            {canDeliver ? (
+              <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</ActionButton>
+            ) : (book.status === "editing" || book.status === "image_pending") ? (
+              <button className="button secondary" type="button" onClick={scrollToWorkspace}>继续处理分页</button>
+            ) : null}
+            {/* 其余操作收敛进更多菜单 */}
+            <div className="more-menu">
+              <button className="button secondary" type="button" onClick={() => setMoreMenuOpen((open) => !open)}><MoreHorizontal size={16} />更多</button>
+              {moreMenuOpen && (
+                <>
+                  <button className="menu-overlay" type="button" aria-label="关闭菜单" onClick={() => setMoreMenuOpen(false)} />
+                  <div className="more-menu-pop">
+                    {book.type === "plain" && canCreateCustomVersion && (
+                      <Link to="customize" onClick={() => setMoreMenuOpen(false)}>生成定制版<ArrowRight size={14} /></Link>
+                    )}
+                    <button type="button" onClick={() => { setMoreMenuOpen(false); setRoleManagerOpen(true); }}><Pencil size={14} />管理角色</button>
+                    <button type="button" onClick={() => { setMoreMenuOpen(false); setMetaOpen(true); }}><Pencil size={14} />编辑信息</button>
+                    <button type="button" disabled={duplicating} onClick={() => { setMoreMenuOpen(false); setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={14} />{duplicating ? "复制中..." : "复制副本"}</button>
+                    <button type="button" className="danger" onClick={() => { setMoreMenuOpen(false); setDeleteOpen(true); }}>删除绘本</button>
+                  </div>
+                </>
+              )}
+            </div>
           </>
         }
       />
-      {visibleNotice && (
+      {visibleNotice && !retryImageJob && (visibleNotice.tone ?? "good") === "good" && (
+        <Toast title={visibleNotice.title} copy={visibleNotice.copy} onClose={() => setNotice(null)} />
+      )}
+      {visibleNotice && (retryImageJob || (visibleNotice.tone ?? "good") !== "good") && (
         <Notice
           title={visibleNotice.title}
           copy={visibleNotice.copy}
@@ -1060,7 +1098,11 @@ export function StorybookDetailPage() {
         </Modal>
       )}
 
-      <section className="detail-layout">
+      <div className="workspace-section-head">
+        <p className="eyebrow">本页工作台</p>
+        <h2>逐页检查内容与插图</h2>
+      </div>
+      <section className="detail-layout" id="page-workspace">
         <aside className="page-strip">
           <h2>页面</h2>
           {book.pages.map((page) => (
@@ -1099,7 +1141,10 @@ export function StorybookDetailPage() {
               <>
                 <h2>{selectedPage.title}</h2>
                 <p>{selectedPage.body}</p>
-                <div className="privacy-callout">插图描述：{selectedPage.illustrationPrompt}</div>
+                <details className="prompt-details">
+                  <summary>查看插图描述</summary>
+                  <p>{selectedPage.illustrationPrompt}</p>
+                </details>
               </>
             )}
             {activeCurrentPageImageJob ? (
@@ -1214,6 +1259,27 @@ export function StorybookDetailPage() {
           </aside>
         </div>
       </section>
+
+      {/* 交付概览：质量结论 + 复核/导出/分享状态，操作仍在头部主按钮与分享管理弹窗中 */}
+      <Card className="delivery-overview">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">交付</p>
+            <h2>{effectiveDeliveryBlocker ? "先处理阻断项" : canDeliver ? "可以导出或分享" : "完成编辑后可标记交付"}</h2>
+          </div>
+          <div className="inline-actions">
+            {quality && <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>}
+            <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享管理</ActionButton>
+          </div>
+        </div>
+        <p className="share-meta">
+          复核 <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
+          <span className="share-meta-sep">·</span>导出 <strong>{exportJobs.length ? exportStatusLabel(exportJobs[0].status) : "暂无记录"}</strong>
+          <span className="share-meta-sep">·</span>分享链接 <strong>{shareLinks.length ? `${shareLinks.length} 个有效链接` : "未创建"}</strong>
+          <span className="share-meta-sep">·</span>可见性 <strong>{visibilityLabel(book.visibility)}</strong>
+        </p>
+        {effectiveDeliveryBlocker && <p className="task-summary">{effectiveDeliveryBlocker}</p>}
+      </Card>
 
       {shareOpen && (
         <Modal title="管理分享链接" onClose={() => setShareOpen(false)}>

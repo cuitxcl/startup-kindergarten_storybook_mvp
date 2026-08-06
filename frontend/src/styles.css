@@ -74,6 +74,227 @@ textarea { resize: vertical; line-height: 1.55; }
 .button.danger:hover { background: #8f3333; }
 .button.text-danger { color: var(--danger); background: transparent; border-color: transparent; }
 .button.text-danger:hover { background: #f5dede; }
+
+/* 详情页头部「更多」菜单 */
+.more-menu { position: relative; }
+.menu-overlay { position: fixed; inset: 0; z-index: 29; background: transparent; border: none; cursor: default; }
+.more-menu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  display: grid;
+  min-width: 176px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 14px 34px rgba(60, 40, 28, 0.14);
+}
+.more-menu-pop :is(button, a) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.more-menu-pop :is(button, a):hover { background: rgba(0, 0, 0, 0.05); }
+.more-menu-pop .danger { color: var(--danger); }
+.more-menu-pop :disabled { opacity: 0.48; cursor: not-allowed; }
+
+/* 分区标题 */
+.workspace-section-head { margin-top: 8px; }
+.workspace-section-head h2 { margin: 0; }
+.delivery-overview .section-head { align-items: center; }
+
+/* 向导级联生成进度 */
+.generation-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 4px 0 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.generation-progress-step { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.generation-progress-step.pending { opacity: 0.45; }
+.generation-progress-step.active { color: var(--action-strong, var(--action)); }
+.generation-progress-step.done { color: #3d7a4e; }
+.generation-progress-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-size: 12px;
+  font-weight: 900;
+}
+.generation-progress-step.active .generation-progress-dot { animation: pulse 1.2s ease-in-out infinite; }
+.generation-progress-hint { margin-left: auto; font-size: 0.85rem; color: var(--muted, #8a7f74); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.form-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--muted, #8a7f74); }
+
+/* 向导页紧凑头部：标题与工作区信息一行展示 */
+.wizard-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.wizard-header h1 { margin: 0; font-size: 1.35rem; }
+.wizard-header span { font-size: 0.85rem; color: var(--muted, #8a7f74); }
+
+/* 画面风格预设卡片 */
+.field-label { display: block; margin-bottom: 8px; font-weight: 700; }
+.style-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.style-preset {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+}
+.style-preset img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+.style-preset-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 1px;
+  padding: 18px 6px 6px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.62));
+  color: #fff;
+  text-align: center;
+}
+.style-preset-caption strong { font-size: 0.82rem; }
+.style-preset-caption em { font-style: normal; font-size: 0.68rem; opacity: 0.85; }
+.style-preset:hover { border-color: var(--action); }
+.style-preset.active {
+  border-color: var(--action);
+  box-shadow: 0 0 0 2px var(--action);
+}
+.style-preset-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--action);
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 20px;
+  text-align: center;
+}
+.style-preset:disabled { opacity: 0.5; cursor: not-allowed; }
+.style-preset-toggle {
+  display: block;
+  margin: 4px auto 10px;
+  padding: 6px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted, #8a7f74);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.style-preset-toggle:hover { border-color: var(--action); color: var(--action); }
+
+/* 故事风格标签卡 */
+.story-style-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.story-style-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+.story-style-chip strong { font-size: 0.84rem; }
+.story-style-chip span { font-size: 0.7rem; color: var(--muted, #8a7f74); }
+.story-style-chip:hover { border-color: var(--action); }
+.story-style-chip.active {
+  border-color: var(--action);
+  background: rgba(185, 101, 67, 0.1);
+}
+.story-style-chip.active span { color: var(--action); }
+.story-style-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 成功轻提示：右上角浮出，自动消失 */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 100;
+  display: grid;
+  gap: 4px;
+  max-width: 340px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  border: 1px solid #cfe3d2;
+  background: #f0f7ef;
+  color: #2f5c3c;
+  box-shadow: 0 14px 34px rgba(60, 40, 28, 0.16);
+  animation: toast-in 0.18s ease-out, toast-out 0.3s ease-in 2.2s forwards;
+}
+.toast span { font-size: 0.85rem; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(-8px); } }
+
+/* 骨架占位 */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #ece5da;
+  min-height: 16px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  animation: skeleton-shimmer 1.4s infinite;
+}
+@keyframes skeleton-shimmer { to { transform: translateX(100%); } }
+.skeleton-card { height: 240px; }
+.skeleton-lines { display: grid; gap: 10px; }
+.skeleton-line { height: 14px; }
+.skeleton-detail-header { height: 120px; }
+.skeleton-strip { height: 420px; }
+.skeleton-detail-main { height: 420px; }
 .button:disabled, .button.is-disabled { cursor: not-allowed; opacity: 0.48; }
 .button.is-disabled:hover { background: inherit; }
 /* 键盘可达性：全局可见焦点态 */
@@ -496,6 +717,7 @@ button.compact-row.active {
 
 .storybook-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
 .storybook-card {
+  position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -526,6 +748,24 @@ button.compact-row.active {
   padding: 14px;
 }
 .storybook-card-body p { margin-bottom: 0; }
+/* 卡片右上「⋯」菜单 */
+.storybook-card-menu { position: absolute; top: 8px; right: 8px; z-index: 2; }
+.card-menu-trigger {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius);
+}
+/* 教学目标单行截断 */
+.card-goal {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 阻断条件高亮为一句 */
+.task-summary.blocker { color: var(--warn, #b07d2b); font-weight: 700; }
 .storybook-card-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -533,6 +773,7 @@ button.compact-row.active {
   margin-top: auto;
   padding-top: 8px;
 }
+.storybook-card-actions > :only-child { grid-column: 1 / -1; }
 .card-line, .meta-line, .tag-list, .inline-actions, .modal-actions, .wizard-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .meta-line { color: var(--muted); font-size: 12px; }
 .share-link-list { display: grid; gap: 8px; margin-top: 8px; }
@@ -953,6 +1194,23 @@ button.compact-row.active {
 .review-editor.role-editor,
 .review-editor.page-editor {
   grid-template-columns: 1fr;
+}
+/* 编辑态文本框随内容自动撑高，避免长文本挤在小框里滚动 */
+.review-editor textarea {
+  field-sizing: content;
+  min-height: 6em;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+/* 分页节奏逐页编辑：每页一个独立输入框 */
+.outline-lines {
+  display: grid;
+  gap: 8px;
+}
+.outline-lines textarea {
+  field-sizing: content;
+  min-height: 3em;
+  max-height: 30vh;
 }
 .editable-review-card {
   display: grid;

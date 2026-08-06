@@ -394,7 +394,7 @@ async fn role_reference_prompt(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select r.name, r.role_type, r.appearance
+            select r.name, r.role_type, r.appearance, s.cover_tone
             from storybook_roles r
             join storybooks s on s.id = r.storybook_id
             where s.workspace_id = $1 and s.id = $2 and r.id = $3
@@ -407,7 +407,15 @@ async fn role_reference_prompt(
     let name: String = row.try_get("", "name")?;
     let role_type: String = row.try_get("", "role_type")?;
     let appearance: String = row.try_get("", "appearance")?;
+    let cover_tone: String = row.try_get("", "cover_tone")?;
+    // 用户在需求里选择的画风会写入 storybooks.cover_tone；为空或仍是默认展示文案时回退水彩默认风格。
+    let trimmed = cover_tone.trim();
+    let style_clause = if trimmed.is_empty() || trimmed == "温暖、清楚" {
+        "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛".to_string()
+    } else {
+        format!("画面风格：{}", trimmed.trim_end_matches('。'))
+    };
     Ok(format!(
-        "为绘本生成单一角色标准参考图。角色名：{name}；视觉类型：{role_type}；外观：{appearance}。要求：白底或简洁背景，柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛；角色表情自然生动、富有神采，姿态自然放松，可微微侧身或采用三分之四视角，全身或半身清晰，四肢与爪子清晰可见、不要省略手臂；画面中只有这个角色，无人类，无其他角色，便于后续分页插图保持一致。不要加入故事情节动作或分页场景，不要僵硬对称的证件照式站姿。"
+        "为绘本生成单一角色标准参考图。角色名：{name}；视觉类型：{role_type}；外观：{appearance}。要求：白底或简洁背景，{style_clause}；角色表情自然生动、富有神采，姿态自然放松，可微微侧身或采用三分之四视角，全身或半身清晰，四肢与爪子清晰可见、不要省略手臂；画面中只有这个角色，无人类，无其他角色，便于后续分页插图保持一致。不要加入故事情节动作或分页场景，不要僵硬对称的证件照式站姿。"
     ))
 }

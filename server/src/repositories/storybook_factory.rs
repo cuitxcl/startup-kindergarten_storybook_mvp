@@ -15,7 +15,7 @@ pub async fn create_plain(
         r#"
         insert into storybooks
           (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, '温暖、清楚', '00000000-0000-0000-0000-000000000001', now(), now())
+        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, $7, '00000000-0000-0000-0000-000000000001', now(), now())
         "#,
         [
             storybook_id.into(),
@@ -24,10 +24,15 @@ pub async fn create_plain(
             payload.age_group.into(),
             payload.use_scene.into(),
             payload.teaching_goal.into(),
+            // 前端会把用户选择的画风（style）作为 cover_tone 传入；为空时回退默认展示文案。
+            payload
+                .cover_tone
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "温暖、清楚".to_string())
+                .into(),
         ],
     ))
     .await?;
-    seed_default_pages_and_roles(db, storybook_id).await?;
     crate::repositories::storybook_queries::find(db, workspace_id, storybook_id).await
 }
 

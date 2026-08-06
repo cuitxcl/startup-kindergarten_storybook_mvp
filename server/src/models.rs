@@ -564,6 +564,8 @@ pub struct CreateStorybookRequest {
     pub age_group: String,
     pub use_scene: String,
     pub teaching_goal: String,
+    /// 可选：用户选择的画风描述，作为绘本级画风持久化（供角色参考图/插图拼接）。
+    pub cover_tone: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

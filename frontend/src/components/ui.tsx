@@ -40,6 +40,34 @@ export function Notice({
   );
 }
 
+/** 成功类轻提示：右上角浮出，2.5s 后自动消失。阻断/需处理的信息仍用 Notice。 */
+export function Toast({ title, copy, onClose }: { title: string; copy?: string; onClose: () => void }) {
+  useEffect(() => {
+    const timer = window.setTimeout(onClose, 2500);
+    return () => window.clearTimeout(timer);
+  }, [onClose]);
+  return (
+    <div className="toast" role="status">
+      <strong>{title}</strong>
+      {copy && <span>{copy}</span>}
+    </div>
+  );
+}
+
+/** 骨架占位块：加载期间保持版面稳定，避免内容跳动。 */
+export function SkeletonBlock({ className = "", lines = 0 }: { className?: string; lines?: number }) {
+  if (lines > 0) {
+    return (
+      <div className={`skeleton-lines ${className}`} aria-hidden="true">
+        {Array.from({ length: lines }, (_, index) => (
+          <span key={index} className="skeleton skeleton-line" style={{ width: `${88 - index * 14}%` }} />
+        ))}
+      </div>
+    );
+  }
+  return <div className={`skeleton ${className}`} aria-hidden="true" />;
+}
+
 export function PageHeader({
   eyebrow,
   title,

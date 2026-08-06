@@ -14,7 +14,7 @@ import {
   type GenerationJob,
   type GenerationProviderStatus,
 } from "../../api/client";
-import { ActionButton, Badge, Card, Notice, PageHeader, WizardSideNav } from "../../components/ui";
+import { ActionButton, Badge, Card, Notice, WizardSideNav } from "../../components/ui";
 import { GenerationReviewBlock } from "../../components/GenerationReviewBlock";
 import type { Storybook, StorybookPage, StorybookRole, Workspace } from "../../types/domain";
 import {
@@ -26,6 +26,51 @@ import {
 import { generationJobTypeLabel } from "../../utils/labels";
 
 const steps = ["需求", "绘本方案", "角色道具", "分页编辑", "预览导出"];
+
+// 画面风格预设：每种画风配一张代表性预览图，选中后生成插图时会严格按该画风绘制。
+import imgPixar from "../../assets/style-presets/pixar.jpg";
+import imgGhibli from "../../assets/style-presets/ghibli.jpg";
+import imgWatercolor from "../../assets/style-presets/watercolor.jpg";
+import imgPencil from "../../assets/style-presets/pencil.jpg";
+import imgInk from "../../assets/style-presets/ink.jpg";
+import imgCartoon from "../../assets/style-presets/cartoon.jpg";
+import imgGongbi from "../../assets/style-presets/gongbi.jpg";
+import imgFlat from "../../assets/style-presets/flat.jpg";
+import imgCrayon from "../../assets/style-presets/crayon.jpg";
+import imgPapercut from "../../assets/style-presets/papercut.jpg";
+import imgClay from "../../assets/style-presets/clay.jpg";
+import imgOilpaint from "../../assets/style-presets/oilpaint.jpg";
+
+const STYLE_PRESETS = [
+  { label: "皮克斯3D", tag: "立体动画感", image: imgPixar, value: "画面风格：皮克斯3D动画风。高质量3D渲染，角色立体圆润、毛发细腻、大眼睛表情生动，柔和影棚光，色彩鲜艳明快，像动画电影截图。" },
+  { label: "宫崎骏", tag: "吉卜力手绘", image: imgGhibli, value: "画面风格：宫崎骏/吉卜力手绘风。手绘水彩质感，背景细腻丰富，天空云朵柔和，光影温暖治愈，带淡淡怀旧气息。" },
+  { label: "水彩绘本", tag: "清新通透", image: imgWatercolor, value: "画面风格：水彩绘本风。半透明水彩晕染，边缘柔和，留白自然，可见纸张纹理，色调清淡通透，经典童书插画感。" },
+  { label: "手绘彩铅", tag: "细腻笔触", image: imgPencil, value: "画面风格：手绘彩铅风。可见铅笔排线和叠色笔触，质感温暖手工感强，色调柔和，像老师亲手绘制的插画。" },
+  { label: "水墨画", tag: "东方韵味", image: imgInk, value: "画面风格：中国水墨画风。毛笔笔触灵动，墨色浓淡变化，点缀淡雅色彩，留白有意境，宣纸质感，东方美学。" },
+  { label: "卡通", tag: "简洁明快", image: imgCartoon, value: "画面风格：卡通插画风。粗描边、平涂鲜艳色块，造型简洁夸张，表情生动可爱，现代儿童动画感，画面干净明快。" },
+  { label: "国风工笔画", tag: "精致典雅", image: imgGongbi, value: "画面风格：国风工笔画风。线条细腻工整，层层晕染的矿物色彩，构图典雅精致，传统国画质感，适合文化主题。" },
+  { label: "扁平插画", tag: "现代简约", image: imgFlat, value: "画面风格：扁平插画风。极简几何造型，大面积纯色块，无渐变无阴影，配色时尚，现代儿童读物设计感。" },
+  { label: "蜡笔油画棒", tag: "童趣涂鸦", image: imgCrayon, value: "画面风格：蜡笔油画棒风。厚重蜡笔质感，色彩浓艳大胆，笔触稚拙童趣，像孩子自己的涂鸦作品，纸纹明显。" },
+  { label: "剪纸拼贴", tag: "手工纸艺", image: imgPapercut, value: "画面风格：剪纸拼贴风。层叠剪纸造型，可见纸张边缘和投影，手工纸艺质感，色彩对比鲜明，民间艺术趣味。" },
+  { label: "黏土定格", tag: "手作立体", image: imgClay, value: "画面风格：黏土定格动画风。角色像手工捏制的黏土，带指纹纹理，材质柔软立体，柔和布光，阿德曼动画式手作魅力。" },
+  { label: "厚涂油画", tag: "艺术质感", image: imgOilpaint, value: "画面风格：厚涂油画风。可见丰富笔触和颜料堆叠质感，色彩浓郁温暖，光影细腻，美术馆级绘本封面感。" },
+];
+
+// 故事风格预设：情节基调与叙事类型，决定故事怎么走；与画面风格（怎么画）互相独立，可自由组合。
+const STORY_STYLE_PRESETS = [
+  { label: "日常温情型", tag: "治愈系", value: "日常温情治愈系：以幼儿园真实生活为底色，节奏舒缓，情节小而暖，老师温柔引导，结尾有拥抱感的小收获。" },
+  { label: "冒险奇幻型", tag: "想象力爆棚", value: "冒险奇幻型：魔法森林、发光生物、会说话的伙伴，画面瑰丽夸张，情节一波三折，鼓励孩子勇敢探索。" },
+  { label: "幽默搞笑型", tag: "笑点不断", value: "幽默搞笑型：夸张的误会和反转情节，角色表情动作喜剧化，让孩子在笑声中明白一个小道理。" },
+  { label: "科学探索型", tag: "满足好奇心", value: "科学探索型：从孩子的一个小疑问出发，经历观察、猜想、验证的过程，认识自然和生活中的科学现象。" },
+  { label: "成长引导型", tag: "规则与习惯", value: "成长引导型：聚焦规则、习惯和社交情景，冲突真实、解决办法具体，老师示范清晰，适合班级共读讨论。" },
+  { label: "自然认知型", tag: "亲近自然", value: "自然认知型：以四季、动植物、天气变化为线索，画面清新细腻，在观察自然的过程中渗透认知目标。" },
+  { label: "睡前安恬型", tag: "温柔入眠", value: "睡前安恬型：节奏轻缓、画面柔和，情节安稳温暖，以晚安和拥抱收尾，帮助孩子平静下来进入睡眠。" },
+  { label: "节日民俗型", tag: "传统节庆", value: "节日民俗型：围绕传统节日与民俗活动展开，融入灯笼、舞龙、美食等节庆元素，热闹喜庆，渗透文化认知。" },
+  { label: "海洋探险型", tag: "海底世界", value: "海洋探险型：潜入五彩斑斓的海底世界，认识海洋动物朋友，情节新奇有趣，传递保护海洋的小意识。" },
+  { label: "太空科幻型", tag: "宇宙奇想", value: "太空科幻型：乘坐飞船遨游宇宙，遇见星球、机器人和外星人朋友，画面充满未来感，激发对宇宙的好奇。" },
+  { label: "复古民间故事型", tag: "经典回味", value: "复古民间故事型：采用民间故事叙事方式，有老故事的韵味和寓意，画面带传统质朴质感，适合品格启蒙。" },
+  { label: "动物拟人型", tag: "萌趣动物村", value: "动物拟人型：动物角色穿衣说话、上学上班，像小朋友一样生活和交朋友，萌趣可爱，贴近孩子的同伴世界。" },
+];
 
 type EditablePlan = {
   summary: string;
@@ -59,6 +104,7 @@ export function NewStorybookPage() {
   const [unlockedStep, setUnlockedStep] = useState(0);
   const [notice, setNotice] = useState<{ title: string; copy: string } | null>(null);
   const [creating, setCreating] = useState(false);
+  const [styleCardsExpanded, setStyleCardsExpanded] = useState(false);
   const [generatingStep, setGeneratingStep] = useState<string | null>(null);
   const [createdBookId, setCreatedBookId] = useState<string | null>(null);
   const [retryJob, setRetryJob] = useState<GenerationJob | null>(null);
@@ -79,11 +125,13 @@ export function NewStorybookPage() {
     ageGroup: "4-5 岁",
     pageCount: "6",
     useScene: "规则引导",
-    style: "温暖、生活化，有清晰的老师引导。",
+    style: STYLE_PRESETS[0].value,
+    storyStyle: STORY_STYLE_PRESETS[0].value,
+    storyFramework: "",
   });
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const resumeBookId = searchParams.get("bookId");
-  const resumeLoadedRef = useRef(false);
+  const resumedBookIdRef = useRef<string | null>(null);
   const targetBook = createdBookId;
   const generatedRoles = rolesFromOutput(generationOutputs.storybook_roles);
   const generatedPages = pagesFromOutput(generationOutputs.storybook_pages);
@@ -107,6 +155,9 @@ export function NewStorybookPage() {
     setUnlockedStep((value) => Math.max(value, nextStep));
     setStep(nextStep);
   };
+  const rememberStorybookInUrl = (bookId: string) => {
+    setSearchParams({ bookId }, { replace: true });
+  };
   const updateRequestForm = (patch: Partial<typeof form>) => {
     // 已有生成产出时，修改需求会先确认再清空，避免误操作抹掉已生成内容。
     const hasGenerated = Boolean(
@@ -129,6 +180,9 @@ export function NewStorybookPage() {
     setUnlockedStep(0);
     setNotice(null);
     setRetryJob(null);
+    // 需求被修改后旧绘本作废，清掉地址栏的 bookId，避免刷新又恢复旧进度。
+    resumedBookIdRef.current = null;
+    if (searchParams.get("bookId")) setSearchParams({}, { replace: true });
   };
 
   useEffect(() => {
@@ -137,6 +191,7 @@ export function NewStorybookPage() {
 
   // 断线恢复：刷新后如果还有向导类生成任务在跑，恢复表单上下文并继续等待结果。
   useEffect(() => {
+    if (resumeBookId) return;
     let mounted = true;
     listGenerationJobsPage(workspace.id, { limit: 10 })
       .then((page) => {
@@ -145,7 +200,21 @@ export function NewStorybookPage() {
           ["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)
           && isActiveJobStatus(job.status)
         ));
-        if (!active) return;
+        if (!active) {
+          if (!resumeBookId) {
+            const latestRecoverable = page.data
+              .filter((job) => (
+                ["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)
+                && job.storybookId
+                && job.status === "succeeded"
+              ))
+              .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
+            if (latestRecoverable?.storybookId) {
+              setSearchParams({ bookId: latestRecoverable.storybookId }, { replace: true });
+            }
+          }
+          return;
+        }
         // 超过 15 分钟仍在排队/运行的任务视为僵死（与后端 stale 锁阈值一致），不再接管，避免向导被旧任务卡住。
         const createdMs = Date.parse(active.createdAt);
         if (Number.isFinite(createdMs) && Date.now() - createdMs > 15 * 60_000) return;
@@ -158,8 +227,13 @@ export function NewStorybookPage() {
           pageCount: typeof input.page_count === "string" && input.page_count ? input.page_count : current.pageCount,
           useScene: typeof input.use_scene === "string" && input.use_scene ? input.use_scene : current.useScene,
           style: typeof input.style === "string" && input.style ? input.style : current.style,
+          storyStyle: typeof input.story_style === "string" && input.story_style ? input.story_style : current.storyStyle,
+          storyFramework: typeof input.story_framework === "string" ? input.story_framework : current.storyFramework,
         }));
-        if (active.storybookId) setCreatedBookId(active.storybookId);
+        if (active.storybookId) {
+          setCreatedBookId(active.storybookId);
+          rememberStorybookInUrl(active.storybookId);
+        }
         setGeneratingStep(active.jobType);
         setNotice({
           title: "已恢复进行中的生成任务",
@@ -182,27 +256,24 @@ export function NewStorybookPage() {
       mounted = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace.id]);
+  }, [workspace.id, resumeBookId]);
 
   // 从工作台「继续编辑」带 bookId 进入：恢复向导进度，
   // 载入绘本信息和该绘本最近一次成功的方案/角色/分页产物，跳到对应步骤。
   useEffect(() => {
-    if (!resumeBookId || resumeLoadedRef.current) return;
-    resumeLoadedRef.current = true;
+    if (!resumeBookId || resumedBookIdRef.current === resumeBookId) return;
+    resumedBookIdRef.current = resumeBookId;
     let mounted = true;
     void (async () => {
       try {
         const book = await getStorybook(workspace.id, resumeBookId);
         if (!mounted) return;
         setCreatedBookId(book.id);
-        setForm((current) => ({
-          ...current,
-          title: book.title || current.title,
-          theme: book.teachingGoal || current.theme,
-          ageGroup: book.ageGroup || current.ageGroup,
-          useScene: book.useScene || current.useScene,
-        }));
-        const jobsPage = await listGenerationJobsPage(workspace.id, { limit: 50 });
+        setGenerationOutputs({});
+        setEditableRoles([]);
+        setEditablePages([]);
+        setPlanDraft({ summary: "", outlineText: "", roleRequirementsText: "", reviewPointsText: "" });
+        const jobsPage = await listGenerationJobsPage(workspace.id, { storybookId: book.id, limit: 50 });
         if (!mounted) return;
         const latestByType = new Map<string, GenerationJob>();
         [...jobsPage.data]
@@ -216,6 +287,20 @@ export function NewStorybookPage() {
         const planJob = latestByType.get("storybook_plan");
         const rolesJob = latestByType.get("storybook_roles");
         const pagesJob = latestByType.get("storybook_pages");
+        // 需求表单以最近一次方案任务的 input 为准（含画风、故事风格、故事框架、页数），
+        // 绘本记录兜底，保证刷新后需求页恢复原填内容而不是默认值。
+        const planInput = ((planJob?.input || {}) as Record<string, unknown>);
+        setForm((current) => ({
+          ...current,
+          title: typeof planInput.title === "string" && planInput.title ? planInput.title : book.title || current.title,
+          theme: typeof planInput.theme === "string" && planInput.theme ? planInput.theme : book.teachingGoal || current.theme,
+          ageGroup: typeof planInput.age_group === "string" && planInput.age_group ? planInput.age_group : book.ageGroup || current.ageGroup,
+          pageCount: typeof planInput.page_count === "string" && planInput.page_count ? planInput.page_count : current.pageCount,
+          useScene: typeof planInput.use_scene === "string" && planInput.use_scene ? planInput.use_scene : book.useScene || current.useScene,
+          style: typeof planInput.style === "string" && planInput.style ? planInput.style : book.coverTone || current.style,
+          storyStyle: typeof planInput.story_style === "string" ? planInput.story_style : current.storyStyle,
+          storyFramework: typeof planInput.story_framework === "string" ? planInput.story_framework : current.storyFramework,
+        }));
         const outputs: Record<string, unknown> = {};
         if (planJob?.output) {
           outputs.storybook_plan = planJob.output;
@@ -227,28 +312,46 @@ export function NewStorybookPage() {
         // 已写入绘本的角色/分页以绘本为准；否则回退到任务输出。
         if (book.roles.length) setEditableRoles(rolesFromStorybook(book.roles));
         if (pagesJob && book.pages.length) setEditablePages(pagesFromStorybook(book.pages));
-        goToStep(pagesJob ? 3 : rolesJob ? 2 : planJob ? 1 : 0);
+        const restoredStep = pagesJob || ["editing", "image_pending", "exportable", "submitted", "listed"].includes(book.status)
+          ? 3
+          : rolesJob || book.status === "roles_pending"
+            ? 2
+            : planJob || book.status !== "draft"
+              ? 1
+              : 0;
+        goToStep(restoredStep);
         setNotice({
           title: "已恢复向导进度",
-          copy: pagesJob
+          copy: pagesJob || book.pages.length
             ? "已载入上次的方案、角色和分页，可继续确认分页。"
-            : rolesJob
+            : rolesJob || book.roles.length
               ? "已载入上次的方案和角色，可继续确认角色并生成分页。"
-              : planJob
+              : planJob || book.status !== "draft"
                 ? "已载入上次确认的绘本方案，可继续生成角色与道具。"
                 : "这本绘本还没有生成记录，请从需求开始。",
         });
       } catch {
         if (mounted) {
+          resumedBookIdRef.current = null;
           setNotice({ title: "恢复向导失败", copy: "无法读取该绘本的向导进度，请重新生成。" });
         }
       }
     })();
     return () => {
       mounted = false;
+      // React StrictMode 下 effect 会挂载两次：第一次的异步恢复被清理作废，
+      // 必须放行第二次执行，否则恢复永远不会落地（表现为回到需求页、表单是默认值）。
+      resumedBookIdRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.id, resumeBookId]);
+  // 向导中创建绘本后把 bookId 写入地址栏：刷新页面会走上面的恢复逻辑，进度不丢失。
+  useEffect(() => {
+    if (!createdBookId || resumeBookId === createdBookId) return;
+    // 先把 ref 占住，避免本次写 URL 又触发一次完整恢复、覆盖正在编辑的内容。
+    resumedBookIdRef.current = createdBookId;
+    setSearchParams({ bookId: createdBookId }, { replace: true });
+  }, [createdBookId, resumeBookId, setSearchParams]);
   const ensureStorybookCreated = async () => {
     if (createdBookId) return createdBookId;
     setCreating(true);
@@ -258,8 +361,10 @@ export function NewStorybookPage() {
         ageGroup: form.ageGroup,
         useScene: form.useScene,
         teachingGoal: form.theme.trim() || "帮助孩子理解班级规则和生活习惯",
+        coverTone: form.style.trim(),
       });
       setCreatedBookId(book.id);
+      rememberStorybookInUrl(book.id);
       return book.id;
     } finally {
       setCreating(false);
@@ -274,9 +379,9 @@ export function NewStorybookPage() {
     setRetryJob(null);
     setNotice(null);
     try {
-      const bookId = jobType === "storybook_roles" || jobType === "storybook_pages"
-        ? await ensureStorybookCreated()
-        : createdBookId;
+      // 每个向导生成任务都必须绑定到绘本草稿。
+      // 否则第一步方案生成只存在前端内存里，刷新页面后无法从后端恢复。
+      const bookId = await ensureStorybookCreated();
       const job = await createGenerationJob(workspace.id, {
         jobType,
         storybookId: bookId || undefined,
@@ -409,6 +514,7 @@ export function NewStorybookPage() {
       ageGroup: form.ageGroup,
       useScene: form.useScene,
       teachingGoal: form.theme.trim() || "帮助孩子理解班级规则和生活习惯",
+      coverTone: form.style.trim(),
     });
   };
   // 分页生成后自动为跨页出现的角色排队生成参考图，避免故事里只有角色文字描述、没有角色图片。
@@ -543,11 +649,10 @@ export function NewStorybookPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader
-        eyebrow="创建普通绘本"
-        title="新建普通绘本"
-        copy={`这本绘本会创建在 ${workspace.name}，后续可直接导出或派生定制版本。`}
-      />
+      <header className="wizard-header">
+        <h1>新建普通绘本</h1>
+        <span>创建在 {workspace.name}</span>
+      </header>
       {provider && !provider.realTextReady && (
         <Notice
           title="真实文本生成暂不可用"
@@ -562,9 +667,28 @@ export function NewStorybookPage() {
           steps={steps}
           active={step}
           maxUnlockedStep={unlockedStep}
-          onSelect={setStep}
+          onSelect={(next) => { if (!generatingStep) setStep(next); }}
         />
         <Card className="wizard-card">
+          {generatingStep && ["storybook_plan", "storybook_roles", "storybook_pages"].includes(generatingStep) && (
+            <div className="generation-progress">
+              {([
+                ["storybook_plan", "绘本方案"],
+                ["storybook_roles", "角色道具"],
+                ["storybook_pages", "分页图文"],
+              ] as const).map(([jobType, label], index, list) => {
+                const currentIndex = list.findIndex(([jt]) => jt === generatingStep);
+                const state = index < currentIndex ? "done" : index === currentIndex ? "active" : "pending";
+                return (
+                  <div key={jobType} className={`generation-progress-step ${state}`}>
+                    <span className="generation-progress-dot">{state === "done" ? "✓" : index + 1}</span>
+                    <span>{label}{state === "active" ? " 生成中…" : ""}</span>
+                  </div>
+                );
+              })}
+              <span className="generation-progress-hint">生成完成后可继续编辑</span>
+            </div>
+          )}
           {notice && (
             <Notice
               title={notice.title}
@@ -575,17 +699,102 @@ export function NewStorybookPage() {
           )}
           {step === 0 && (
             <div className="form-grid">
-              <label>绘本标题<input value={form.title} onChange={(event) => updateRequestForm({ title: event.target.value })} /></label>
-              <label>绘本主题<input value={form.theme} onChange={(event) => updateRequestForm({ theme: event.target.value })} /></label>
-              <label>年龄段<select value={form.ageGroup} onChange={(event) => updateRequestForm({ ageGroup: event.target.value })}><option>3-4 岁</option><option>4-5 岁</option><option>5-6 岁</option></select></label>
-              <label>页数<input type="number" value={form.pageCount} onChange={(event) => updateRequestForm({ pageCount: event.target.value })} /></label>
-              <label>使用场景<select value={form.useScene} onChange={(event) => updateRequestForm({ useScene: event.target.value })}><option>课堂共读</option><option>规则引导</option><option>家园沟通</option></select></label>
-              <label className="span-2">故事风格<textarea rows={3} value={form.style} onChange={(event) => updateRequestForm({ style: event.target.value })} /></label>
+              <label>绘本标题<input value={form.title} disabled={Boolean(generatingStep)} onChange={(event) => updateRequestForm({ title: event.target.value })} /></label>
+              <label>绘本主题<input value={form.theme} disabled={Boolean(generatingStep)} onChange={(event) => updateRequestForm({ theme: event.target.value })} /></label>
+              <label>年龄段<select value={form.ageGroup} disabled={Boolean(generatingStep)} onChange={(event) => updateRequestForm({ ageGroup: event.target.value })}><option>3-4 岁</option><option>4-5 岁</option><option>5-6 岁</option></select></label>
+              <label>页数<input type="number" value={form.pageCount} disabled={Boolean(generatingStep)} onChange={(event) => updateRequestForm({ pageCount: event.target.value })} /></label>
+              <label>使用场景<select value={form.useScene} disabled={Boolean(generatingStep)} onChange={(event) => updateRequestForm({ useScene: event.target.value })}>
+                <option>课堂共读</option>
+                <option>规则引导</option>
+                <option>家园沟通</option>
+                <option>入园适应</option>
+                <option>睡前故事</option>
+                <option>情绪管理</option>
+                <option>安全教育</option>
+                <option>健康与生活自理</option>
+                <option>节日与节气活动</option>
+                <option>户外探索</option>
+                <option>区域活动延伸</option>
+              </select></label>
+              <div className="span-2">
+                <span className="field-label">画面风格</span>
+                <div className="style-preset-grid">
+                  {(styleCardsExpanded ? STYLE_PRESETS : STYLE_PRESETS.slice(0, 6)).map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      className={`style-preset ${form.style === preset.value ? "active" : ""}`}
+                      disabled={Boolean(generatingStep)}
+                      onClick={() => updateRequestForm({ style: preset.value })}
+                    >
+                      <img src={preset.image} alt={preset.label} loading="lazy" />
+                      <span className="style-preset-caption">
+                        <strong>{preset.label}</strong>
+                        <em>{preset.tag}</em>
+                      </span>
+                      {form.style === preset.value && <span className="style-preset-check">✓</span>}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="style-preset-toggle"
+                  disabled={Boolean(generatingStep)}
+                  onClick={() => setStyleCardsExpanded((v) => !v)}
+                >
+                  {styleCardsExpanded ? "收起风格 ▲" : `展开更多风格（共 ${STYLE_PRESETS.length} 种）▼`}
+                </button>
+                <textarea
+                  rows={2}
+                  value={form.style}
+                  disabled={Boolean(generatingStep)}
+                  placeholder="选择上方预设风格，或在这里直接描述想要的风格"
+                  onChange={(event) => updateRequestForm({ style: event.target.value })}
+                />
+                <p className="form-hint">选中预设后可直接在文本框里微调，生成时会按这里的描述执行。</p>
+              </div>
+              <div className="span-2">
+                <span className="field-label">故事风格</span>
+                <div className="story-style-chips">
+                  {STORY_STYLE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      className={`story-style-chip ${form.storyStyle === preset.value ? "active" : ""}`}
+                      disabled={Boolean(generatingStep)}
+                      title={preset.value}
+                      onClick={() => updateRequestForm({ storyStyle: preset.value })}
+                    >
+                      <strong>{preset.label}</strong>
+                      <span>{preset.tag}</span>
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  rows={2}
+                  value={form.storyStyle}
+                  disabled={Boolean(generatingStep)}
+                  placeholder="选择上方预设故事风格，或在这里直接描述想要的情节基调"
+                  onChange={(event) => updateRequestForm({ storyStyle: event.target.value })}
+                />
+                <p className="form-hint">故事风格决定情节基调，画面风格决定怎么画，两者可自由组合；文本框留空则由 AI 自由发挥。</p>
+              </div>
+              <label className="span-2">
+                故事框架（可选）
+                <textarea
+                  rows={4}
+                  value={form.storyFramework}
+                  disabled={Boolean(generatingStep)}
+                  placeholder={"可以简单写几句故事的走向，比如：\n开头：小猫第一次上幼儿园，紧紧抓着妈妈的手。\n经过：它不敢加入游戏，后来在小兔的邀请下一起搭积木。\n结尾：放学时小猫已经交到了两个好朋友。\n不写也可以，AI 会根据主题自由创作。"}
+                  onChange={(event) => updateRequestForm({ storyFramework: event.target.value })}
+                />
+                <p className="form-hint">填写后，AI 会严格按你的框架展开分页；留空则由 AI 自由创作。</p>
+              </label>
             </div>
           )}
-          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} />} />}
-          {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} />} />}
-          {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} />} />}
+          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<><PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
+          {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<><RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
+          {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<><PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
           {step === 4 && (
             <div className="preview-complete">
               <Badge tone="info">编辑中</Badge>
@@ -599,7 +808,7 @@ export function NewStorybookPage() {
             </div>
           )}
           <div className="wizard-actions">
-            <ActionButton className="button secondary" disabled={step === 0} disabledHint="当前已经是第一步" onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</ActionButton>
+            <ActionButton className="button secondary" disabled={step === 0 || Boolean(generatingStep)} disabledHint={step === 0 ? "当前已经是第一步" : "生成进行中，请稍候"} onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</ActionButton>
             <ActionButton className="button primary" disabled={step === steps.length - 1 || creating || Boolean(generatingStep)} disabledHint={step === steps.length - 1 ? "绘本已生成，请进入详情继续编辑或导出" : "生成进行中，请稍候"} onClick={handlePrimary}>{creating ? "正在创建..." : generatingStep ? "生成中..." : primaryLabels[step]}</ActionButton>
           </div>
         </Card>
@@ -704,9 +913,9 @@ function PlanEditor({
   onFormChange,
   onPlanChange,
 }: {
-  form: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string };
+  form: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string; storyStyle: string; storyFramework: string };
   plan: EditablePlan;
-  onFormChange: (value: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string }) => void;
+  onFormChange: (value: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string; storyStyle: string; storyFramework: string }) => void;
   onPlanChange: (value: EditablePlan) => void;
 }) {
   return (
@@ -714,9 +923,41 @@ function PlanEditor({
       <label>绘本标题<input value={form.title} onChange={(event) => onFormChange({ ...form, title: event.target.value })} /></label>
       <label>教学目标<input value={form.theme} onChange={(event) => onFormChange({ ...form, theme: event.target.value })} /></label>
       <label className="span-2">故事概述<textarea rows={3} value={plan.summary} onChange={(event) => onPlanChange({ ...plan, summary: event.target.value })} /></label>
-      <label className="span-2">分页节奏<textarea rows={5} value={plan.outlineText} onChange={(event) => onPlanChange({ ...plan, outlineText: event.target.value })} /></label>
+      <div className="span-2 outline-editor">
+        <span className="field-label">分页节奏（每页一条，可逐页修改）</span>
+        <OutlineLinesEditor
+          text={plan.outlineText}
+          onChange={(outlineText) => onPlanChange({ ...plan, outlineText })}
+        />
+      </div>
       <label className="span-2">角色需求<textarea rows={3} value={plan.roleRequirementsText} onChange={(event) => onPlanChange({ ...plan, roleRequirementsText: event.target.value })} /></label>
       <label className="span-2">老师确认重点<textarea rows={3} value={plan.reviewPointsText} onChange={(event) => onPlanChange({ ...plan, reviewPointsText: event.target.value })} /></label>
+    </div>
+  );
+}
+
+/** 分页节奏逐页编辑：按行拆分，每页一个独立输入框，写回时按行合并。
+ *  页数由生成结果固定：输入框内禁止换行（回车忽略、粘贴内容去掉换行），避免多出空白页。 */
+function OutlineLinesEditor({ text, onChange }: { text: string; onChange: (text: string) => void }) {
+  const lines = text.split("\n");
+  return (
+    <div className="outline-lines">
+      {lines.map((line, index) => (
+        <textarea
+          key={index}
+          rows={2}
+          value={line}
+          placeholder={`第 ${index + 1} 页`}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.preventDefault();
+          }}
+          onChange={(event) => {
+            const next = [...lines];
+            next[index] = event.target.value.replace(/\r?\n+/g, " ");
+            onChange(next.join("\n"));
+          }}
+        />
+      ))}
     </div>
   );
 }
@@ -822,7 +1063,7 @@ function planPayload(plan: EditablePlan, form: { title: string; theme: string })
 
 function generationInputFor(
   jobType: string,
-  form: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string },
+  form: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string; storyStyle?: string; storyFramework?: string },
   plan: EditablePlan,
   roles: EditableRole[],
   pages: EditablePage[],
@@ -835,6 +1076,14 @@ function generationInputFor(
     use_scene: form.useScene,
     style: form.style,
   };
+  // 可选故事风格：情节基调，只在用户选择时传给 AI。
+  if (form.storyStyle?.trim()) {
+    base.story_style = form.storyStyle.trim();
+  }
+  // 可选故事框架：只在用户填写时传给 AI。
+  if (form.storyFramework?.trim()) {
+    base.story_framework = form.storyFramework.trim();
+  }
 
   if (jobType === "storybook_plan") {
     return base;

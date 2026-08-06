@@ -937,6 +937,7 @@ export async function createStorybook(
     ageGroup: string;
     useScene: string;
     teachingGoal: string;
+    coverTone?: string;
   },
 ) {
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks`, {
@@ -946,6 +947,7 @@ export async function createStorybook(
       age_group: payload.ageGroup,
       use_scene: payload.useScene,
       teaching_goal: payload.teachingGoal,
+      cover_tone: optionalText(payload.coverTone),
     }),
   });
   return mapStorybook(response);

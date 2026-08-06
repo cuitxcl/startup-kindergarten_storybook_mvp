@@ -91,6 +91,7 @@ pub async fn create(
                 age_group,
                 use_scene,
                 teaching_goal,
+                cover_tone: payload.cover_tone,
             },
         )
         .await
