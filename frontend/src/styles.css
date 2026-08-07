@@ -112,8 +112,6 @@ textarea { resize: vertical; line-height: 1.55; }
 /* 分区标题 */
 .workspace-section-head { margin-top: 8px; }
 .workspace-section-head h2 { margin: 0; }
-.delivery-overview .section-head { align-items: center; }
-
 /* 向导级联生成进度 */
 .generation-progress {
   display: flex;
@@ -1364,6 +1362,37 @@ button.compact-row.active {
   font-size: 0.86rem;
   font-weight: 800;
   line-height: 1.5;
+}
+.role-reference-step-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--panel);
+}
+.role-reference-step-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.role-reference-step-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.role-reference-step-head strong {
+  font-size: 1rem;
+}
+.role-reference-step-head span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.5;
+}
+.role-reference-step-card .reference-preview {
+  background: var(--panel-muted);
 }
 /* 编辑态文本框随内容自动撑高，避免长文本挤在小框里滚动 */
 .review-editor textarea {

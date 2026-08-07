@@ -255,7 +255,7 @@ export function StorybookListPage() {
                       {book.type === "plain" ? (
                         <>
                           {customizationBlocker ? (
-                            <Link className="button primary" to={`new?bookId=${book.id}`}>继续完成</Link>
+                            <Link className="button primary" to={continueTargetForList(book)}>继续完成</Link>
                           ) : (
                             <>
                               <Link className="button primary" to={`${book.id}/customize`}>生成定制版</Link>
@@ -286,6 +286,13 @@ export function StorybookListPage() {
 function customizationBlockerForList(book: Storybook, jobs: GenerationJob[]) {
   if (book.type !== "plain") return "";
   return exportBlockerForList(book, jobs);
+}
+
+function continueTargetForList(book: Storybook) {
+  const stillInCreationWizard = ["draft", "plan_pending", "roles_pending"].includes(book.status)
+    || !book.pages.length
+    || !book.roles.length;
+  return stillInCreationWizard ? `new?bookId=${book.id}` : book.id;
 }
 
 function exportBlockerForList(book: Storybook, jobs: GenerationJob[]) {

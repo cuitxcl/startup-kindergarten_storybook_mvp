@@ -1259,27 +1259,6 @@ export function StorybookDetailPage() {
         </div>
       </section>
 
-      {/* 交付概览：质量结论 + 复核/导出/分享状态，操作仍在头部主按钮与分享管理弹窗中 */}
-      <Card className="delivery-overview">
-        <div className="section-head">
-          <div>
-            <p className="eyebrow">交付</p>
-            <h2>{effectiveDeliveryBlocker ? "先处理阻断项" : canDeliver ? "可以导出或分享" : "完成编辑后可标记交付"}</h2>
-          </div>
-          <div className="inline-actions">
-            {quality && <Badge tone={qualityTone(quality.status)}>{qualityStatusLabel(quality.status)}</Badge>}
-            <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={!canDeliver ? "请先标记可交付" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享管理</ActionButton>
-          </div>
-        </div>
-        <p className="share-meta">
-          复核 <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
-          <span className="share-meta-sep">·</span>导出 <strong>{exportJobs.length ? exportStatusLabel(exportJobs[0].status) : "暂无记录"}</strong>
-          <span className="share-meta-sep">·</span>分享链接 <strong>{shareLinks.length ? `${shareLinks.length} 个有效链接` : "未创建"}</strong>
-          <span className="share-meta-sep">·</span>可见性 <strong>{visibilityLabel(book.visibility)}</strong>
-        </p>
-        {effectiveDeliveryBlocker && <p className="task-summary">{effectiveDeliveryBlocker}</p>}
-      </Card>
-
       {shareOpen && (
         <Modal title="管理分享链接" onClose={() => setShareOpen(false)}>
           <section className="share-section">

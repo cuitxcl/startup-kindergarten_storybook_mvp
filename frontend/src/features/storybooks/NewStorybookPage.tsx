@@ -87,6 +87,8 @@ type EditableRole = {
   storyFunction: string;
   needsConsistency: boolean;
   referenceImagePrompt: string;
+  referenceImageUrl?: string;
+  referenceStatus?: StorybookRole["referenceStatus"];
 };
 
 type EditablePage = {
@@ -111,6 +113,7 @@ export function NewStorybookPage() {
   const [generationOutputs, setGenerationOutputs] = useState<Record<string, unknown>>({});
   const [provider, setProvider] = useState<GenerationProviderStatus | null>(null);
   const [editingReview, setEditingReview] = useState<null | "plan" | "roles" | "pages">(null);
+  const [roleReferenceBusyId, setRoleReferenceBusyId] = useState<string | null>(null);
   const [planDraft, setPlanDraft] = useState<EditablePlan>({
     summary: "",
     outlineText: "",
@@ -533,6 +536,51 @@ export function NewStorybookPage() {
       coverTone: form.style.trim(),
     });
   };
+  const generateRoleReference = async (role: EditableRole) => {
+    const bookId = createdBookId || resumeBookId;
+    if (!bookId || !role.id) {
+      setNotice({
+        title: "暂不能生成参考图",
+        copy: "请先生成并写入角色与道具，再为需要跨页一致的角色生成参考图。",
+      });
+      return;
+    }
+    if (!role.needsConsistency) {
+      setNotice({
+        title: "这个角色无需参考图",
+        copy: "只有主角、老师、反复出现的同伴或关键道具才需要单独生成参考图。",
+      });
+      return;
+    }
+    setRoleReferenceBusyId(role.id);
+    setNotice(null);
+    try {
+      await persistRoles(bookId, currentRoles);
+      const savedBook = await getStorybook(workspace.id, bookId);
+      const savedRole = savedBook.roles.find((item) => item.id === role.id) || savedBook.roles.find((item) => item.name === role.name);
+      if (!savedRole) throw new Error("没有找到已保存的角色，请重新生成角色与道具后再试。");
+      const job = await createRoleReferenceImageTask(workspace.id, bookId, savedRole.id, {
+        referenceImageUrls: [],
+        imageMode: "text_to_image",
+      });
+      const settledJob = await waitForGenerationJob(job);
+      const ok = await handleGenerationJob(settledJob, savedRole.referenceImageUrl ? "角色参考图已重新生成" : "角色参考图已生成");
+      const refreshed = await getStorybook(workspace.id, bookId);
+      setEditableRoles(rolesFromStorybook(refreshed.roles));
+      if (!ok) return;
+      setNotice({
+        title: "角色参考图已生成",
+        copy: `「${savedRole.name}」的参考图已写入绘本，后续分页插图会用它保持跨页形象一致。`,
+      });
+    } catch (err) {
+      setNotice({
+        title: "角色参考图生成失败",
+        copy: err instanceof Error ? err.message : "请稍后重试。",
+      });
+    } finally {
+      setRoleReferenceBusyId(null);
+    }
+  };
   // 分页生成后自动为跨页出现的角色排队生成参考图，避免故事里只有角色文字描述、没有角色图片。
   const autoGenerateRoleReferences = async (bookId: string) => {
     let book: Storybook;
@@ -808,7 +856,7 @@ export function NewStorybookPage() {
             </div>
           )}
           {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<><PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
-          {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<><RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
+          {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<><RoleEditor roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} onGenerateReference={generateRoleReference} roleReferenceBusyId={roleReferenceBusyId} /><p className="form-hint">修改会先保存到绘本；需要跨页一致的角色可在本页生成参考图。</p></>} />}
           {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<><PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
           {step === 4 && (
             <div className="preview-complete">
@@ -978,7 +1026,17 @@ function OutlineLinesEditor({ text, onChange }: { text: string; onChange: (text:
   );
 }
 
-function RoleEditor({ roles, onChange }: { roles: EditableRole[]; onChange: (roles: EditableRole[]) => void }) {
+function RoleEditor({
+  roles,
+  onChange,
+  onGenerateReference,
+  roleReferenceBusyId,
+}: {
+  roles: EditableRole[];
+  onChange: (roles: EditableRole[]) => void;
+  onGenerateReference?: (role: EditableRole) => Promise<void>;
+  roleReferenceBusyId?: string | null;
+}) {
   const sortedRoleEntries = sortRoleEntriesByImportance(roles);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const selectedEntry = sortedRoleEntries.find((entry) => entry.index === selectedIndex) || sortedRoleEntries[0];
@@ -1061,9 +1119,67 @@ function RoleEditor({ roles, onChange }: { roles: EditableRole[]; onChange: (rol
             <small>主角、老师、反复出现的同伴建议开启；只出现一次的道具或群体可以关闭。</small>
           </span>
         </label>
+        <section className="role-reference-step-card">
+          <div className="role-reference-step-head">
+            <div>
+              <strong>角色参考图</strong>
+              <span>用于后续分页插图保持同一形象，应该在生成分页前先确认。</span>
+            </div>
+            <Badge tone={selectedRole.needsConsistency ? referenceStatusTone(selectedRole.referenceStatus) : "neutral"}>
+              {selectedRole.needsConsistency ? roleReferenceStatusLabel(selectedRole.referenceStatus) : "无需参考图"}
+            </Badge>
+          </div>
+          {selectedRole.needsConsistency ? (
+            <div className="reference-preview">
+              {selectedRole.referenceImageUrl ? (
+                <img src={selectedRole.referenceImageUrl} alt={`${selectedRole.name || "角色"}参考图`} />
+              ) : roleReferenceBusyId === selectedRole.id ? (
+                <div className="reference-empty">正在生成参考图</div>
+              ) : (
+                <div className="reference-empty">待生成参考图</div>
+              )}
+              <div>
+                <p>{selectedRole.referenceImageUrl ? "参考图已写入绘本；如果外观不满意，可以重新生成。" : "先生成参考图，再进入分页编辑，跨页角色会更稳定。"}</p>
+                <ActionButton
+                  className="button primary compact-action"
+                  disabled={!selectedRole.id || roleReferenceBusyId === selectedRole.id || !onGenerateReference}
+                  disabledHint={!selectedRole.id ? "请先生成并写入角色与道具" : "生成进行中，请稍候"}
+                  onClick={() => onGenerateReference?.(selectedRole)}
+                >
+                  {roleReferenceBusyId === selectedRole.id ? "生成中..." : selectedRole.referenceImageUrl ? "重新生成参考图" : "生成参考图"}
+                </ActionButton>
+              </div>
+            </div>
+          ) : (
+            <div className="reference-prompt-preview muted">
+              <div>
+                <strong>当前不生成参考图</strong>
+                <span>这个角色或道具被设为“单页或可变化”，分页插图会直接按每页插图描述绘制。</span>
+              </div>
+            </div>
+          )}
+        </section>
       </section>
     </div>
   );
+}
+
+function roleReferenceStatusLabel(status?: string) {
+  return {
+    not_started: "未生成",
+    generating: "生成中",
+    ready: "已确认",
+    needs_regeneration: "需要重绘",
+    failed: "生成失败",
+  }[status || "not_started"] || "待确认";
+}
+
+function referenceStatusTone(status?: string): "neutral" | "good" | "warn" | "danger" | "info" {
+  if (status === "ready") return "good";
+  if (status === "failed") return "danger";
+  if (status === "generating") return "info";
+  if (status === "needs_regeneration") return "warn";
+  return "neutral";
 }
 
 function sortRolesByImportance(roles: EditableRole[]) {
@@ -1327,6 +1443,8 @@ function roleFromStorybook(role: StorybookRole): EditableRole {
     storyFunction: role.storyFunction,
     needsConsistency: role.needsConsistency,
     referenceImagePrompt: role.referenceImagePrompt || "",
+    referenceImageUrl: role.referenceImageUrl,
+    referenceStatus: role.referenceStatus,
   };
 }
 
