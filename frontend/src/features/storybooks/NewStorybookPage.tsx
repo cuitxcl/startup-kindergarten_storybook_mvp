@@ -151,8 +151,15 @@ export function NewStorybookPage() {
     setRetryJob(null);
     setNotice({ title, copy });
   };
+  const reviewForStep = (nextStep: number): null | "plan" | "roles" | "pages" => {
+    if (nextStep === 1) return "plan";
+    if (nextStep === 2) return "roles";
+    if (nextStep === 3) return "pages";
+    return null;
+  };
   const goToStep = (nextStep: number) => {
     setUnlockedStep((value) => Math.max(value, nextStep));
+    setEditingReview(reviewForStep(nextStep));
     setStep(nextStep);
   };
   const rememberStorybookInUrl = (bookId: string) => {
@@ -616,7 +623,6 @@ export function NewStorybookPage() {
         }
         if (await runGeneration("storybook_pages", "分页图文已生成并写入绘本")) {
           if (bookId) {
-            await updateStorybook(workspace.id, bookId, { status: "roles_pending" });
             await autoGenerateRoleReferences(bookId);
           }
           goToStep(3);
@@ -676,7 +682,7 @@ export function NewStorybookPage() {
           steps={steps}
           active={step}
           maxUnlockedStep={unlockedStep}
-          onSelect={(next) => { if (!generatingStep) setStep(next); }}
+          onSelect={(next) => { if (!generatingStep) goToStep(next); }}
         />
         <Card className="wizard-card">
           {generatingStep && ["storybook_plan", "storybook_roles", "storybook_pages"].includes(generatingStep) && (
@@ -817,7 +823,7 @@ export function NewStorybookPage() {
             </div>
           )}
           <div className="wizard-actions">
-            <ActionButton className="button secondary" disabled={step === 0 || Boolean(generatingStep)} disabledHint={step === 0 ? "当前已经是第一步" : "生成进行中，请稍候"} onClick={() => { setNotice(null); setStep((value) => Math.max(0, value - 1)); }}>上一步</ActionButton>
+            <ActionButton className="button secondary" disabled={step === 0 || Boolean(generatingStep)} disabledHint={step === 0 ? "当前已经是第一步" : "生成进行中，请稍候"} onClick={() => { setNotice(null); goToStep(Math.max(0, step - 1)); }}>上一步</ActionButton>
             <ActionButton className="button primary" disabled={step === steps.length - 1 || creating || Boolean(generatingStep)} disabledHint={step === steps.length - 1 ? "绘本已生成，请进入详情继续编辑或导出" : "生成进行中，请稍候"} onClick={handlePrimary}>{creating ? "正在创建..." : generatingStep ? "生成中..." : primaryLabels[step]}</ActionButton>
           </div>
         </Card>
@@ -1097,10 +1103,16 @@ function roleTypeLabel(roleType: StorybookRole["roleType"]) {
 }
 
 function PageEditor({ pages, roles, onChange }: { pages: EditablePage[]; roles: EditableRole[]; onChange: (pages: EditablePage[]) => void }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const activeIndex = Math.min(selectedIndex, Math.max(0, pages.length - 1));
+  const activePage = pages[activeIndex];
   const update = (index: number, patch: Partial<EditablePage>) => {
     onChange(pages.map((page, pageIndex) => pageIndex === index ? { ...page, ...patch } : page));
   };
   const roleNames = roles.filter((role) => role.needsConsistency).map((role) => role.name).filter(Boolean);
+  if (!pages.length) {
+    return <div className="review-editor page-editor"><span className="role-editor-empty">还没有可编辑的分页内容。</span></div>;
+  }
   return (
     <div className="review-editor page-editor">
       {roleNames.length > 0 && (
@@ -1112,14 +1124,53 @@ function PageEditor({ pages, roles, onChange }: { pages: EditablePage[]; roles: 
           </div>
         </div>
       )}
-      {pages.map((page, index) => (
-        <div className="editable-review-card" key={`${page.id || page.pageNumber}-${index}`}>
-          <p className="eyebrow">第 {page.pageNumber} 页</p>
-          <label>页面标题<input value={page.title} onChange={(event) => update(index, { title: event.target.value })} /></label>
-          <label className="span-2">正文<textarea rows={4} value={page.body} onChange={(event) => update(index, { body: event.target.value })} /></label>
-          <label className="span-2">插图描述<textarea rows={4} value={page.illustrationPrompt} onChange={(event) => update(index, { illustrationPrompt: event.target.value })} /></label>
+      <div className="page-editor-main">
+        <aside className="role-editor-list page-editor-list" aria-label="分页列表">
+          <div className="role-editor-list-head">
+            <strong>分页</strong>
+            <span>{pages.length} 页</span>
+          </div>
+          {pages.map((page, index) => (
+            <button
+              key={`${page.id || page.pageNumber}-${index}`}
+              type="button"
+              className={`role-editor-item page-editor-item ${index === activeIndex ? "active" : ""}`}
+              onClick={() => setSelectedIndex(index)}
+            >
+              <span className="role-editor-item-main">
+                <strong>{page.title || `第 ${page.pageNumber} 页`}</strong>
+                <small>第 {page.pageNumber} 页 · {page.body.trim() ? "正文已生成" : "缺少正文"} · {page.illustrationPrompt.trim() ? "插图描述已生成" : "缺少插图描述"}</small>
+              </span>
+            </button>
+          ))}
+        </aside>
+        <div className="role-editor-detail page-editor-detail">
+          <div className="role-editor-detail-head">
+            <div>
+              <p className="eyebrow">当前编辑</p>
+              <h3>{activePage.title || `第 ${activePage.pageNumber} 页`}</h3>
+            </div>
+            <Badge tone={activePage.body.trim() && activePage.illustrationPrompt.trim() ? "good" : "warn"}>
+              第 {activePage.pageNumber} 页
+            </Badge>
+          </div>
+          <div className="role-editor-basic page-editor-fields">
+            <label className="role-editor-field">
+              <span>页面标题</span>
+              <input value={activePage.title} onChange={(event) => update(activeIndex, { title: event.target.value })} />
+            </label>
+            <label className="role-editor-field span-2">
+              <span>正文</span>
+              <textarea rows={5} value={activePage.body} onChange={(event) => update(activeIndex, { body: event.target.value })} />
+            </label>
+            <label className="role-editor-field span-2">
+              <span>插图描述</span>
+              <small>只写这一页画面需要看到的场景、角色、动作和构图。</small>
+              <textarea rows={6} value={activePage.illustrationPrompt} onChange={(event) => update(activeIndex, { illustrationPrompt: event.target.value })} />
+            </label>
+          </div>
         </div>
-      ))}
+      </div>
     </div>
   );
 }
@@ -1197,21 +1248,63 @@ function generationInputFor(
     return {
       ...base,
       plan: planPayload(plan, form),
-      confirmed_roles: roles.map(rolePayload),
+      confirmed_roles: roles.map((role) => rolePayload(role, form.style)),
       confirmed_pages: pages.length ? pages.map(pagePayload) : undefined,
     };
   }
   return base;
 }
 
-function rolePayload(role: EditableRole) {
+function roleReferenceStyle(style: string) {
+  const trimmed = style.trim().replace(/。+$/, "");
+  if (!trimmed) return "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛";
+  if (trimmed.includes("皮克斯") || trimmed.includes("3D")) {
+    return `${trimmed}，高质量3D动画电影质感，立体圆润角色，柔和棚拍光，细腻材质，真实体积感`;
+  }
+  return trimmed;
+}
+
+function hasConflictingDefaultStyle(prompt: string, style: string) {
+  const trimmedStyle = style.trim();
+  if (!trimmedStyle) return false;
+  return prompt.includes("柔和水彩绘本风格") && !trimmedStyle.includes("水彩");
+}
+
+function isLimbFreeRole(role: Pick<EditableRole, "name" | "roleType">, appearance: string) {
+  const text = `${role.name} ${role.roleType} ${appearance}`;
+  return ["无手", "没有手", "无脚", "没有脚", "无手和脚", "没有手和脚", "无四肢", "没有四肢", "蛇", "小蛇", "蚯蚓", "毛毛虫", "蜗牛", "球形"].some((keyword) =>
+    text.includes(keyword),
+  );
+}
+
+function roleReferenceAnatomyClause(role: Pick<EditableRole, "name" | "roleType">, appearance: string) {
+  if (isLimbFreeRole(role, appearance)) {
+    return "身体结构必须严格符合外观设定：没有手、没有脚、没有手臂和腿，不要生成手指、鞋子、胳膊或人形四肢，用头部、眼睛、身体弯曲、尾部和整体姿态表达动作";
+  }
+  return "身体结构必须严格符合外观设定；有手、脚、爪或翅膀时可以清晰表现，但不要凭空添加外观没有写到的肢体";
+}
+
+function roleReferencePrompt(role: EditableRole, style: string, appearance: string) {
+  const existingPrompt = role.referenceImagePrompt.trim();
+  if (existingPrompt && !hasConflictingDefaultStyle(existingPrompt, style)) {
+    const styleText = roleReferenceStyle(style);
+    return existingPrompt.includes(styleText) || existingPrompt.includes("画面风格")
+      ? existingPrompt
+      : `${existingPrompt}，画面风格必须与整本绘本一致：${styleText}`;
+  }
+  const styleText = roleReferenceStyle(style);
+  const anatomy = roleReferenceAnatomyClause(role, appearance);
+  return `${role.name}，${roleTypeLabel(role.roleType)}，${appearance || "绘本角色"}，画面风格必须与整本绘本一致：${styleText}，${anatomy}，表情自然生动、富有神采，姿态自然放松，单一角色标准图，白底或简洁背景，画面只有这个角色，无人类，无其他角色，保持跨页一致，不要僵硬对称的证件照式站姿`;
+}
+
+function rolePayload(role: EditableRole, style: string) {
   const appearance = cleanVisualAppearance(role.appearance);
   return {
     name: role.name,
     role_type: role.roleType,
     appearance,
     story_function: role.storyFunction,
-    reference_image_prompt: role.needsConsistency ? role.referenceImagePrompt || `${role.name}，${appearance || "绘本角色"}，柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，表情自然生动、富有神采，姿态自然放松，单一角色标准图，白底或简洁背景，画面只有这个角色，无人类，无其他角色，保持跨页一致，不要僵硬对称的证件照式站姿` : undefined,
+    reference_image_prompt: role.needsConsistency ? roleReferencePrompt(role, style, appearance) : undefined,
     needs_consistency: role.needsConsistency,
   };
 }

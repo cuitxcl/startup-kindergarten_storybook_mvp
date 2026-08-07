@@ -154,9 +154,9 @@ fn normalize_storybook_roles_values(object: &mut JsonMap<String, JsonValue>) {
 
 /// 插图提示词风格后缀由后端统一拼接，避免模型自由发挥导致风格漂移。
 /// 默认水彩风格；用户在需求里选择了画风时，改用用户画风 + 固定质量约束。
-const ILLUSTRATION_STYLE_SUFFIX: &str = "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，角色四肢完整、爪子或双手清晰可见，不要省略手臂，暖色调，画面充满动感和童趣。画面中不要出现文字。";
-/// 与画风无关的质量约束：肢体完整、无文字。任何画风都必须携带。
-const ILLUSTRATION_QUALITY_SUFFIX: &str = "角色四肢完整、爪子或双手清晰可见，不要省略手臂，画面充满动感和童趣。画面中不要出现文字。";
+const ILLUSTRATION_STYLE_SUFFIX: &str = "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛，角色身体结构必须严格符合已确认外观，不要凭空添加手、脚、手臂、腿、鞋子或外观未写到的肢体，暖色调，画面充满动感和童趣。画面中不要出现文字。";
+/// 与画风无关的质量约束：遵守角色身体结构、无文字。任何画风都必须携带。
+const ILLUSTRATION_QUALITY_SUFFIX: &str = "角色身体结构必须严格符合已确认外观，不要凭空添加手、脚、手臂、腿、鞋子或外观未写到的肢体，画面充满动感和童趣。画面中不要出现文字。";
 
 /// 用户在需求里选择的画风（input.style）优先；为空时回退默认水彩风格。
 fn illustration_style_suffix(style: Option<&str>) -> String {

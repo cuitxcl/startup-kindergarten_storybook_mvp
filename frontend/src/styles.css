@@ -1215,6 +1215,11 @@ button.compact-row.active {
   padding: 12px;
   background: #fff;
 }
+.review-editor.page-editor {
+  gap: 14px;
+  padding: 12px;
+  background: #fff;
+}
 .role-editor-empty {
   display: block;
   color: var(--muted);
@@ -1225,6 +1230,16 @@ button.compact-row.active {
   gap: 8px;
   border-right: 1px solid var(--line);
   padding-right: 12px;
+}
+.page-editor-main {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.3fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+.page-editor-list {
+  max-height: min(68vh, 720px);
+  overflow-y: auto;
 }
 .role-editor-list-head {
   display: flex;
@@ -1286,6 +1301,9 @@ button.compact-row.active {
   gap: 14px;
   min-width: 0;
 }
+.page-editor-detail {
+  min-width: 0;
+}
 .role-editor-detail-head {
   display: flex;
   align-items: start;
@@ -1304,6 +1322,9 @@ button.compact-row.active {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+.page-editor-fields {
+  grid-template-columns: 1fr;
 }
 .role-editor-field {
   display: grid;
@@ -1789,14 +1810,19 @@ button.compact-row.active {
   .reference-guard-callout { grid-template-columns: 1fr; align-items: stretch; }
   .review-editor,
   .editable-review-card { grid-template-columns: 1fr; }
-  .review-editor.role-editor {
+  .review-editor.role-editor,
+  .page-editor-main {
     grid-template-columns: 1fr;
   }
-  .role-editor-list {
+  .role-editor-list,
+  .page-editor-list {
     border-right: 0;
     border-bottom: 1px solid var(--line);
     padding-right: 0;
     padding-bottom: 12px;
+  }
+  .page-editor-list {
+    max-height: none;
   }
   .role-editor-basic {
     grid-template-columns: 1fr;

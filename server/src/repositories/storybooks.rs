@@ -270,7 +270,8 @@ pub async fn delete(
     txn.commit().await
 }
 
-pub async fn update_page(    db: &DatabaseConnection,
+pub async fn update_page(
+    db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
     page_id: Uuid,

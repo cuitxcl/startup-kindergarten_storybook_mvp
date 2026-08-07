@@ -103,7 +103,11 @@ fn cover_page(storybook: &Storybook) -> PdfPage {
         align: Align::Center,
     }];
     // 书名最长两行，居中大字。
-    for (index, title_line) in wrap_text(&storybook.title, 14).into_iter().take(2).enumerate() {
+    for (index, title_line) in wrap_text(&storybook.title, 14)
+        .into_iter()
+        .take(2)
+        .enumerate()
+    {
         lines.push(PdfLine {
             text: title_line,
             size: 30,
@@ -124,7 +128,11 @@ fn cover_page(storybook: &Storybook) -> PdfPage {
             lines.push(PdfLine {
                 text: wrapped,
                 size: 13,
-                gap: if index == 0 && wrapped_index == 0 { 56 } else { 24 },
+                gap: if index == 0 && wrapped_index == 0 {
+                    56
+                } else {
+                    24
+                },
                 align: Align::Center,
             });
         }
@@ -154,16 +162,12 @@ fn story_page(
         gap: 0,
         align: Align::Left,
     }];
-    lines.extend(
-        wrap_text(&page.body, 33)
-            .into_iter()
-            .map(|line| PdfLine {
-                text: line,
-                size: 13,
-                gap: 22,
-                align: Align::Left,
-            }),
-    );
+    lines.extend(wrap_text(&page.body, 33).into_iter().map(|line| PdfLine {
+        text: line,
+        size: 13,
+        gap: 22,
+        align: Align::Left,
+    }));
     PdfPage {
         background: story_page_background(),
         text_top: STORY_TEXT_TOP,
@@ -362,9 +366,7 @@ fn story_page_background() -> Vec<String> {
     vec![
         "0.99 0.98 0.95 rg\n0 0 595 842 re f\n".to_string(),
         // 插图区浅色衬底（有图时会被图片盖住，无图时作为占位底）。
-        format!(
-            "0.95 0.9 0.83 rg\n{LEFT} 440 {CONTENT_WIDTH} 330 re f\n"
-        ),
+        format!("0.95 0.9 0.83 rg\n{LEFT} 440 {CONTENT_WIDTH} 330 re f\n"),
         format!(
             "0.72 0.33 0.28 RG\n1.2 w\n{IMAGE_FRAME_X} {IMAGE_FRAME_Y} {IMAGE_FRAME_WIDTH} {IMAGE_FRAME_HEIGHT} re S\n"
         ),
@@ -474,8 +476,18 @@ mod tests {
                 text_top: STORY_TEXT_TOP,
                 text_bottom: STORY_TEXT_BOTTOM,
                 lines: vec![
-                    PdfLine { text: "标题".to_string(), size: 18, gap: 0, align: Align::Left },
-                    PdfLine { text: "正文".to_string(), size: 13, gap: 22, align: Align::Left },
+                    PdfLine {
+                        text: "标题".to_string(),
+                        size: 18,
+                        gap: 0,
+                        align: Align::Left,
+                    },
+                    PdfLine {
+                        text: "正文".to_string(),
+                        size: 13,
+                        gap: 22,
+                        align: Align::Left,
+                    },
                 ],
                 image_placeholder: false,
                 footer: None,
@@ -514,7 +526,12 @@ mod tests {
     #[test]
     fn text_that_overflows_page_bottom_is_clipped() {
         let lines = (0..30)
-            .map(|_| PdfLine { text: "一行正文".to_string(), size: 13, gap: 22, align: Align::Left })
+            .map(|_| PdfLine {
+                text: "一行正文".to_string(),
+                size: 13,
+                gap: 22,
+                align: Align::Left,
+            })
             .collect::<Vec<_>>();
         let content = page_content(
             &PdfPage {

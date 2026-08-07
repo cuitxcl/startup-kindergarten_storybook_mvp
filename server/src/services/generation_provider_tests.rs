@@ -599,8 +599,9 @@ fn deepseek_pages_output_must_reference_confirmed_roles() {
             "illustration_prompt": "小象 小兔 小猴 面前摆着彩色套圈"
         }]
     });
-    let normalized = normalize_provider_output(output, "deepseek", "storybook_pages", None, None, None)
-        .expect("shape is valid before role consistency check");
+    let normalized =
+        normalize_provider_output(output, "deepseek", "storybook_pages", None, None, None)
+            .expect("shape is valid before role consistency check");
 
     let err = validate_output_against_input(&normalized, &input, "storybook_pages")
         .expect_err("pages that ignore confirmed roles should fail");
@@ -876,7 +877,10 @@ fn provider_output_validates_every_plan_outline_item() {
     .expect_err("missing outline beat should fail");
 
     assert!(!err.retryable);
-    assert!(err.safe_message().contains("storybook_plan.outline[1].beat"));
+    assert!(
+        err.safe_message()
+            .contains("storybook_plan.outline[1].beat")
+    );
 }
 
 #[test]

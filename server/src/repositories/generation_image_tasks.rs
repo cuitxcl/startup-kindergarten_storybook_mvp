@@ -33,6 +33,7 @@ pub async fn page_image_job_input(
     payload: CreateImageTaskRequest,
 ) -> Result<JsonValue, DbErr> {
     let page_prompt = page_prompt(db, workspace_id, storybook_id, page_id).await?;
+    let cover_tone = storybook_cover_tone(db, workspace_id, storybook_id).await?;
     let prompt = payload
         .prompt
         .clone()
@@ -54,11 +55,24 @@ pub async fn page_image_job_input(
     } else {
         let roster = named_roles
             .iter()
-            .map(|(name, appearance)| format!("{name}={appearance}"))
+            .map(|(name, _, appearance)| format!("{name}={appearance}"))
             .collect::<Vec<_>>()
             .join("；");
         format!("{prompt} 角色外观：{roster}。")
     };
+    let anatomy_rules = named_roles
+        .iter()
+        .filter_map(|(name, role_type, appearance)| {
+            let clause = role_anatomy_clause(name, role_type, appearance);
+            is_limb_free_character(name, role_type, appearance).then_some(clause)
+        })
+        .collect::<Vec<_>>();
+    let prompt = if anatomy_rules.is_empty() {
+        prompt
+    } else {
+        format!("{prompt} 角色结构约束：{}。", anatomy_rules.join("；"))
+    };
+    let prompt = format!("{prompt} {}", storybook_style_guard(&cover_tone));
     // 高频或多主体描述容易让文生图模型把同一角色画成多个、拆成拼接场景；
     // 去重约束点名道姓（命中角色时），比泛指"每个角色"更有效。
     let dedup_subject = if named_roles.is_empty() {
@@ -66,7 +80,7 @@ pub async fn page_image_job_input(
     } else {
         named_roles
             .iter()
-            .map(|(name, _)| name.as_str())
+            .map(|(name, _, _)| name.as_str())
             .collect::<Vec<_>>()
             .join("、")
     };
@@ -106,12 +120,9 @@ pub async fn role_reference_image_job_input(
     role_id: Uuid,
     payload: CreateImageTaskRequest,
 ) -> Result<JsonValue, DbErr> {
-    let role_prompt = role_reference_prompt(db, workspace_id, storybook_id, role_id).await?;
-    let prompt = payload
-        .prompt
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(role_prompt);
+    // 角色参考图必须由后端根据最新角色外观和整本画风统一组装。
+    // 不采信前端传入的历史 prompt，避免旧画风或"四肢完整"类默认词覆盖老师刚修改的外观设定。
+    let prompt = role_reference_prompt(db, workspace_id, storybook_id, role_id).await?;
     let reference_images = clean_reference_image_urls(&payload.reference_image_urls)
         .into_iter()
         .map(|url| ImageReference {
@@ -232,6 +243,9 @@ async fn page_image_reference_images(
             else {
                 continue;
             };
+            let Some(url) = resolve_stored_image_url(db, &url).await? else {
+                continue;
+            };
             references.push(ImageReference {
                 url,
                 source: "storybook_role".to_string(),
@@ -242,6 +256,9 @@ async fn page_image_reference_images(
     }
 
     for url in clean_reference_image_urls(&payload.reference_image_urls) {
+        let Some(url) = resolve_stored_image_url(db, &url).await? else {
+            continue;
+        };
         if references.iter().any(|item| item.url == url) {
             continue;
         }
@@ -285,6 +302,145 @@ fn clean_optional_text(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// 归一化库里的参考图地址，保证最终能映射到本地文件或合法远程 URL：
+/// - /generated-images/... 本地文件路径：直接用（生图请求时会转 base64）
+/// - 带域名的本地路径（http://host/generated-images/...）：剥离域名
+/// - 旧数据里的任务图片 API 路径（/api/workspaces/{ws}/generation-jobs/{job}/image）：
+///   追溯到该任务输出的真实图片地址
+/// 解析不出的返回 None，调用方跳过该参考图，避免无效 URL 发给生图服务导致整单 400。
+async fn resolve_stored_image_url(
+    db: &DatabaseConnection,
+    url: &str,
+) -> Result<Option<String>, DbErr> {
+    let trimmed = url.trim();
+    if trimmed.starts_with("/generated-images/") {
+        return Ok(Some(trimmed.to_string()));
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        // 带域名的本地生成图：剥离 scheme+host，按本地文件处理。
+        if let Some(scheme_end) = trimmed.find("://") {
+            if let Some(path_start) = trimmed[scheme_end + 3..].find('/') {
+                let path = &trimmed[scheme_end + 3 + path_start..];
+                if path.starts_with("/generated-images/") {
+                    return Ok(Some(path.to_string()));
+                }
+            }
+        }
+        return Ok(Some(trimmed.to_string()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("/api/workspaces/") {
+        let segments: Vec<&str> = rest.split('/').collect();
+        if segments.len() == 4 && segments[1] == "generation-jobs" && segments[3] == "image" {
+            if let Ok(job_id) = Uuid::parse_str(segments[2]) {
+                let row = db
+                    .query_one(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "select output_json->'image'->>'image_url' as image_url from generation_jobs where id = $1 limit 1",
+                        [job_id.into()],
+                    ))
+                    .await?;
+                if let Some(row) = row {
+                    if let Some(inner) =
+                        clean_optional_text(row.try_get::<Option<String>>("", "image_url")?)
+                    {
+                        if inner != trimmed {
+                            return Box::pin(resolve_stored_image_url(db, &inner)).await;
+                        }
+                    }
+                }
+            }
+            // API 路径但追溯不到真实文件：跳过，不发无效 URL 给生图服务。
+            return Ok(None);
+        }
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+async fn storybook_cover_tone(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+) -> Result<String, DbErr> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        select coalesce(cover_tone, '') as cover_tone
+        from storybooks
+        where workspace_id = $1 and id = $2
+        limit 1
+        "#,
+        [workspace_id.into(), storybook_id.into()],
+    ))
+    .await?
+    .ok_or_else(|| DbErr::RecordNotFound("storybook".to_string()))?
+    .try_get("", "cover_tone")
+}
+
+fn storybook_style_clause(cover_tone: &str) -> (String, bool) {
+    let trimmed = cover_tone.trim().trim_end_matches('。');
+    let uses_default_style = trimmed.is_empty() || trimmed == "温暖、清楚";
+    if uses_default_style {
+        (
+            "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛".to_string(),
+            true,
+        )
+    } else if trimmed.contains("皮克斯") || trimmed.contains("3D") {
+        (
+            format!(
+                "{trimmed}，高质量3D动画电影质感，立体圆润角色，柔和棚拍光，细腻材质，真实体积感"
+            ),
+            false,
+        )
+    } else {
+        (trimmed.to_string(), false)
+    }
+}
+
+fn storybook_style_guard(cover_tone: &str) -> String {
+    let (style_clause, uses_default_style) = storybook_style_clause(cover_tone);
+    if uses_default_style {
+        format!("画面风格：{style_clause}。")
+    } else {
+        format!(
+            "画面风格必须严格采用整本绘本选择的风格：{style_clause}；禁止改成水彩、平面卡通、手绘素描或其他未选择的画风。"
+        )
+    }
+}
+
+fn is_limb_free_character(name: &str, role_type: &str, appearance: &str) -> bool {
+    let text = format!("{name} {role_type} {appearance}");
+    [
+        "无手",
+        "没有手",
+        "无脚",
+        "没有脚",
+        "无手和脚",
+        "没有手和脚",
+        "无四肢",
+        "没有四肢",
+        "蛇",
+        "小蛇",
+        "蚯蚓",
+        "毛毛虫",
+        "蜗牛",
+        "球形",
+    ]
+    .iter()
+    .any(|keyword| text.contains(keyword))
+}
+
+fn role_anatomy_clause(name: &str, role_type: &str, appearance: &str) -> String {
+    if is_limb_free_character(name, role_type, appearance) {
+        format!(
+            "{name}必须严格符合外观设定：没有手、没有脚、没有手臂和腿，不要生成手指、鞋子、胳膊或人形四肢；用头部、眼睛、身体弯曲、尾部和整体姿态表达动作"
+        )
+    } else {
+        format!(
+            "{name}的身体结构必须严格符合外观设定；有手、脚、爪或翅膀时可以清晰表现，但不要凭空添加外观没有写到的肢体"
+        )
+    }
+}
+
 /// 查找上一页最近一次成功插图的图片地址，作为本页的场景参考图。
 /// 上一页没有已生成插图时返回 None，调用方静默降级为普通生成。
 async fn previous_page_scene_reference(
@@ -320,6 +476,9 @@ async fn previous_page_scene_reference(
     let Some(url) = clean_optional_text(row.try_get::<Option<String>>("", "image_url")?) else {
         return Ok(None);
     };
+    let Some(url) = resolve_stored_image_url(db, &url).await? else {
+        return Ok(None);
+    };
     Ok(Some(ImageReference {
         url,
         source: "previous_page".to_string(),
@@ -350,18 +509,18 @@ async fn page_prompt(
     .try_get("", "illustration_prompt")
 }
 
-/// 查询本页提示词里点名角色的（名字, 外观设定）清单；没有命中则返回空 vec。
+/// 查询本页提示词里点名角色的（名字, 类型, 外观设定）清单；没有命中则返回空 vec。
 /// 最多取 4 个，避免清单过长稀释画面描述。
 async fn page_named_role_appearances(
     db: &DatabaseConnection,
     storybook_id: Uuid,
     prompt: &str,
-) -> Result<Vec<(String, String)>, DbErr> {
+) -> Result<Vec<(String, String, String)>, DbErr> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select name, appearance
+            select name, role_type, appearance
             from storybook_roles
             where storybook_id = $1
             order by name asc, id asc
@@ -373,11 +532,18 @@ async fn page_named_role_appearances(
         .into_iter()
         .filter_map(|row| {
             let name = row.try_get::<String>("", "name").ok()?;
+            let role_type = row.try_get::<String>("", "role_type").ok()?;
             let appearance = row.try_get::<String>("", "appearance").ok()?;
             let name = name.trim();
+            let role_type = role_type.trim();
             let appearance = appearance.trim().trim_end_matches(['。', '；', ';']);
-            (!name.is_empty() && !appearance.is_empty() && prompt.contains(name))
-                .then(|| (name.to_string(), appearance.to_string()))
+            (!name.is_empty() && !appearance.is_empty() && prompt.contains(name)).then(|| {
+                (
+                    name.to_string(),
+                    role_type.to_string(),
+                    appearance.to_string(),
+                )
+            })
         })
         .take(4)
         .collect::<Vec<_>>();
@@ -408,14 +574,10 @@ async fn role_reference_prompt(
     let role_type: String = row.try_get("", "role_type")?;
     let appearance: String = row.try_get("", "appearance")?;
     let cover_tone: String = row.try_get("", "cover_tone")?;
-    // 用户在需求里选择的画风会写入 storybooks.cover_tone；为空或仍是默认展示文案时回退水彩默认风格。
-    let trimmed = cover_tone.trim();
-    let style_clause = if trimmed.is_empty() || trimmed == "温暖、清楚" {
-        "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛".to_string()
-    } else {
-        format!("画面风格：{}", trimmed.trim_end_matches('。'))
-    };
+    let style_guard = storybook_style_guard(&cover_tone);
+    let anatomy_clause = role_anatomy_clause(&name, &role_type, &appearance);
+
     Ok(format!(
-        "为绘本生成单一角色标准参考图。角色名：{name}；视觉类型：{role_type}；外观：{appearance}。要求：白底或简洁背景，{style_clause}；角色表情自然生动、富有神采，姿态自然放松，可微微侧身或采用三分之四视角，全身或半身清晰，四肢与爪子清晰可见、不要省略手臂；画面中只有这个角色，无人类，无其他角色，便于后续分页插图保持一致。不要加入故事情节动作或分页场景，不要僵硬对称的证件照式站姿。"
+        "为绘本生成单一角色标准参考图。角色名：{name}；视觉类型：{role_type}；稳定外观：{appearance}。要求：白底或简洁背景，{style_guard}；{anatomy_clause}；表情自然生动、富有神采，姿态自然放松，可微微侧身或采用三分之四视角，清晰展示完整轮廓或半身；画面中只有这个角色，无人类，无其他角色，便于后续分页插图保持一致。不要加入故事情节动作或分页场景，不要僵硬对称的证件照式站姿。"
     ))
 }

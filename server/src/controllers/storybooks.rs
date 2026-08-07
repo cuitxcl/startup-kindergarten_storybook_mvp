@@ -25,7 +25,9 @@ pub fn routes() -> Routes {
         )
         .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}",
-            get(get_storybook).patch(update_storybook).delete(delete_storybook),
+            get(get_storybook)
+                .patch(update_storybook)
+                .delete(delete_storybook),
         )
         .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/duplicate",
