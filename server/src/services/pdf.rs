@@ -704,6 +704,8 @@ mod tests {
                     body: "孩子们一起讨论怎样轮流玩。".to_string(),
                     illustration_prompt: "温暖幼儿园教室，纸感水彩。".to_string(),
                     status: "ready".to_string(),
+                    image_url: None,
+                    selected_image_variant_id: None,
                 },
                 StorybookPage {
                     id: Uuid::new_v4(),
@@ -712,6 +714,8 @@ mod tests {
                     body: "老师引导大家说出自己的想法。".to_string(),
                     illustration_prompt: "老师和孩子围坐。".to_string(),
                     status: "ready".to_string(),
+                    image_url: None,
+                    selected_image_variant_id: None,
                 },
             ],
             roles: vec![StorybookRole {
@@ -724,6 +728,7 @@ mod tests {
                 reference_image_url: None,
                 reference_image_prompt: None,
                 reference_status: "not_started".to_string(),
+                selected_image_variant_id: None,
             }],
             quality: Default::default(),
         }

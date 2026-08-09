@@ -61,6 +61,8 @@ pub mod storybook_editing;
 #[cfg(feature = "db")]
 pub mod storybook_factory;
 #[cfg(feature = "db")]
+pub mod storybook_image_variants;
+#[cfg(feature = "db")]
 pub mod storybook_queries;
 #[cfg(feature = "db")]
 pub mod storybook_rules;

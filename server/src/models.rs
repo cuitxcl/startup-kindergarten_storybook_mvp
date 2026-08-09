@@ -182,6 +182,8 @@ pub struct StorybookPage {
     pub body: String,
     pub illustration_prompt: String,
     pub status: String,
+    pub image_url: Option<String>,
+    pub selected_image_variant_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -195,6 +197,31 @@ pub struct StorybookRole {
     pub reference_image_url: Option<String>,
     pub reference_image_prompt: Option<String>,
     pub reference_status: String,
+    pub selected_image_variant_id: Option<Uuid>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookImageVariant {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub storybook_id: Uuid,
+    pub target_type: String,
+    pub target_id: Uuid,
+    pub generation_job_id: Option<Uuid>,
+    pub image_url: Option<String>,
+    pub prompt: Option<String>,
+    pub provider: Option<String>,
+    pub status: String,
+    pub failure_reason: Option<String>,
+    pub is_selected: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ImageVariantListQuery {
+    pub target_type: Option<String>,
+    pub target_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

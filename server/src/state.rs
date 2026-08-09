@@ -293,6 +293,8 @@ fn seed_pages() -> Vec<StorybookPage> {
             illustration_prompt: "明亮教室里，白色小兔抱着红色小汽车，朋友们好奇地看着。"
                 .to_string(),
             status: "ready".to_string(),
+            image_url: None,
+            selected_image_variant_id: None,
         },
         StorybookPage {
             id: Uuid::new_v4(),
@@ -301,6 +303,8 @@ fn seed_pages() -> Vec<StorybookPage> {
             body: "小熊乐乐轻轻问：我可以一起玩吗？米米把小汽车抱得更紧了。".to_string(),
             illustration_prompt: "小熊伸出手询问，小兔有点犹豫，背景是温暖的积木区。".to_string(),
             status: "needs_regeneration".to_string(),
+            image_url: None,
+            selected_image_variant_id: None,
         },
     ]
 }
@@ -317,6 +321,7 @@ fn seed_roles() -> Vec<StorybookRole> {
             reference_image_url: None,
             reference_image_prompt: None,
             reference_status: "not_started".to_string(),
+            selected_image_variant_id: None,
         },
         StorybookRole {
             id: Uuid::new_v4(),
@@ -328,6 +333,7 @@ fn seed_roles() -> Vec<StorybookRole> {
             reference_image_url: None,
             reference_image_prompt: None,
             reference_status: "not_started".to_string(),
+            selected_image_variant_id: None,
         },
     ]
 }

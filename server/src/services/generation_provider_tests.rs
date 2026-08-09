@@ -1223,6 +1223,73 @@ fn provider_output_rejects_forbidden_wording_in_legacy_prompt() {
     assert!(err.safe_message().contains("禁止写法"));
 }
 
+fn storybook_page_with_camera(page_number: u64, camera: &str) -> JsonValue {
+    json!({
+        "page_number": page_number,
+        "title": format!("第 {page_number} 页"),
+        "body": format!("第 {page_number} 页正文。"),
+        "illustration": {
+            "camera": camera,
+            "scene_state": "清晨的森林入口，小动物们按队伍聚在一起准备出发",
+            "contact_chain": "小松鼠站在队伍旁边看向前方，小兔靠近小松鼠听他说话",
+            "crowd": "后排还有几只小动物在树下等待",
+            "action": "小松鼠抬头看路牌，身体微微前倾",
+            "expression": "小松鼠眼睛睁圆、嘴角微微上扬",
+            "prop_detail": "地上有一片发亮的叶子"
+        },
+        "status": "draft"
+    })
+}
+
+#[test]
+fn provider_output_rejects_repetitive_storybook_camera_rhythm() {
+    let err = normalize_provider_output(
+        json!({
+            "pages": [
+                storybook_page_with_camera(1, "中近景，画面聚焦角色互动"),
+                storybook_page_with_camera(2, "中近景，画面聚焦角色互动"),
+                storybook_page_with_camera(3, "中近景，画面聚焦角色互动"),
+                storybook_page_with_camera(4, "中近景，画面聚焦角色互动"),
+                storybook_page_with_camera(5, "中近景，画面聚焦角色互动")
+            ]
+        }),
+        "deepseek",
+        "storybook_pages",
+        None,
+        None,
+        None,
+    )
+    .expect_err("repetitive camera rhythm should fail");
+
+    assert!(err.safe_message().contains("镜头节奏"));
+}
+
+#[test]
+fn provider_output_accepts_varied_storybook_camera_rhythm() {
+    let normalized = normalize_provider_output(
+        json!({
+            "pages": [
+                storybook_page_with_camera(1, "远景，画面建立森林入口和排队的小动物"),
+                storybook_page_with_camera(2, "中景，画面聚焦小松鼠和小兔讨论路线"),
+                storybook_page_with_camera(3, "近景，画面聚焦小松鼠发现发光叶子的表情"),
+                storybook_page_with_camera(4, "跟随视角，画面沿着小路跟随队伍前进"),
+                storybook_page_with_camera(5, "全景，画面呈现大家到达终点并围成一圈")
+            ]
+        }),
+        "deepseek",
+        "storybook_pages",
+        None,
+        None,
+        None,
+    )
+    .expect("varied camera rhythm should pass");
+
+    let prompt = normalized["pages"][0]["illustration_prompt"]
+        .as_str()
+        .expect("first assembled prompt should exist");
+    assert!(prompt.contains("远景"));
+}
+
 #[test]
 fn deepseek_pages_payload_uses_lower_temperature() {
     let provider = DeepSeekTextProvider {

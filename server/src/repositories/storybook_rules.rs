@@ -472,6 +472,7 @@ mod tests {
             reference_image_url: Some("https://example.test/car.png".to_string()),
             reference_image_prompt: Some("红色玩具车，圆角".to_string()),
             reference_status: "ready".to_string(),
+            selected_image_variant_id: None,
         };
         let mut after = before.clone();
 
@@ -658,6 +659,8 @@ mod tests {
                 body: "内容".to_string(),
                 illustration_prompt: "提示".to_string(),
                 status: "ready".to_string(),
+                image_url: None,
+                selected_image_variant_id: None,
             }],
             roles: vec![StorybookRole {
                 id: Uuid::new_v4(),
@@ -669,6 +672,7 @@ mod tests {
                 reference_image_url: None,
                 reference_image_prompt: None,
                 reference_status: "not_started".to_string(),
+                selected_image_variant_id: None,
             }],
             quality: Default::default(),
         }

@@ -156,6 +156,18 @@ async fn latest_storybook_page_image_paths(
     db: &DatabaseConnection,
     storybook_id: Uuid,
 ) -> Result<HashMap<Uuid, PathBuf>, DbErr> {
+    let mut images = HashMap::new();
+    for (page_id, image_url) in
+        crate::repositories::storybook_image_variants::selected_page_image_paths(db, storybook_id)
+            .await?
+    {
+        if let Some(file_name) = export_image_file_name(&image_url) {
+            let image_path =
+                storage::local_generated_image_path(&file_name).map_err(DbErr::Custom)?;
+            images.insert(page_id, image_path);
+        }
+    }
+
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -175,7 +187,6 @@ async fn latest_storybook_page_image_paths(
         ))
         .await?;
 
-    let mut images = HashMap::new();
     for row in rows {
         let page_id = row
             .try_get::<String>("", "page_id")
@@ -186,6 +197,9 @@ async fn latest_storybook_page_image_paths(
             .ok()
             .and_then(|value| export_image_file_name(&value));
         if let (Some(page_id), Some(file_name)) = (page_id, file_name) {
+            if images.contains_key(&page_id) {
+                continue;
+            }
             let image_path =
                 storage::local_generated_image_path(&file_name).map_err(DbErr::Custom)?;
             images.insert(page_id, image_path);

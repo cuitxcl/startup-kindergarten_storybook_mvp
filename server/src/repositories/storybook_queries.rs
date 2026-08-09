@@ -187,8 +187,8 @@ async fn storybooks_from_rows(
     let mut books = Vec::with_capacity(rows.len());
     for row in rows {
         let id = row.try_get("", "id")?;
-        let pages = pages_for(db, id).await?;
         let workspace_id = row.try_get("", "workspace_id")?;
+        let pages = pages_for(db, workspace_id, id).await?;
         let roles = roles_for(db, workspace_id, id).await?;
         let mut book = Storybook {
             id,
@@ -226,16 +226,29 @@ async fn storybooks_from_rows(
 
 async fn pages_for(
     db: &DatabaseConnection,
+    workspace_id: Uuid,
     storybook_id: Uuid,
 ) -> Result<Vec<StorybookPage>, DbErr> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, page_number, title, body, illustration_prompt, status
-            from storybook_pages
-            where storybook_id = $1
-            order by page_number
+            select
+              p.id,
+              p.page_number,
+              p.title,
+              p.body,
+              p.illustration_prompt,
+              p.status,
+              p.selected_image_variant_id,
+              selected_variant.image_url as selected_image_url,
+              selected_variant.generation_job_id as selected_generation_job_id
+            from storybook_pages p
+            left join storybook_image_variants selected_variant
+              on selected_variant.id = p.selected_image_variant_id
+             and selected_variant.status = 'ready'
+            where p.storybook_id = $1
+            order by p.page_number
             "#,
             [storybook_id.into()],
         ))
@@ -250,6 +263,12 @@ async fn pages_for(
                 body: row.try_get("", "body")?,
                 illustration_prompt: row.try_get("", "illustration_prompt")?,
                 status: row.try_get("", "status")?,
+                image_url: selected_image_url(
+                    row.try_get("", "selected_image_url")?,
+                    workspace_id,
+                    row.try_get("", "selected_generation_job_id")?,
+                ),
+                selected_image_variant_id: row.try_get("", "selected_image_variant_id")?,
             })
         })
         .collect()
@@ -273,9 +292,15 @@ async fn roles_for(
               r.needs_consistency,
               r.reference_image_url,
               r.reference_image_prompt,
+              r.selected_image_variant_id,
               coalesce(r.reference_status, 'not_started') as reference_status,
+              selected_variant.image_url as selected_reference_image_url,
+              selected_variant.generation_job_id as selected_reference_generation_job_id,
               ref_job.id as reference_generation_job_id
             from storybook_roles r
+            left join storybook_image_variants selected_variant
+              on selected_variant.id = r.selected_image_variant_id
+             and selected_variant.status = 'ready'
             left join lateral (
               select g.id
               from generation_jobs g
@@ -304,11 +329,14 @@ async fn roles_for(
                 needs_consistency: row.try_get("", "needs_consistency")?,
                 reference_image_url: role_reference_image_url(
                     workspace_id,
-                    row.try_get("", "reference_image_url")?,
-                    row.try_get("", "reference_generation_job_id")?,
+                    row.try_get::<Option<String>>("", "selected_reference_image_url")?
+                        .or(row.try_get("", "reference_image_url")?),
+                    row.try_get::<Option<Uuid>>("", "selected_reference_generation_job_id")?
+                        .or(row.try_get("", "reference_generation_job_id")?),
                 ),
                 reference_image_prompt: row.try_get("", "reference_image_prompt")?,
                 reference_status: row.try_get("", "reference_status")?,
+                selected_image_variant_id: row.try_get("", "selected_image_variant_id")?,
             })
         })
         .collect()
@@ -329,6 +357,19 @@ fn normalized_role_type(value: &str) -> String {
 fn role_reference_image_url(
     workspace_id: Uuid,
     stored_url: Option<String>,
+    generation_job_id: Option<Uuid>,
+) -> Option<String> {
+    match (stored_url, generation_job_id) {
+        (Some(_), Some(job_id)) => Some(format!(
+            "/api/workspaces/{workspace_id}/generation-jobs/{job_id}/image"
+        )),
+        (stored_url, _) => stored_url,
+    }
+}
+
+fn selected_image_url(
+    stored_url: Option<String>,
+    workspace_id: Uuid,
     generation_job_id: Option<Uuid>,
 ) -> Option<String> {
     match (stored_url, generation_job_id) {

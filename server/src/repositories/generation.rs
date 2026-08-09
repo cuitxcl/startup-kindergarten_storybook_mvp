@@ -49,6 +49,15 @@ pub async fn retry_failed_job(
 
     crate::repositories::generation_jobs::move_to_running(db, job.id, "failed", INLINE_WORKER_ID)
         .await?;
+    if job.job_type == "storybook_role_reference_image" {
+        if let (Some(storybook_id), Some(role_id)) = (job.storybook_id, role_id_from_job(&job)) {
+            mark_role_reference_status(db, storybook_id, role_id, "generating").await?;
+        }
+    } else if job.job_type == "storybook_page_image" {
+        if let (Some(storybook_id), Some(page_id)) = (job.storybook_id, page_id_from_job(&job)) {
+            mark_page_image_status(db, storybook_id, page_id, "generating").await?;
+        }
+    }
 
     let provider = ConfiguredGenerationProvider::from_env();
     let provider_name = provider.name_for_job_type(&job.job_type);
@@ -71,7 +80,11 @@ pub async fn retry_failed_job(
             })
             .await
         {
-            Ok(output_json) => complete_and_apply_running_job(db, job.id, output_json).await?,
+            Ok(output_json) => {
+                let completed = complete_and_apply_running_job(db, job.id, output_json).await?;
+                mark_image_job_success_status(db, &completed, &job).await?;
+                completed
+            }
             Err(err) => fail_running_job(db, job.id, provider_name, &job.job_type, err).await?,
         }
     } else {
@@ -177,7 +190,7 @@ pub async fn create_generation_job_record(
     let input_json =
         enriched_generation_input(db, job_type, payload.storybook_id, payload.input_json).await?;
 
-    crate::repositories::generation_jobs::enqueue_job(
+    let job = crate::repositories::generation_jobs::enqueue_job(
         db,
         workspace_id,
         payload.storybook_id,
@@ -185,7 +198,12 @@ pub async fn create_generation_job_record(
         job_type,
         input_json,
     )
-    .await
+    .await?;
+    if is_image_job(job_type) {
+        crate::repositories::storybook_image_variants::create_generating_variant_for_job(db, &job)
+            .await?;
+    }
+    Ok(job)
 }
 
 async fn enriched_generation_input(
@@ -333,7 +351,7 @@ pub async fn create_page_image_job_record(
 ) -> Result<GenerationJob, DbErr> {
     ensure_generation_budget_available(db, Some(workspace_id)).await?;
     let input_json = page_image_job_input(db, workspace_id, storybook_id, page_id, payload).await?;
-    crate::repositories::generation_jobs::enqueue_job(
+    let job = crate::repositories::generation_jobs::enqueue_job(
         db,
         workspace_id,
         Some(storybook_id),
@@ -341,7 +359,11 @@ pub async fn create_page_image_job_record(
         "storybook_page_image",
         input_json,
     )
-    .await
+    .await?;
+    crate::repositories::storybook_image_variants::create_generating_variant_for_job(db, &job)
+        .await?;
+    mark_page_image_status(db, storybook_id, page_id, "generating").await?;
+    Ok(job)
 }
 
 pub async fn create_role_reference_image_job_record(
@@ -355,7 +377,7 @@ pub async fn create_role_reference_image_job_record(
     ensure_generation_budget_available(db, Some(workspace_id)).await?;
     let input_json =
         role_reference_image_job_input(db, workspace_id, storybook_id, role_id, payload).await?;
-    crate::repositories::generation_jobs::enqueue_job(
+    let job = crate::repositories::generation_jobs::enqueue_job(
         db,
         workspace_id,
         Some(storybook_id),
@@ -363,7 +385,11 @@ pub async fn create_role_reference_image_job_record(
         "storybook_role_reference_image",
         input_json,
     )
-    .await
+    .await?;
+    crate::repositories::storybook_image_variants::create_generating_variant_for_job(db, &job)
+        .await?;
+    mark_role_reference_status(db, storybook_id, role_id, "generating").await?;
+    Ok(job)
 }
 
 pub async fn retry_generation_job(
@@ -460,28 +486,7 @@ async fn execute_claimed_generation_record(
         {
             Ok(output_json) => {
                 let completed = complete_and_apply_running_job(db, job.id, output_json).await?;
-                if completed.status == "succeeded"
-                    && job_type == "storybook_page_image"
-                    && let Some(storybook_id) = completed.storybook_id
-                {
-                    if let Some(page_id) = job
-                        .input_json
-                        .get("page_id")
-                        .and_then(|value| value.as_str())
-                        .and_then(|value| Uuid::parse_str(value).ok())
-                    {
-                        db.execute(Statement::from_sql_and_values(
-                            DbBackend::Postgres,
-                            r#"
-                            update storybook_pages
-                            set status = 'ready'
-                            where id = $1 and storybook_id = $2
-                            "#,
-                            [page_id.into(), storybook_id.into()],
-                        ))
-                        .await?;
-                    }
-                }
+                mark_image_job_success_status(db, &completed, &job).await?;
                 completed
             }
             Err(err) => fail_running_job(db, job.id, provider_name, &job_type, err).await?,
@@ -530,6 +535,9 @@ async fn complete_and_apply_running_job(
     let job =
         crate::repositories::generation_jobs::complete_running_job(db, job_id, output_json).await?;
     record_generation_cost_log(db, &job).await?;
+    if is_image_job(&job.job_type) {
+        crate::repositories::storybook_image_variants::mark_job_variant_ready(db, &job).await?;
+    }
     crate::repositories::generation_writeback::apply_completed_generation(db, &job).await?;
     Ok(job)
 }
@@ -562,12 +570,110 @@ async fn fail_running_job(
         db,
         job_id,
         output_json,
-        safe_message,
+        safe_message.clone(),
         next_run_interval,
     )
     .await?;
+    if job.job_type == "storybook_role_reference_image" {
+        crate::repositories::storybook_image_variants::mark_job_variant_failed(
+            db,
+            &job,
+            &safe_message,
+        )
+        .await?;
+        if let (Some(storybook_id), Some(role_id)) = (job.storybook_id, role_id_from_job(&job)) {
+            mark_role_reference_status(db, storybook_id, role_id, "failed").await?;
+        }
+    } else if job.job_type == "storybook_page_image" {
+        crate::repositories::storybook_image_variants::mark_job_variant_failed(
+            db,
+            &job,
+            &safe_message,
+        )
+        .await?;
+        if let (Some(storybook_id), Some(page_id)) = (job.storybook_id, page_id_from_job(&job)) {
+            mark_page_image_status(db, storybook_id, page_id, "failed").await?;
+        }
+    }
     record_generation_cost_log(db, &job).await?;
     Ok(job)
+}
+
+async fn mark_image_job_success_status(
+    db: &DatabaseConnection,
+    completed: &GenerationJob,
+    source_job: &GenerationJob,
+) -> Result<(), DbErr> {
+    if completed.status == "succeeded"
+        && source_job.job_type == "storybook_page_image"
+        && let (Some(storybook_id), Some(page_id)) =
+            (completed.storybook_id, page_id_from_job(source_job))
+    {
+        mark_page_image_status(db, storybook_id, page_id, "ready").await?;
+    }
+    Ok(())
+}
+
+async fn mark_page_image_status(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    page_id: Uuid,
+    status: &str,
+) -> Result<(), DbErr> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_pages
+        set status = $3
+        where storybook_id = $1 and id = $2
+        "#,
+        vec![storybook_id.into(), page_id.into(), status.into()],
+    ))
+    .await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybooks
+        set updated_at = now()
+        where id = $1
+        "#,
+        [storybook_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn mark_role_reference_status(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    role_id: Uuid,
+    status: &str,
+) -> Result<(), DbErr> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_roles
+        set reference_status = $3
+        where storybook_id = $1 and id = $2
+        "#,
+        vec![storybook_id.into(), role_id.into(), status.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+fn role_id_from_job(job: &GenerationJob) -> Option<Uuid> {
+    job.input_json
+        .get("role_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
+}
+
+fn page_id_from_job(job: &GenerationJob) -> Option<Uuid> {
+    job.input_json
+        .get("page_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
 }
 
 async fn ensure_storybook_in_workspace(

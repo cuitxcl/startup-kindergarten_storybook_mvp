@@ -177,6 +177,8 @@ fn mock_pages() -> Vec<StorybookPage> {
         body: "老师确认故事方案后，孩子们一起进入故事。".to_string(),
         illustration_prompt: "温暖教室，老师和孩子围坐阅读。".to_string(),
         status: "ready".to_string(),
+        image_url: None,
+        selected_image_variant_id: None,
     }]
 }
 
@@ -192,5 +194,6 @@ fn mock_roles() -> Vec<StorybookRole> {
         reference_image_url: None,
         reference_image_prompt: None,
         reference_status: "not_started".to_string(),
+        selected_image_variant_id: None,
     }]
 }

@@ -157,6 +157,39 @@ async fn apply_role_reference_image(
         .and_then(|value| value.get("prompt"))
         .and_then(|value| value.as_str())
         .unwrap_or_default();
+    let selected_variant = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select id, is_selected
+            from storybook_image_variants
+            where generation_job_id = $1
+            limit 1
+            "#,
+            [job.id.into()],
+        ))
+        .await?;
+    let variant_id = selected_variant
+        .as_ref()
+        .and_then(|row| row.try_get::<Uuid>("", "id").ok());
+    let is_selected = selected_variant
+        .as_ref()
+        .and_then(|row| row.try_get::<bool>("", "is_selected").ok())
+        .unwrap_or(false);
+
+    if !is_selected {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            update storybook_roles
+            set reference_status = 'ready'
+            where storybook_id = $1 and id = $2
+            "#,
+            [storybook_id.into(), role_id.into()],
+        ))
+        .await?;
+        return touch_storybook(db, storybook_id).await;
+    }
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -164,7 +197,8 @@ async fn apply_role_reference_image(
         update storybook_roles
         set reference_image_url = $3,
             reference_image_prompt = $4,
-            reference_status = 'ready'
+            reference_status = 'ready',
+            selected_image_variant_id = $5
         where storybook_id = $1 and id = $2
         "#,
         [
@@ -172,6 +206,7 @@ async fn apply_role_reference_image(
             role_id.into(),
             image_url.to_string().into(),
             prompt.to_string().into(),
+            variant_id.into(),
         ],
     ))
     .await?;

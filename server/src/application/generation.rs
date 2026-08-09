@@ -15,7 +15,7 @@ use crate::{
     error::ApiError,
     models::{
         CreateGenerationJobRequest, CreateImageTaskRequest, GenerationJob, GenerationJobListQuery,
-        PaginationMeta, WorkspaceRole,
+        ImageVariantListQuery, PaginationMeta, StorybookImageVariant, WorkspaceRole,
     },
 };
 
@@ -25,6 +25,103 @@ pub use crate::application::generation_image_access::{
 pub use crate::application::generation_job_actions::{
     RecoverGenerationJobsRequest, cancel_job, clear_failed_jobs, recover_jobs, retry_job,
 };
+
+pub async fn list_image_variants(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    query: ImageVariantListQuery,
+) -> Result<Vec<StorybookImageVariant>, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_workspace_db(ctx, headers, workspace_id).await?;
+        crate::repositories::delivery::ensure_storybook_in_workspace(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+        )
+        .await
+        .map_err(common::db_error)?;
+        let variants = crate::repositories::storybook_image_variants::list_variants(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+            query,
+        )
+        .await
+        .map_err(common::db_error)?;
+        return Ok(variants
+            .into_iter()
+            .map(with_variant_image_download_url)
+            .collect());
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let _ = (ctx, headers, workspace_id, storybook_id, query);
+        Ok(Vec::new())
+    }
+}
+
+pub async fn select_image_variant(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    variant_id: Uuid,
+) -> Result<StorybookImageVariant, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_editor_db(ctx, headers, workspace_id).await?;
+        let actor_id = common::actor_user_id(headers)?;
+        let variant = crate::repositories::storybook_image_variants::select_variant(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+            variant_id,
+        )
+        .await
+        .map_err(common::db_error)?;
+        crate::repositories::audit::log(
+            &ctx.db,
+            Some(workspace_id),
+            Some(actor_id),
+            "storybook_image_variant.selected",
+            "storybook_image_variant",
+            Some(variant.id),
+            json!({
+                "storybook_id": storybook_id,
+                "target_type": variant.target_type,
+                "target_id": variant.target_id,
+            }),
+        )
+        .await
+        .map_err(common::db_error)?;
+        return Ok(with_variant_image_download_url(variant));
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let _ = (ctx, headers, workspace_id, storybook_id, variant_id);
+        Err(ApiError::not_found("storybook_image_variant"))
+    }
+}
+
+pub fn with_variant_image_download_url(
+    mut variant: StorybookImageVariant,
+) -> StorybookImageVariant {
+    if variant.status == "ready"
+        && variant.image_url.is_some()
+        && let Some(job_id) = variant.generation_job_id
+    {
+        variant.image_url = Some(format!(
+            "/api/workspaces/{}/generation-jobs/{}/image",
+            variant.workspace_id, job_id
+        ));
+    }
+    variant
+}
 
 pub async fn create_page_image_task(
     ctx: &AppContext,

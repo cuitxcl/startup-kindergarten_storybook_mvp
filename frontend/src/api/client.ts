@@ -8,6 +8,7 @@ import type {
   ParentIntakeLink,
   PublicParentIntakeLink,
   Storybook,
+  StorybookImageVariant,
   StorybookPage,
   StorybookRole,
   User,
@@ -115,6 +116,8 @@ type ApiStorybookPage = {
   body: string;
   illustration_prompt: string;
   status: StorybookPage["status"];
+  image_url?: string | null;
+  selected_image_variant_id?: string | null;
 };
 
 type ApiStorybookRole = {
@@ -127,6 +130,24 @@ type ApiStorybookRole = {
   reference_image_url?: string | null;
   reference_image_prompt?: string | null;
   reference_status?: StorybookRole["referenceStatus"];
+  selected_image_variant_id?: string | null;
+};
+
+type ApiStorybookImageVariant = {
+  id: string;
+  workspace_id: string;
+  storybook_id: string;
+  target_type: StorybookImageVariant["targetType"];
+  target_id: string;
+  generation_job_id?: string | null;
+  image_url?: string | null;
+  prompt?: string | null;
+  provider?: string | null;
+  status: StorybookImageVariant["status"];
+  failure_reason?: string | null;
+  is_selected: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 type ApiStorybookQualityStatus = "passed" | "needs_review" | "blocked";
@@ -1107,6 +1128,33 @@ export async function createRoleReferenceImageTask(
   return mapGenerationJob(response);
 }
 
+export async function listStorybookImageVariants(
+  workspaceId: string,
+  storybookId: string,
+  payload: { targetType?: StorybookImageVariant["targetType"]; targetId?: string } = {},
+): Promise<StorybookImageVariant[]> {
+  const params = new URLSearchParams();
+  if (payload.targetType) params.set("target_type", payload.targetType);
+  if (payload.targetId) params.set("target_id", payload.targetId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await request<ApiStorybookImageVariant[]>(
+    `/api/workspaces/${workspaceId}/storybooks/${storybookId}/image-variants${suffix}`,
+  );
+  return response.map(mapStorybookImageVariant);
+}
+
+export async function selectStorybookImageVariant(
+  workspaceId: string,
+  storybookId: string,
+  variantId: string,
+): Promise<StorybookImageVariant> {
+  const response = await request<ApiStorybookImageVariant>(
+    `/api/workspaces/${workspaceId}/storybooks/${storybookId}/image-variants/${variantId}/select`,
+    { method: "POST" },
+  );
+  return mapStorybookImageVariant(response);
+}
+
 export async function downloadGenerationImageFile(workspaceId: string, jobId: string): Promise<Blob> {
   return requestBlob(`/api/workspaces/${workspaceId}/generation-jobs/${jobId}/image`);
 }
@@ -1899,6 +1947,8 @@ function mapStorybookPage(page: ApiStorybookPage): StorybookPage {
     body: page.body,
     illustrationPrompt: page.illustration_prompt,
     status: page.status,
+    imageUrl: page.image_url || undefined,
+    selectedImageVariantId: page.selected_image_variant_id || undefined,
   };
 }
 
@@ -1913,6 +1963,26 @@ function mapStorybookRole(role: ApiStorybookRole): StorybookRole {
     referenceImageUrl: role.reference_image_url || undefined,
     referenceImagePrompt: role.reference_image_prompt || undefined,
     referenceStatus: role.reference_status || "not_started",
+    selectedImageVariantId: role.selected_image_variant_id || undefined,
+  };
+}
+
+function mapStorybookImageVariant(variant: ApiStorybookImageVariant): StorybookImageVariant {
+  return {
+    id: variant.id,
+    workspaceId: variant.workspace_id,
+    storybookId: variant.storybook_id,
+    targetType: variant.target_type,
+    targetId: variant.target_id,
+    generationJobId: variant.generation_job_id || undefined,
+    imageUrl: variant.image_url || undefined,
+    prompt: variant.prompt || undefined,
+    provider: variant.provider || undefined,
+    status: variant.status,
+    failureReason: variant.failure_reason || undefined,
+    isSelected: variant.is_selected,
+    createdAt: variant.created_at,
+    updatedAt: variant.updated_at,
   };
 }
 

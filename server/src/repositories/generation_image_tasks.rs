@@ -452,18 +452,30 @@ async fn previous_page_scene_reference(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select gj.output_json->'image'->>'image_url' as image_url
+            select coalesce(
+              selected_variant.image_url,
+              latest_job.output_json->'image'->>'image_url'
+            ) as image_url
             from storybook_pages current_page
             join storybook_pages prev_page
               on prev_page.storybook_id = current_page.storybook_id
              and prev_page.page_number = current_page.page_number - 1
-            join generation_jobs gj
-              on gj.storybook_id = current_page.storybook_id
-             and gj.job_type = 'storybook_page_image'
-             and gj.status = 'succeeded'
-             and gj.input_json->>'page_id' = prev_page.id::text
+            left join storybook_image_variants selected_variant
+              on selected_variant.id = prev_page.selected_image_variant_id
+             and selected_variant.status = 'ready'
+             and selected_variant.image_url is not null
+            left join lateral (
+              select gj.output_json
+              from generation_jobs gj
+              where gj.storybook_id = current_page.storybook_id
+                and gj.job_type = 'storybook_page_image'
+                and gj.status = 'succeeded'
+                and gj.input_json->>'page_id' = prev_page.id::text
+              order by gj.created_at desc
+              limit 1
+            ) latest_job on true
             where current_page.storybook_id = $1 and current_page.id = $2
-            order by gj.created_at desc
+              and coalesce(selected_variant.image_url, latest_job.output_json->'image'->>'image_url') is not null
             limit 1
             "#,
             [storybook_id.into(), page_id.into()],

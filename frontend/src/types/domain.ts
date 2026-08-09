@@ -63,6 +63,8 @@ export interface StorybookPage {
   body: string;
   illustrationPrompt: string;
   status: "ready" | "needs_regeneration" | "generating" | "failed";
+  imageUrl?: string;
+  selectedImageVariantId?: string;
 }
 
 export interface StorybookRole {
@@ -75,6 +77,24 @@ export interface StorybookRole {
   referenceImageUrl?: string;
   referenceImagePrompt?: string;
   referenceStatus: "not_started" | "generating" | "ready" | "needs_regeneration" | "failed";
+  selectedImageVariantId?: string;
+}
+
+export interface StorybookImageVariant {
+  id: string;
+  workspaceId: string;
+  storybookId: string;
+  targetType: "role_reference" | "page_illustration";
+  targetId: string;
+  generationJobId?: string;
+  imageUrl?: string;
+  prompt?: string;
+  provider?: string;
+  status: "generating" | "ready" | "failed";
+  failureReason?: string;
+  isSelected: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type StorybookQualityStatus = "passed" | "needs_review" | "blocked";

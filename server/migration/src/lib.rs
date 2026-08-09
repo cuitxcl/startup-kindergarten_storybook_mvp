@@ -18,6 +18,7 @@ mod m20260721_000015_add_share_link_access_stats;
 mod m20260722_000016_add_storybook_role_reference_images;
 mod m20260724_000017_add_storage_owner_to_jobs;
 mod m20260726_000018_add_storybook_teacher_review;
+mod m20260727_000019_create_storybook_image_variants;
 
 pub struct Migrator;
 
@@ -43,6 +44,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260722_000016_add_storybook_role_reference_images::Migration),
             Box::new(m20260724_000017_add_storage_owner_to_jobs::Migration),
             Box::new(m20260726_000018_add_storybook_teacher_review::Migration),
+            Box::new(m20260727_000019_create_storybook_image_variants::Migration),
         ]
     }
 }

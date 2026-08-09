@@ -14,7 +14,7 @@ use crate::{
     error::ApiError,
     models::{
         CreateGenerationJobRequest, CreateImageTaskRequest, Envelope, GenerationJob,
-        GenerationJobListQuery,
+        GenerationJobListQuery, ImageVariantListQuery, StorybookImageVariant,
     },
 };
 
@@ -27,6 +27,14 @@ pub fn routes() -> Routes {
         .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/roles/{role_id}/reference-image-tasks",
             post(create_role_reference_image_task),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/image-variants",
+            get(list_image_variants),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/image-variants/{variant_id}/select",
+            post(select_image_variant),
         )
         .add(
             "/api/workspaces/{workspace_id}/generation-jobs",
@@ -60,6 +68,39 @@ pub fn routes() -> Routes {
             "/generated-images/{file_name}",
             get(download_generated_image),
         )
+}
+
+async fn list_image_variants(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, storybook_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<ImageVariantListQuery>,
+) -> Result<Json<Envelope<Vec<StorybookImageVariant>>>, ApiError> {
+    let variants = application::generation::list_image_variants(
+        &ctx,
+        &headers,
+        workspace_id,
+        storybook_id,
+        query,
+    )
+    .await?;
+    Ok(Json(Envelope::new(variants)))
+}
+
+async fn select_image_variant(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, storybook_id, variant_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> Result<Json<Envelope<StorybookImageVariant>>, ApiError> {
+    let variant = application::generation::select_image_variant(
+        &ctx,
+        &headers,
+        workspace_id,
+        storybook_id,
+        variant_id,
+    )
+    .await?;
+    Ok(Json(Envelope::new(variant)))
 }
 
 async fn create_page_image_task(
@@ -212,6 +253,14 @@ mod tests {
         ));
         assert!(uris.contains(
             &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/roles/{role_id}/reference-image-tasks"
+        ));
+        assert!(
+            uris.contains(
+                &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/image-variants"
+            )
+        );
+        assert!(uris.contains(
+            &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/image-variants/{variant_id}/select"
         ));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/generation-jobs"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/generation-jobs/{job_id}"));

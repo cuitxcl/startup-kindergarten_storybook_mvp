@@ -149,6 +149,7 @@ pub async fn update_role(
         reference_image_url: row.try_get("", "reference_image_url")?,
         reference_image_prompt: row.try_get("", "reference_image_prompt")?,
         reference_status: row.try_get("", "reference_status")?,
+        selected_image_variant_id: None,
     })
 }
 
