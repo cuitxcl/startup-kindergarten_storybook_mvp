@@ -239,6 +239,103 @@ pub async fn create_page_image_task(
     }
 }
 
+pub async fn create_cover_image_task(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    payload: CreateImageTaskRequest,
+) -> Result<GenerationJob, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_editor_db(ctx, headers, workspace_id).await?;
+        let actor_id = common::actor_user_id(headers)?;
+        let queued = crate::repositories::generation::create_cover_image_job_record(
+            &ctx.db,
+            workspace_id,
+            actor_id,
+            storybook_id,
+            payload,
+        )
+        .await
+        .map_err(common::db_error)?;
+        enqueue_generation_page_image_job(ctx, workspace_id, queued.id)
+            .await
+            .map_err(|err| ApiError::state_conflict(format!("封面图任务入队失败：{err}")))?;
+        crate::repositories::audit::log(
+            &ctx.db,
+            Some(workspace_id),
+            Some(actor_id),
+            "generation_job.created",
+            "generation_job",
+            Some(queued.id),
+            json!({
+                "storybook_id": storybook_id,
+                "job_type": queued.job_type,
+                "status": queued.status,
+            }),
+        )
+        .await
+        .map_err(common::db_error)?;
+        return Ok(queued);
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let state = shared_state(ctx)?;
+        common::require_editor(&state, headers, workspace_id)?;
+        let book = find_storybook(&state, workspace_id, storybook_id)?;
+        let job_id = Uuid::new_v4();
+        let prompt = payload.prompt.unwrap_or_else(|| {
+            format!(
+                "为幼儿园绘本《{}》生成封面插图，主题：{}，画风：{}，不要文字、水印或 logo。",
+                book.title, book.teaching_goal, book.cover_tone
+            )
+        });
+        let output_json = serde_json::json!({
+            "image": {
+                "target_id": storybook_id,
+                "target_type": "cover",
+                "cover_id": storybook_id,
+                "image_url": format!("/generated-images/mock-{job_id}.png"),
+                "alt_text": "AI 生成的绘本封面图",
+                "prompt": prompt,
+                "image_mode": payload.image_mode.unwrap_or_else(|| "text_to_image".to_string()),
+                "reference_images": [],
+                "edit_instruction": payload.edit_instruction,
+                "strength": payload.strength,
+                "style_notes": ["绘本封面", "不要文字", "整本画风一致"]
+            },
+            "message": "封面图任务已完成，当前为 mock 图片结果"
+        });
+        Ok(GenerationJob {
+            id: job_id,
+            workspace_id,
+            storybook_id: Some(storybook_id),
+            created_by: None,
+            job_type: "storybook_cover_image".to_string(),
+            status: "succeeded".to_string(),
+            input_json: serde_json::json!({
+                "cover_id": storybook_id,
+                "prompt": output_json["image"]["prompt"].clone(),
+                "mode": "storybook_cover_image",
+                "image_mode": output_json["image"]["image_mode"].clone(),
+                "reference_images": output_json["image"]["reference_images"].clone(),
+                "edit_instruction": output_json["image"]["edit_instruction"].clone(),
+                "strength": output_json["image"]["strength"].clone()
+            }),
+            output_json: Some(output_json),
+            attempt_count: 1,
+            last_error: None,
+            next_run_at: None,
+            locked_by: None,
+            locked_at: None,
+            created_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+        })
+    }
+}
+
 pub async fn create_role_reference_image_task(
     ctx: &AppContext,
     headers: &HeaderMap,

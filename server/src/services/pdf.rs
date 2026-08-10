@@ -2,7 +2,7 @@
 
 use crate::{
     models::Storybook,
-    services::pdf_images::{PdfImage, decode_png_for_pdf, image_placement},
+    services::pdf_images::{PdfImage, decode_png_for_pdf, image_placement, image_placement_in_box},
 };
 use std::{collections::HashMap, path::PathBuf};
 use uuid::Uuid;
@@ -51,6 +51,7 @@ struct PdfPage {
     image_placeholder: bool,
     footer: Option<String>,
     image: Option<usize>,
+    image_box: Option<(f64, f64, f64, f64)>,
 }
 
 pub fn encode_storybook_pdf(storybook: &Storybook) -> Vec<u8> {
@@ -69,8 +70,17 @@ fn storybook_pdf_pages(
     storybook: &Storybook,
     image_paths: &HashMap<Uuid, PathBuf>,
 ) -> (Vec<PdfPage>, Vec<PdfImage>) {
-    let mut pages = vec![cover_page(storybook)];
     let mut images = Vec::new();
+    let cover_image = image_paths
+        .get(&storybook.id)
+        .and_then(|path| decode_png_for_pdf(path).ok())
+        .map(|mut image| {
+            let index = images.len();
+            image.name = format!("Im{}", index + 1);
+            images.push(image);
+            index
+        });
+    let mut pages = vec![cover_page(storybook, cover_image)];
 
     for page in &storybook.pages {
         let image = image_paths
@@ -88,7 +98,7 @@ fn storybook_pdf_pages(
     (pages, images)
 }
 
-fn cover_page(storybook: &Storybook) -> PdfPage {
+fn cover_page(storybook: &Storybook, image: Option<usize>) -> PdfPage {
     let role_names = storybook
         .roles
         .iter()
@@ -99,7 +109,7 @@ fn cover_page(storybook: &Storybook) -> PdfPage {
     let mut lines = vec![PdfLine {
         text: "KINDLEAF 绘本".to_string(),
         size: 12,
-        gap: 0,
+        gap: 18,
         align: Align::Center,
     }];
     // 书名最长两行，居中大字。
@@ -111,7 +121,7 @@ fn cover_page(storybook: &Storybook) -> PdfPage {
         lines.push(PdfLine {
             text: title_line,
             size: 30,
-            gap: if index == 0 { 70 } else { 40 },
+            gap: if index == 0 { 34 } else { 36 },
             align: Align::Center,
         });
     }
@@ -129,9 +139,9 @@ fn cover_page(storybook: &Storybook) -> PdfPage {
                 text: wrapped,
                 size: 13,
                 gap: if index == 0 && wrapped_index == 0 {
-                    56
+                    34
                 } else {
-                    24
+                    20
                 },
                 align: Align::Center,
             });
@@ -145,7 +155,13 @@ fn cover_page(storybook: &Storybook) -> PdfPage {
         lines,
         image_placeholder: false,
         footer: Some("Kindleaf 生成导出版".to_string()),
-        image: None,
+        image,
+        image_box: Some((
+            COVER_FRAME_X as f64 + 34.0,
+            COVER_FRAME_Y as f64 + 34.0,
+            COVER_FRAME_WIDTH as f64 - 68.0,
+            260.0,
+        )),
     }
 }
 
@@ -176,6 +192,7 @@ fn story_page(
         image_placeholder: image.is_none(),
         footer: Some(format!("{} / 第 {} 页", storybook.title, page.page_number)),
         image,
+        image_box: None,
     }
 }
 
@@ -276,7 +293,11 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
     let mut content = page.background.join("");
     if let Some(image_index) = page.image {
         let image = &images[image_index];
-        let placement = image_placement(image);
+        let placement = if let Some((x, y, width, height)) = page.image_box {
+            image_placement_in_box(image, x, y, width, height)
+        } else {
+            image_placement(image)
+        };
         content.push_str(&format!(
             "q\n{} 0 0 {} {} {} cm\n/{} Do\nQ\n",
             pdf_number(placement.width),
@@ -492,6 +513,7 @@ mod tests {
                 image_placeholder: false,
                 footer: None,
                 image: None,
+                image_box: None,
             },
             &[],
         );
@@ -542,6 +564,7 @@ mod tests {
                 image_placeholder: false,
                 footer: None,
                 image: None,
+                image_box: None,
             },
             &[],
         );
@@ -641,6 +664,7 @@ mod tests {
                 image_placeholder: false,
                 footer: None,
                 image: Some(0),
+                image_box: None,
             },
             &[PdfImage {
                 name: "Im1".to_string(),

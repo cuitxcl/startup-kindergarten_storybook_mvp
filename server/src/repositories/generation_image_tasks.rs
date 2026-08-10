@@ -21,8 +21,35 @@ pub struct ImageJobTarget {
 pub fn is_image_job(job_type: &str) -> bool {
     matches!(
         job_type,
-        "storybook_page_image" | "storybook_role_reference_image"
+        "storybook_page_image" | "storybook_role_reference_image" | "storybook_cover_image"
     )
+}
+
+pub async fn cover_image_job_input(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    payload: CreateImageTaskRequest,
+) -> Result<JsonValue, DbErr> {
+    let default_prompt = cover_prompt(db, workspace_id, storybook_id).await?;
+    let prompt = payload
+        .prompt
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(default_prompt);
+    let reference_images = storybook_role_reference_images(db, storybook_id).await?;
+    let image_mode =
+        normalize_image_mode(payload.image_mode.as_deref(), !reference_images.is_empty());
+
+    Ok(json!({
+        "cover_id": storybook_id,
+        "prompt": prompt,
+        "mode": "storybook_cover_image",
+        "image_mode": image_mode.as_str(),
+        "reference_images": reference_images,
+        "edit_instruction": clean_optional_text(payload.edit_instruction),
+        "strength": payload.strength.map(|value| value.clamp(0.0, 1.0))
+    }))
 }
 
 pub async fn page_image_job_input(
@@ -157,6 +184,16 @@ pub fn image_target_from_job(job: &GenerationJob) -> Result<ImageJobTarget, DbEr
             target_id: role_id.to_string(),
             target_type: "role",
         })
+    } else if job.job_type == "storybook_cover_image" {
+        let cover_id = job
+            .input_json
+            .get("cover_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| DbErr::Custom("封面图任务缺少 cover_id，无法执行".to_string()))?;
+        Ok(ImageJobTarget {
+            target_id: cover_id.to_string(),
+            target_type: "cover",
+        })
     } else {
         let page_id = job
             .input_json
@@ -168,6 +205,113 @@ pub fn image_target_from_job(job: &GenerationJob) -> Result<ImageJobTarget, DbEr
             target_type: "page",
         })
     }
+}
+
+async fn cover_prompt(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+) -> Result<String, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select title, age_group, use_scene, teaching_goal, cover_tone
+            from storybooks
+            where workspace_id = $1 and id = $2
+            limit 1
+            "#,
+            [workspace_id.into(), storybook_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("storybook".to_string()))?;
+    let title: String = row.try_get("", "title")?;
+    let age_group: String = row.try_get("", "age_group")?;
+    let use_scene: String = row.try_get("", "use_scene")?;
+    let teaching_goal: String = row.try_get("", "teaching_goal")?;
+    let cover_tone: String = row.try_get("", "cover_tone")?;
+    let roles = storybook_roles_for_prompt(db, storybook_id).await?;
+    let style_guard = storybook_style_guard(&cover_tone);
+    Ok(format!(
+        "为幼儿园绘本《{title}》生成封面插图。年龄段：{age_group}；使用场景：{use_scene}；教学目标：{teaching_goal}。主要角色：{}。画面要求：{style_guard} 封面应像绘本封面，温暖、有吸引力、主体清楚，适合老师和孩子一眼理解主题；可以出现主角和关键场景，但不要出现任何文字、标题、logo、水印或页码，文字由系统排版叠加。",
+        if roles.is_empty() {
+            "根据主题自然设计".to_string()
+        } else {
+            roles.join("；")
+        }
+    ))
+}
+
+async fn storybook_roles_for_prompt(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<Vec<String>, DbErr> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select name, role_type, appearance
+            from storybook_roles
+            where storybook_id = $1
+            order by
+              case role_type when 'protagonist' then 0 when 'teacher' then 1 else 2 end,
+              name asc
+            limit 6
+            "#,
+            [storybook_id.into()],
+        ))
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            let name = row.try_get::<String>("", "name").ok()?;
+            let role_type = row.try_get::<String>("", "role_type").ok()?;
+            let appearance = row.try_get::<String>("", "appearance").ok()?;
+            Some(format!("{name}（{role_type}）：{appearance}"))
+        })
+        .collect::<Vec<_>>())
+}
+
+async fn storybook_role_reference_images(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<Vec<ImageReference>, DbErr> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select r.id, r.name, coalesce(v.image_url, r.reference_image_url) as image_url
+            from storybook_roles r
+            left join storybook_image_variants v
+              on v.id = r.selected_image_variant_id
+             and v.status = 'ready'
+             and v.image_url is not null
+            where r.storybook_id = $1
+              and r.needs_consistency
+              and coalesce(v.image_url, r.reference_image_url) is not null
+            order by
+              case r.role_type when 'protagonist' then 0 when 'teacher' then 1 else 2 end,
+              r.name asc
+            limit 4
+            "#,
+            [storybook_id.into()],
+        ))
+        .await?;
+    let mut references = Vec::new();
+    for row in rows {
+        let role_id: Uuid = row.try_get("", "id")?;
+        let name: String = row.try_get("", "name")?;
+        let image_url: String = row.try_get("", "image_url")?;
+        if let Some(url) = resolve_stored_image_url(db, &image_url).await? {
+            references.push(ImageReference {
+                url,
+                source: "storybook_role".to_string(),
+                role_id: Some(role_id.to_string()),
+                label: Some(name),
+            });
+        }
+    }
+    Ok(references)
 }
 
 pub fn image_request_from_job(job: &GenerationJob) -> Result<PageImageRequestInput, DbErr> {

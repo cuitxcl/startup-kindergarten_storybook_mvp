@@ -14,7 +14,7 @@ import {
   type GenerationJob,
   type GenerationProviderStatus,
 } from "../../api/client";
-import { ActionButton, Badge, Card, Notice, WizardSideNav } from "../../components/ui";
+import { ActionButton, Badge, Card, Notice } from "../../components/ui";
 import { GenerationReviewBlock } from "../../components/GenerationReviewBlock";
 import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
 import {
@@ -26,8 +26,10 @@ import {
 import { generationJobTypeLabel } from "../../utils/labels";
 import { PageEditor } from "./new/components/PageEditor";
 import { PlanEditor } from "./new/components/PlanEditor";
+import { PlanReviewSummary } from "./new/components/PlanReviewSummary";
 import { RequestStepForm } from "./new/components/RequestStepForm";
 import { RoleEditor } from "./new/components/RoleEditor";
+import { WizardTopNav } from "./new/components/WizardTopNav";
 import {
   generationInputFor,
   pageDraftsFromPlan,
@@ -93,6 +95,11 @@ export function NewStorybookPage() {
   const hasPlan = Boolean(generationOutputs.storybook_plan || planDraft.summary || planDraft.outlineText);
   const hasRoles = currentRoles.length > 0;
   const hasPages = currentPages.length > 0;
+  const generatingStepLabel = {
+    storybook_plan: "绘本方案生成中...",
+    storybook_roles: "角色道具生成中...",
+    storybook_pages: "分页图文生成中...",
+  }[generatingStep || ""];
   const primaryLabels = [
     "生成绘本方案",
     hasPlan ? "确认方案，继续角色" : "生成绘本方案",
@@ -105,7 +112,6 @@ export function NewStorybookPage() {
     setNotice({ title, copy });
   };
   const reviewForStep = (nextStep: number): null | "plan" | "roles" | "pages" => {
-    if (nextStep === 1) return "plan";
     if (nextStep === 2) return "roles";
     if (nextStep === 3) return "pages";
     return null;
@@ -137,6 +143,10 @@ export function NewStorybookPage() {
       return next;
     });
   };
+  const staleRecoveredJobNotice = (job: GenerationJob) => ({
+    title: "上次生成任务已中断",
+    copy: `检测到未完成的${generationJobTypeLabel[job.jobType] || "生成"}任务，但它是在服务器重启或页面离开前开始的，无法继续执行。请点击重新生成。任务编号：${job.id.slice(0, 8)}。`,
+  });
 
   useEffect(() => {
     getWorkspaceGenerationProvider(workspace.id).then(setProvider).catch(() => setProvider(null));
@@ -170,9 +180,6 @@ export function NewStorybookPage() {
           }
           return;
         }
-        // 超过 15 分钟仍在排队/运行的任务视为僵死（与后端 stale 锁阈值一致），不再接管，避免向导被旧任务卡住。
-        const createdMs = Date.parse(active.createdAt);
-        if (Number.isFinite(createdMs) && Date.now() - createdMs > 15 * 60_000) return;
         const input = (active.input || {}) as Record<string, unknown>;
         setForm((current) => ({
           ...current,
@@ -189,11 +196,16 @@ export function NewStorybookPage() {
           setCreatedBookId(active.storybookId);
           rememberStorybookInUrl(active.storybookId);
         }
-        setGeneratingStep(active.jobType);
+        if (active.status === "running" || active.lockedAt) {
+          setRetryJob(active);
+          setNotice(staleRecoveredJobNotice(active));
+          return;
+        }
         setNotice({
-          title: "已恢复进行中的生成任务",
-          copy: `检测到未完成的${generationJobTypeLabel[active.jobType] || "生成"}任务，正在继续等待结果。任务编号：${active.id.slice(0, 8)}。`,
+          title: "已恢复排队中的生成任务",
+          copy: `检测到未完成的${generationJobTypeLabel[active.jobType] || "生成"}任务，任务仍在队列中；如果长时间没有变化，请重新生成。任务编号：${active.id.slice(0, 8)}。`,
         });
+        setGeneratingStep(active.jobType);
         waitForGenerationJob(active)
           .then((settled) => { if (mounted) void handleGenerationJob(settled, "生成任务已完成"); })
           .catch(() => {
@@ -236,7 +248,6 @@ export function NewStorybookPage() {
             && ["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)
           ))
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-        const activeJob = wizardJobs.find((job) => isActiveJobStatus(job.status));
         const latestByType = new Map<string, GenerationJob>();
         wizardJobs.forEach((job) => {
             if (job.status !== "succeeded" || !job.output) return;
@@ -245,6 +256,11 @@ export function NewStorybookPage() {
         const planJob = latestByType.get("storybook_plan");
         const rolesJob = latestByType.get("storybook_roles");
         const pagesJob = latestByType.get("storybook_pages");
+        const activeJob = wizardJobs.find((job) => {
+          if (!isActiveJobStatus(job.status)) return false;
+          const latestSucceededJob = latestByType.get(job.jobType);
+          return !latestSucceededJob || Date.parse(job.createdAt) > Date.parse(latestSucceededJob.createdAt);
+        });
         // 需求表单以最近一次方案任务的 input 为准（含画风、故事风格、故事框架、页数），
         // 绘本记录兜底，保证刷新后需求页恢复原填内容而不是默认值。
         const planInput = ((planJob?.input || {}) as Record<string, unknown>);
@@ -284,7 +300,7 @@ export function NewStorybookPage() {
         goToStep(restoredStep);
         setEditingReview(
           restoredStep === 1
-            ? "plan"
+            ? null
             : restoredStep === 2
               ? "roles"
               : restoredStep === 3 && !["exportable", "submitted", "listed"].includes(book.status)
@@ -316,11 +332,16 @@ export function NewStorybookPage() {
           }));
           const activeStep = activeJob.jobType === "storybook_pages" ? 2 : activeJob.jobType === "storybook_roles" ? 1 : 0;
           goToStep(Math.max(restoredStep, activeStep));
-          setGeneratingStep(activeJob.jobType);
+          if (activeJob.status === "running" || activeJob.lockedAt) {
+            setRetryJob(activeJob);
+            setNotice(staleRecoveredJobNotice(activeJob));
+            return;
+          }
           setNotice({
-            title: "已恢复进行中的生成任务",
-            copy: `检测到未完成的${generationJobTypeLabel[activeJob.jobType] || "生成"}任务，正在继续等待结果。任务编号：${activeJob.id.slice(0, 8)}。`,
+            title: "已恢复排队中的生成任务",
+            copy: `检测到未完成的${generationJobTypeLabel[activeJob.jobType] || "生成"}任务，任务仍在队列中；如果长时间没有变化，请重新生成。任务编号：${activeJob.id.slice(0, 8)}。`,
           });
+          setGeneratingStep(activeJob.jobType);
           waitForGenerationJob(activeJob)
             .then(async (settled) => {
               if (!mounted) return;
@@ -446,14 +467,23 @@ export function NewStorybookPage() {
 
   const waitForGenerationJob = (initialJob: GenerationJob) =>
     pollGenerationJob(workspace.id, initialJob, { timeoutMs: 240_000 });
+  const dismissRecoveredGenerationNotice = () => {
+    setRetryJob(null);
+    setNotice(null);
+  };
   const retryFailedGeneration = async () => {
     if (!retryJob) return;
     setGeneratingStep(retryJob.jobType);
     setNotice(null);
     try {
-      const job = await retryGenerationJob(workspace.id, retryJob.id);
-      const settledJob = await waitForGenerationJob(job);
-      await handleGenerationJob(settledJob, "已重新生成");
+      const settledJob = retryJob.status === "failed"
+        ? await retryGenerationJob(workspace.id, retryJob.id)
+          .then(waitForGenerationJob)
+          .then(async (job) => (await handleGenerationJob(job, "已重新生成") ? job : null))
+        : await runGeneration(retryJob.jobType, "已重新生成");
+      if (settledJob?.jobType === "storybook_plan") goToStep(1);
+      if (settledJob?.jobType === "storybook_roles") goToStep(2);
+      if (settledJob?.jobType === "storybook_pages") goToStep(3);
     } catch (err) {
       setNotice({ title: "重试失败", copy: err instanceof Error ? err.message : "请稍后重试" });
     } finally {
@@ -765,41 +795,29 @@ export function NewStorybookPage() {
           tone="warn"
         />
       )}
-      <div className="wizard-shell">
-        <WizardSideNav
-          title="普通绘本流程"
-          copy="先确认故事方案，再确认角色道具，最后编辑分页并导出。"
-          steps={steps}
-          active={step}
-          maxUnlockedStep={unlockedStep}
-          onSelect={(next) => { if (!generatingStep) goToStep(next); }}
-        />
+      <WizardTopNav
+        steps={steps}
+        active={step}
+        maxUnlockedStep={unlockedStep}
+        disabled={Boolean(generatingStep)}
+        status={generatingStepLabel || "生成完成后可继续编辑"}
+        onSelect={(next) => { if (!generatingStep) goToStep(next); }}
+      />
+      <div className="wizard-shell wizard-shell-single">
         <Card className="wizard-card">
-          {generatingStep && ["storybook_plan", "storybook_roles", "storybook_pages"].includes(generatingStep) && (
-            <div className="generation-progress">
-              {([
-                ["storybook_plan", "绘本方案"],
-                ["storybook_roles", "角色道具"],
-                ["storybook_pages", "分页图文"],
-              ] as const).map(([jobType, label], index, list) => {
-                const currentIndex = list.findIndex(([jt]) => jt === generatingStep);
-                const state = index < currentIndex ? "done" : index === currentIndex ? "active" : "pending";
-                return (
-                  <div key={jobType} className={`generation-progress-step ${state}`}>
-                    <span className="generation-progress-dot">{state === "done" ? "✓" : index + 1}</span>
-                    <span>{label}{state === "active" ? " 生成中…" : ""}</span>
-                  </div>
-                );
-              })}
-              <span className="generation-progress-hint">生成完成后可继续编辑</span>
-            </div>
-          )}
           {notice && (
             <Notice
               title={notice.title}
               copy={notice.copy}
               tone={retryJob ? "danger" : "info"}
-              action={retryJob ? <button className="button secondary" type="button" disabled={generatingStep === retryJob.jobType} onClick={retryFailedGeneration}>重新生成</button> : undefined}
+              action={retryJob ? (
+                <div className="inline-actions">
+                  <button className="button secondary" type="button" disabled={generatingStep === retryJob.jobType} onClick={retryFailedGeneration}>重新生成</button>
+                  {isActiveJobStatus(retryJob.status) && (
+                    <button className="button ghost" type="button" disabled={Boolean(generatingStep)} onClick={dismissRecoveredGenerationNotice}>忽略</button>
+                  )}
+                </div>
+              ) : undefined}
             />
           )}
           {step === 0 && (
@@ -811,7 +829,7 @@ export function NewStorybookPage() {
               onToggleStyleCards={() => setStyleCardsExpanded((value) => !value)}
             />
           )}
-          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} editor={<><PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
+          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} reviewContent={<PlanReviewSummary form={form} plan={planDraft} />} editor={<><PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
           {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<><RoleEditor workspaceId={workspace.id} storybookId={createdBookId || resumeBookId || undefined} roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} onGenerateReference={generateRoleReference} onRolesRefresh={setEditableRoles} roleReferenceBusyId={roleReferenceBusyId} variantRefreshKey={roleVariantRefreshKey} /><p className="form-hint">修改会先保存到绘本；需要跨页一致的角色可在本页生成参考图。</p></>} />}
           {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<><PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
           {step === 4 && (

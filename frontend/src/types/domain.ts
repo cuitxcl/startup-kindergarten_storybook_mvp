@@ -84,7 +84,7 @@ export interface StorybookImageVariant {
   id: string;
   workspaceId: string;
   storybookId: string;
-  targetType: "role_reference" | "page_illustration";
+  targetType: "role_reference" | "page_illustration" | "cover_illustration";
   targetId: string;
   generationJobId?: string;
   imageUrl?: string;

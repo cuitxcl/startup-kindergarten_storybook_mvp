@@ -213,7 +213,7 @@ async fn workspace_generated_image_urls(
             from generation_jobs
             where workspace_id = $1
               and status = 'succeeded'
-              and job_type in ('storybook_page_image', 'storybook_role_reference_image')
+              and job_type in ('storybook_cover_image', 'storybook_page_image', 'storybook_role_reference_image')
               and output_json #>> '{image,image_url}' is not null
             "#,
             [workspace_id.into()],
@@ -265,7 +265,7 @@ async fn user_generated_image_urls(
             from generation_jobs
             where created_by = $1
               and status = 'succeeded'
-              and job_type in ('storybook_page_image', 'storybook_role_reference_image')
+              and job_type in ('storybook_cover_image', 'storybook_page_image', 'storybook_role_reference_image')
               and output_json #>> '{image,image_url}' is not null
             "#,
             [user_id.into()],

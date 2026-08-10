@@ -21,6 +21,7 @@ export function GenerationReviewBlock({
   onRegenerate,
   onEdit,
   editor,
+  reviewContent,
   editing = false,
   regenerating = false,
 }: {
@@ -31,6 +32,7 @@ export function GenerationReviewBlock({
   onRegenerate?: () => void;
   onEdit?: () => void;
   editor?: ReactNode;
+  reviewContent?: ReactNode;
   editing?: boolean;
   regenerating?: boolean;
 }) {
@@ -60,6 +62,8 @@ export function GenerationReviewBlock({
       )}
       {editing && editor ? (
         editor
+      ) : reviewContent ? (
+        reviewContent
       ) : (
         <div className="review-list">
           {items.map((item) => <div key={item}><span>确认项</span><strong>{item}</strong></div>)}

@@ -1100,6 +1100,33 @@ export async function createPageImageTask(
   return mapGenerationJob(response);
 }
 
+export async function createCoverImageTask(
+  workspaceId: string,
+  storybookId: string,
+  payload: {
+    prompt?: string;
+    referenceImageUrls?: string[];
+    imageMode?: "text_to_image" | "reference_image" | "edit_image";
+    editInstruction?: string;
+    strength?: number;
+  } = {},
+): Promise<GenerationJob> {
+  const response = await request<ApiGenerationJob>(
+    `/api/workspaces/${workspaceId}/storybooks/${storybookId}/cover/image-tasks`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: payload.prompt,
+        reference_image_urls: payload.referenceImageUrls || [],
+        image_mode: payload.imageMode,
+        edit_instruction: payload.editInstruction,
+        strength: payload.strength,
+      }),
+    },
+  );
+  return mapGenerationJob(response);
+}
+
 export async function createRoleReferenceImageTask(
   workspaceId: string,
   storybookId: string,

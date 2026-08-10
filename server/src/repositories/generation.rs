@@ -9,8 +9,8 @@ use crate::repositories::generation_costs::{
     ensure_generation_budget_available, record_generation_cost_log,
 };
 use crate::repositories::generation_image_tasks::{
-    image_request_from_job, image_target_from_job, is_image_job, page_image_job_input,
-    role_reference_image_job_input,
+    cover_image_job_input, image_request_from_job, image_target_from_job, is_image_job,
+    page_image_job_input, role_reference_image_job_input,
 };
 use crate::services::generation_provider::{
     ConfiguredGenerationProvider, GenerationProviderError, GenerationRequest,
@@ -22,6 +22,7 @@ const ALLOWED_JOB_TYPES: &[&str] = &[
     "storybook_roles",
     "storybook_pages",
     "storybook_page_prompt",
+    "storybook_cover_image",
     "storybook_page_image",
     "storybook_role_reference_image",
     "customization_plan",
@@ -366,6 +367,30 @@ pub async fn create_page_image_job_record(
     Ok(job)
 }
 
+pub async fn create_cover_image_job_record(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    created_by: Uuid,
+    storybook_id: Uuid,
+    payload: CreateImageTaskRequest,
+) -> Result<GenerationJob, DbErr> {
+    ensure_generation_budget_available(db, Some(workspace_id)).await?;
+    ensure_storybook_in_workspace(db, workspace_id, storybook_id).await?;
+    let input_json = cover_image_job_input(db, workspace_id, storybook_id, payload).await?;
+    let job = crate::repositories::generation_jobs::enqueue_job(
+        db,
+        workspace_id,
+        Some(storybook_id),
+        created_by,
+        "storybook_cover_image",
+        input_json,
+    )
+    .await?;
+    crate::repositories::storybook_image_variants::create_generating_variant_for_job(db, &job)
+        .await?;
+    Ok(job)
+}
+
 pub async fn create_role_reference_image_job_record(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -594,6 +619,13 @@ async fn fail_running_job(
         if let (Some(storybook_id), Some(page_id)) = (job.storybook_id, page_id_from_job(&job)) {
             mark_page_image_status(db, storybook_id, page_id, "failed").await?;
         }
+    } else if job.job_type == "storybook_cover_image" {
+        crate::repositories::storybook_image_variants::mark_job_variant_failed(
+            db,
+            &job,
+            &safe_message,
+        )
+        .await?;
     }
     record_generation_cost_log(db, &job).await?;
     Ok(job)

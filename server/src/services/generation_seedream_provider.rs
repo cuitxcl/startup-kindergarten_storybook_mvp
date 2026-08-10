@@ -13,8 +13,11 @@ use crate::services::{
     storage,
 };
 
-pub const SUPPORTED_IMAGE_JOB_TYPES: &[&str] =
-    &["storybook_page_image", "storybook_role_reference_image"];
+pub const SUPPORTED_IMAGE_JOB_TYPES: &[&str] = &[
+    "storybook_cover_image",
+    "storybook_page_image",
+    "storybook_role_reference_image",
+];
 
 pub struct SeedreamImageProvider {
     pub(crate) api_key: Option<String>,
@@ -175,6 +178,7 @@ impl AiGenerationProvider for SeedreamImageProvider {
             "image": {
                 "target_id": request.target_id,
                 "target_type": request.target_type,
+                "cover_id": if request.target_type == "cover" { request.target_id } else { "" },
                 "page_id": if request.target_type == "page" { request.target_id } else { "" },
                 "role_id": if request.target_type == "role" { request.target_id } else { "" },
                 "image_url": image_url,

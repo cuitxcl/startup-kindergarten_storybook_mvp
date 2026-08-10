@@ -1,8 +1,9 @@
 import { ArrowRight, CheckCircle2, Copy, Download, MoreHorizontal, Pencil, Send } from "lucide-react";
-import { ChangeEvent, FormEvent, type ReactNode, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   cancelGenerationJob,
+  createCoverImageTask,
   createGenerationJob,
   createPageImageTask,
   createRoleReferenceImageTask,
@@ -84,6 +85,8 @@ import {
   visibilityLabel,
 } from "./detail/helpers";
 
+const COVER_PAGE_ID = "__cover__";
+
 export function StorybookDetailPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const { storybookId } = useParams();
@@ -96,6 +99,7 @@ export function StorybookDetailPage() {
   const [selectedPageId, setSelectedPageId] = useState<string | undefined>(undefined);
   const [pageForm, setPageForm] = useState({ title: "", body: "", illustrationPrompt: "" });
   const [notice, setNotice] = useState<{ title: string; copy: string; tone?: "good" | "info"; action?: ReactNode } | null>(null);
+  const workspaceMainRef = useRef<HTMLDivElement | null>(null);
   const [retryImageJob, setRetryImageJob] = useState<GenerationJob | null>(null);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
@@ -130,6 +134,8 @@ export function StorybookDetailPage() {
   const [promptRewritingPageId, setPromptRewritingPageId] = useState<string | null>(null);
   const [currentImagePreviewUrl, setCurrentImagePreviewUrl] = useState("");
   const [currentImagePreviewError, setCurrentImagePreviewError] = useState("");
+  const [coverImagePreviewUrl, setCoverImagePreviewUrl] = useState("");
+  const [coverImagePreviewError, setCoverImagePreviewError] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [visibilityValue, setVisibilityValue] = useState<Storybook["visibility"]>("private");
   const [pageEditorOpen, setPageEditorOpen] = useState(false);
@@ -147,8 +153,10 @@ export function StorybookDetailPage() {
   const [roleReferencePreviewUrl, setRoleReferencePreviewUrl] = useState("");
   const [roleReferencePreviewError, setRoleReferencePreviewError] = useState("");
   const [pageImageVariants, setPageImageVariants] = useState<StorybookImageVariant[]>([]);
+  const [coverImageVariants, setCoverImageVariants] = useState<StorybookImageVariant[]>([]);
   const [roleImageVariants, setRoleImageVariants] = useState<StorybookImageVariant[]>([]);
   const [selectingVariantId, setSelectingVariantId] = useState<string | null>(null);
+  const selectedViewIsCover = selectedPageId === COVER_PAGE_ID;
   const selectedPage = book?.pages.find((page) => page.id === selectedPageId) || book?.pages[0];
   const selectedRole = book?.roles.find((role) => role.id === selectedRoleId) || book?.roles[0];
   const selectedRolePageCount = book && selectedRole ? rolePageUsageCount(book, selectedRole) : 0;
@@ -185,7 +193,7 @@ export function StorybookDetailPage() {
   const canStartDelivery = canDeliver && !qualityDeliveryBlocker;
   const customizationBlocker = book ? customizationBlockerFor(book, quality) : "请等待当前绘本加载完成";
   const canCreateCustomVersion = book?.type === "plain" && !customizationBlocker;
-  const selectedPageQuality = selectedPage && quality
+  const selectedPageQuality = selectedPage && !selectedViewIsCover && quality
     ? quality.pages.find((page) => page.pageId === selectedPage.id)
     : undefined;
   const firstActionableQualityPage = quality?.pages.find((page) => page.status === "blocked")
@@ -205,6 +213,10 @@ export function StorybookDetailPage() {
   const visibleNotice = notice || routeResultNotice;
 
   useEffect(() => {
+    workspaceMainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [selectedPageId]);
+
+  useEffect(() => {
     if (!storybookId) return;
     let mounted = true;
     setLoading(true);
@@ -221,7 +233,7 @@ export function StorybookDetailPage() {
         const item = await getStorybook(workspace.id, storybookId!);
         if (!mounted) return;
         setRemoteBook(item);
-        setSelectedPageId(item.pages[0]?.id);
+        setSelectedPageId(COVER_PAGE_ID);
         setSelectedRoleId(item.roles[0]?.id);
         setVisibilityValue(item.visibility);
         const [linksResult, exportsResult, jobsResult] = await Promise.allSettled([
@@ -252,7 +264,7 @@ export function StorybookDetailPage() {
   }, [storybookId, workspace.id]);
 
   useEffect(() => {
-    if (!book?.id || !selectedPage?.id) {
+    if (selectedViewIsCover || !book?.id || !selectedPage?.id) {
       setPageImageVariants([]);
       return;
     }
@@ -270,7 +282,24 @@ export function StorybookDetailPage() {
     return () => {
       active = false;
     };
-  }, [book?.id, selectedPage?.id, workspace.id]);
+  }, [book?.id, selectedPage?.id, selectedViewIsCover, workspace.id]);
+
+  useEffect(() => {
+    if (!book?.id) {
+      setCoverImageVariants([]);
+      return;
+    }
+    let active = true;
+    listStorybookImageVariants(workspace.id, book.id, {
+      targetType: "cover_illustration",
+      targetId: book.id,
+    })
+      .then((variants) => { if (active) setCoverImageVariants(variants); })
+      .catch(() => { if (active) setCoverImageVariants([]); });
+    return () => {
+      active = false;
+    };
+  }, [book?.id, workspace.id]);
 
   useEffect(() => {
     if (!book?.id || !selectedRole?.id) {
@@ -294,14 +323,14 @@ export function StorybookDetailPage() {
   }, [book?.id, selectedRole?.id, workspace.id]);
 
   useEffect(() => {
-    if (!selectedPage) return;
+    if (selectedViewIsCover || !selectedPage) return;
     setPageForm({
       title: selectedPage.title,
       body: selectedPage.body,
       illustrationPrompt: selectedPage.illustrationPrompt,
     });
     setPageEditorOpen(false);
-  }, [selectedPage?.id]);
+  }, [selectedPage?.id, selectedViewIsCover]);
 
   useEffect(() => {
     if (!book) return;
@@ -387,6 +416,17 @@ export function StorybookDetailPage() {
     }));
   }
 
+  async function refreshCoverImageVariants(storybookId = book?.id) {
+    if (!storybookId) {
+      setCoverImageVariants([]);
+      return;
+    }
+    setCoverImageVariants(await listStorybookImageVariants(workspace.id, storybookId, {
+      targetType: "cover_illustration",
+      targetId: storybookId,
+    }));
+  }
+
   async function refreshRoleImageVariants(storybookId = book?.id, roleId = selectedRole?.id) {
     if (!storybookId || !roleId) {
       setRoleImageVariants([]);
@@ -402,18 +442,34 @@ export function StorybookDetailPage() {
     if (!storybookId) return undefined;
     const updated = await getStorybook(workspace.id, storybookId);
     setRemoteBook(updated);
-    setSelectedPageId((current) => current && updated.pages.some((page) => page.id === current) ? current : updated.pages[0]?.id);
+    setSelectedPageId((current) => current === COVER_PAGE_ID || (current && updated.pages.some((page) => page.id === current)) ? current : updated.pages[0]?.id || COVER_PAGE_ID);
     setSelectedRoleId((current) => current && updated.roles.some((role) => role.id === current) ? current : updated.roles[0]?.id);
     setVisibilityValue(updated.visibility);
     return updated;
   }
 
-  const currentPageImageJob = latestPageImageJob(generationJobs, selectedPage?.id);
-  const activeCurrentPageImageJob = activePageImageJob(generationJobs, selectedPage?.id);
+  const currentStoryPageId = selectedViewIsCover ? undefined : selectedPage?.id;
+  const latestCoverImageJob = generationJobs.find((job) => job.jobType === "storybook_cover_image" && job.storybookId === book?.id && job.status === "succeeded");
+  const activeCoverImageJob = generationJobs.find((job) => job.jobType === "storybook_cover_image" && job.storybookId === book?.id && isActiveJobStatus(job.status));
+  const selectedCoverImageVariant = coverImageVariants.find((variant) => variant.isSelected);
+  const selectedCoverImageUrl = selectedCoverImageVariant?.imageUrl;
+  const selectedCoverImageJobId = (selectedCoverImageUrl ? generationJobIdFromImageUrl(selectedCoverImageUrl) : undefined) || selectedCoverImageVariant?.generationJobId;
+  const fallbackCoverImage = extractImageResult(latestCoverImageJob?.output);
+  const currentCoverImage = selectedCoverImageUrl
+    ? {
+      imageUrl: selectedCoverImageUrl,
+      altText: `${book?.title || "绘本"}封面图`,
+      prompt: selectedCoverImageVariant?.prompt || fallbackCoverImage?.prompt,
+      styleNotes: selectedCoverImageVariant?.provider ? [selectedCoverImageVariant.provider] : fallbackCoverImage?.styleNotes || [],
+    }
+    : fallbackCoverImage;
+  const currentCoverImageJobId = selectedCoverImageJobId || latestCoverImageJob?.id;
+  const currentPageImageJob = latestPageImageJob(generationJobs, currentStoryPageId);
+  const activeCurrentPageImageJob = activePageImageJob(generationJobs, currentStoryPageId);
   const selectedPageImageVariant = pageImageVariants.find((variant) => variant.isSelected)
     || pageImageVariants.find((variant) => variant.id === selectedPage?.selectedImageVariantId);
   const selectedPageImageUrl = selectedPage?.imageUrl || selectedPageImageVariant?.imageUrl;
-  const selectedPageImageJobId = selectedPageImageUrl ? generationJobIdFromImageUrl(selectedPageImageUrl) : selectedPageImageVariant?.generationJobId;
+  const selectedPageImageJobId = (selectedPageImageUrl ? generationJobIdFromImageUrl(selectedPageImageUrl) : undefined) || selectedPageImageVariant?.generationJobId;
   const fallbackPageImage = extractImageResult(currentPageImageJob?.output);
   const currentPageImage = selectedPageImageUrl
     ? {
@@ -425,7 +481,7 @@ export function StorybookDetailPage() {
     : fallbackPageImage;
   const currentPageImageJobId = selectedPageImageJobId || currentPageImageJob?.id;
   const imageActionBusy = imageGenerating || Boolean(activeCurrentPageImageJob);
-  const shouldShowImageGenerationAction = Boolean(selectedPage);
+  const shouldShowImageGenerationAction = Boolean(!selectedViewIsCover && selectedPage);
   const promptRewriting = promptRewritingPageId !== null && promptRewritingPageId === selectedPage?.id;
 
   useEffect(() => {
@@ -466,6 +522,80 @@ export function StorybookDetailPage() {
       active = false;
     };
   }, [currentPageImage?.imageUrl, currentPageImageJobId, workspace.id]);
+
+  useEffect(() => {
+    if (!currentCoverImage) {
+      setCoverImagePreviewUrl("");
+      setCoverImagePreviewError("");
+      return;
+    }
+    if (!currentCoverImageJobId) {
+      setCoverImagePreviewUrl(currentCoverImage.imageUrl);
+      setCoverImagePreviewError("");
+      return;
+    }
+    const jobId = currentCoverImageJobId;
+    const cached = getCachedImagePreview(jobId);
+    if (cached) {
+      setCoverImagePreviewUrl(cached);
+      setCoverImagePreviewError("");
+      return;
+    }
+    let active = true;
+    setCoverImagePreviewUrl("");
+    setCoverImagePreviewError("");
+    downloadGenerationImageFile(workspace.id, jobId)
+      .then((file) => {
+        if (!active) return;
+        const url = window.URL.createObjectURL(file);
+        cacheImagePreview(jobId, url);
+        setCoverImagePreviewUrl(url);
+      })
+      .catch((err) => {
+        if (active) {
+          setCoverImagePreviewUrl("");
+          setCoverImagePreviewError(err instanceof Error ? err.message : "封面图文件读取失败");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentCoverImage?.imageUrl, currentCoverImageJobId, workspace.id]);
+
+  useEffect(() => {
+    if (!book?.id || !activeCoverImageJob) return;
+
+    let active = true;
+    pollGenerationJob(workspace.id, activeCoverImageJob, {
+      timeoutMs: 300_000,
+      onUpdate: (job) => {
+        if (!active) return;
+        setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+      },
+    })
+      .then(async (job) => {
+        if (!active || isActiveJobStatus(job.status)) return;
+        await refreshGenerationJobs(book.id);
+        await refreshCoverImageVariants(book.id);
+        await refreshStorybook(book.id);
+        setSelectedPageId(COVER_PAGE_ID);
+        if (job.status === "failed") {
+          setRetryImageJob(job);
+          setNotice({ title: "封面图生成失败", copy: `${generationErrorMessage(job)}。任务编号：${job.id.slice(0, 8)}。`, tone: "info" });
+          return;
+        }
+        setRetryImageJob(null);
+        setNotice({ title: "封面图已生成", copy: "封面页结果已刷新，可继续生成更多候选图。", tone: "good" });
+      })
+      .catch((err) => {
+        if (active) {
+          setNotice({ title: "封面图状态刷新失败", copy: err instanceof Error ? err.message : "请稍后手动刷新页面", tone: "info" });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeCoverImageJob?.id, book?.id, workspace.id]);
 
   // 当前页有进行中的插图任务时统一轮询；页面切后台自动暂停，完成后刷新绘本与质量检查。
   useEffect(() => {
@@ -782,8 +912,29 @@ export function StorybookDetailPage() {
     }
   }
 
+  async function generateCoverImage() {
+    if (!book) return;
+    setImageGenerating(true);
+    setRetryImageJob(null);
+    try {
+      const job = await createCoverImageTask(workspace.id, book.id);
+      setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+      await refreshCoverImageVariants(book.id);
+      await refreshGenerationJobs(book.id);
+      setNotice({
+        title: "封面图生成已开始",
+        copy: `封面页已加入生图队列，完成后这里会自动刷新。任务编号：${job.id.slice(0, 8)}。`,
+        tone: "info",
+      });
+    } catch (err) {
+      setNotice({ title: "封面图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+    } finally {
+      setImageGenerating(false);
+    }
+  }
+
   async function retryIllustration() {
-    if (!book || !selectedPage || !retryImageJob) return;
+    if (!book || !retryImageJob) return;
     setImageGenerating(true);
     setNotice(null);
     try {
@@ -819,12 +970,18 @@ export function StorybookDetailPage() {
       await refreshStorybook(book.id);
       if (variant.targetType === "page_illustration") {
         await refreshPageImageVariants(book.id, variant.targetId);
-      } else {
+      } else if (variant.targetType === "role_reference") {
         await refreshRoleImageVariants(book.id, variant.targetId);
+      } else {
+        await refreshCoverImageVariants(book.id);
       }
       setNotice({
         title: "已切换当前使用图",
-        copy: variant.targetType === "page_illustration" ? "当前页插图已切换为所选候选图。" : "角色参考图已切换为所选候选图。",
+        copy: variant.targetType === "page_illustration"
+          ? "当前页插图已切换为所选候选图。"
+          : variant.targetType === "role_reference"
+            ? "角色参考图已切换为所选候选图。"
+            : "封面图已切换为所选候选图。",
         tone: "good",
       });
     } catch (err) {
@@ -889,7 +1046,7 @@ export function StorybookDetailPage() {
     try {
       const duplicated = await duplicateStorybook(workspace.id, book.id, { title });
       setRemoteBook(duplicated);
-      setSelectedPageId(duplicated.pages[0]?.id);
+      setSelectedPageId(COVER_PAGE_ID);
       setSelectedRoleId(duplicated.roles[0]?.id);
       setShareLinks([]);
       setExportJobs([]);
@@ -1055,7 +1212,7 @@ export function StorybookDetailPage() {
     );
   }
 
-  if (error || !book || !selectedPage) {
+  if (error || !book || (!selectedViewIsCover && !selectedPage)) {
     return <div className="page-stack"><Notice title="绘本详情加载失败" copy={error || "当前绘本不存在"} tone="info" /></div>;
   }
 
@@ -1075,6 +1232,11 @@ export function StorybookDetailPage() {
   const scrollToWorkspace = () => {
     document.getElementById("page-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  const retryImageJobActionLabel = retryImageJob?.jobType === "storybook_cover_image"
+    ? "重新生成封面图"
+    : retryImageJob?.jobType === "storybook_role_reference_image"
+      ? "重新生成参考图"
+      : "重新生成插图";
 
   return (
     <div className="page-stack">
@@ -1129,7 +1291,7 @@ export function StorybookDetailPage() {
           title={visibleNotice.title}
           copy={visibleNotice.copy}
           tone={retryImageJob ? "danger" : visibleNotice.tone || "good"}
-          action={retryImageJob ? <button className="button secondary" type="button" disabled={imageGenerating} onClick={retryIllustration}>重新生成插图</button> : visibleNotice.action}
+          action={retryImageJob ? <button className="button secondary" type="button" disabled={imageGenerating} onClick={retryIllustration}>{retryImageJobActionLabel}</button> : visibleNotice.action}
         />
       )}
 
@@ -1279,19 +1441,107 @@ export function StorybookDetailPage() {
       <section className="detail-layout" id="page-workspace">
         <aside className="page-strip">
           <h2>页面</h2>
+          <button type="button" className={`page-thumb cover-thumb ${selectedViewIsCover ? "active" : ""}`} onClick={() => setSelectedPageId(COVER_PAGE_ID)}>
+            <span>封面</span>
+            <strong>{book.title}</strong>
+            <Badge tone="good">导出首页</Badge>
+          </button>
           {book.pages.map((page) => (
-            <button key={page.id} type="button" className={`page-thumb ${selectedPage.id === page.id ? "active" : ""}`} onClick={() => setSelectedPageId(page.id)}>
+            <button key={page.id} type="button" className={`page-thumb ${!selectedViewIsCover && selectedPage?.id === page.id ? "active" : ""}`} onClick={() => setSelectedPageId(page.id)}>
               <span>第 {page.pageNumber} 页</span>
               <strong>{page.title}</strong>
               <Badge tone={statusTone(page.status)}>{pageStatusLabel[page.status]}</Badge>
             </button>
           ))}
         </aside>
-        <div className="storybook-workspace-main">
+        <div className="storybook-workspace-main" ref={workspaceMainRef}>
+          {selectedViewIsCover ? (
+            <Card className="preview-panel cover-preview-panel">
+              <div className="cover-page-preview">
+                {coverImagePreviewUrl ? (
+                  <button className="cover-image-zoom-trigger" type="button" title="点击放大查看" onClick={() => setZoomedImage({ src: coverImagePreviewUrl, alt: currentCoverImage?.altText || `${book.title}封面图` })}>
+                    <img src={coverImagePreviewUrl} alt={currentCoverImage?.altText || `${book.title}封面图`} />
+                  </button>
+                ) : coverImagePreviewError ? (
+                  <p>封面图读取失败：{coverImagePreviewError}</p>
+                ) : activeCoverImageJob ? (
+                  <div className="cover-image-placeholder">
+                    <strong>正在生成封面图</strong>
+                    <small>任务{generationStatusLabel(activeCoverImageJob.status)}，编号：{activeCoverImageJob.id.slice(0, 8)}。</small>
+                  </div>
+                ) : (
+                  <div className="cover-image-placeholder">
+                    <strong>封面图待生成</strong>
+                    <small>生成后会显示在封面主视觉位置。</small>
+                  </div>
+                )}
+                <span>Kindleaf 绘本</span>
+                <h2>{book.title}</h2>
+                <p>{book.teachingGoal}</p>
+                <div className="cover-page-meta">
+                  <Badge tone="neutral">{book.ageGroup}</Badge>
+                  <Badge tone="neutral">{book.useScene}</Badge>
+                  <Badge tone="info">{book.coverTone}</Badge>
+                </div>
+              </div>
+              <div className="cover-review-grid">
+                <div>
+                  <span>主要角色</span>
+                  <strong>{book.roles.length ? book.roles.map((role) => role.name).join("、") : "待确认"}</strong>
+                </div>
+                <div>
+                  <span>正文页数</span>
+                  <strong>{book.pages.length} 页</strong>
+                </div>
+                <div>
+                  <span>导出位置</span>
+                  <strong>PDF 第 1 页</strong>
+                </div>
+              </div>
+              {currentCoverImage?.prompt && (
+                <details className="prompt-details">
+                  <summary>查看完整封面生成提示词</summary>
+                  <p>{currentCoverImage.prompt}</p>
+                </details>
+              )}
+              <ImageVariantStrip
+                workspaceId={workspace.id}
+                variants={coverImageVariants}
+                selectingVariantId={selectingVariantId}
+                emptyText="还没有历史封面图"
+                onSelect={selectImageVariant}
+                onZoom={(src) => setZoomedImage({ src, alt: `${book.title} 的候选封面图` })}
+              />
+              <div className="image-generation-action-bar">
+                <div>
+                  <strong>{currentCoverImage ? "对当前封面图不满意？" : "先生成封面图"}</strong>
+                  <span>{currentCoverImage ? "会保留原图，并新增一张候选封面图。" : "封面图会使用绘本信息和角色参考图自动生成。"}</span>
+                </div>
+                <button
+                  className="button primary"
+                  type="button"
+                  disabled={imageGenerating || Boolean(activeCoverImageJob)}
+                  onClick={generateCoverImage}
+                >
+                  {imageGenerating || activeCoverImageJob ? "生成中..." : currentCoverImage ? "重新生成封面图" : "生成封面图"}
+                </button>
+              </div>
+              <div className="reference-guard-callout">
+                <Badge tone="good">封面已包含</Badge>
+                <div>
+                  <strong>导出 PDF 时会使用当前封面图</strong>
+                  <span>正文分页从第 1 页开始；封面图、标题和绘本信息会一起出现在 PDF 首页。</span>
+                </div>
+                <button className="button secondary" type="button" onClick={() => setMetaOpen(true)}>编辑绘本信息</button>
+              </div>
+            </Card>
+          ) : selectedPage && (
           <Card className="preview-panel">
-            <div className="storybook-preview-art"><span>{book.coverTone}</span><strong>{book.title}</strong></div>
             <div className="page-content-toolbar">
-              <span>第 {selectedPage.pageNumber} 页</span>
+              <div className="page-content-meta">
+                <span>第 {selectedPage.pageNumber} 页</span>
+                <small>《{book.title}》 · {book.coverTone}</small>
+              </div>
               {!pageEditorOpen && (
                 <button className="button secondary" type="button" onClick={() => setPageEditorOpen(true)}>
                   编辑本页
@@ -1371,7 +1621,26 @@ export function StorybookDetailPage() {
               onSelect={selectImageVariant}
               onZoom={(src) => setZoomedImage({ src, alt: `${selectedPage.title} 的候选插图` })}
             />
+            {shouldShowImageGenerationAction && !pageEditorOpen && (
+              <div className="image-generation-action-bar">
+                <div>
+                  <strong>{currentPageImage ? "对当前插图不满意？" : "本页还没有插图"}</strong>
+                  <span>{pageImageReferenceBlocker ? "先补齐本页角色参考图，再重新生成插图。" : currentPageImage ? "会保留原图，并新增一张候选插图。" : "按当前插图描述生成第一张插图。"}</span>
+                </div>
+                <button
+                  className="button primary"
+                  type="button"
+                  disabled={imageActionBusy || promptRewriting || Boolean(pageImageReferenceBlocker)}
+                  title={pageImageReferenceBlocker || undefined}
+                  onClick={generateIllustration}
+                >
+                  {pageImageActionLabel(selectedPage.status, imageActionBusy)}
+                </button>
+              </div>
+            )}
           </Card>
+          )}
+          {!selectedViewIsCover && selectedPage && (
           <aside className="editor-panel">
           <Card id="storybook-page-editor">
             <div className="panel-title-row">
@@ -1424,16 +1693,11 @@ export function StorybookDetailPage() {
               )}
             </div>
             {shouldShowImageGenerationAction && !pageEditorOpen && (
-              <div className="inline-actions">
-                <button
-                  className="button primary"
-                  type="button"
-                  disabled={imageActionBusy || promptRewriting || Boolean(pageImageReferenceBlocker)}
-                  title={pageImageReferenceBlocker || undefined}
-                  onClick={generateIllustration}
-                >
-                  {pageImageActionLabel(selectedPage.status, imageActionBusy)}
-                </button>
+              <div className="rewrite-prompt-action">
+                <div>
+                  <strong>想先优化画面描述？</strong>
+                  <span>让 AI 根据本页正文重新整理插图描述，确认后再去插图区域重绘。</span>
+                </div>
                 <button
                   className="button secondary"
                   type="button"
@@ -1447,6 +1711,7 @@ export function StorybookDetailPage() {
             )}
           </Card>
           </aside>
+          )}
         </div>
       </section>
 

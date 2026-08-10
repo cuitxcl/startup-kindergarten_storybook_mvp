@@ -1242,8 +1242,8 @@ fn storybook_page_with_camera(page_number: u64, camera: &str) -> JsonValue {
 }
 
 #[test]
-fn provider_output_rejects_repetitive_storybook_camera_rhythm() {
-    let err = normalize_provider_output(
+fn provider_output_allows_repetitive_storybook_camera_rhythm() {
+    let normalized = normalize_provider_output(
         json!({
             "pages": [
                 storybook_page_with_camera(1, "中近景，画面聚焦角色互动"),
@@ -1259,9 +1259,38 @@ fn provider_output_rejects_repetitive_storybook_camera_rhythm() {
         None,
         None,
     )
-    .expect_err("repetitive camera rhythm should fail");
+    .expect("repetitive camera rhythm should be accepted");
 
-    assert!(err.safe_message().contains("镜头节奏"));
+    let prompt = normalized["pages"][4]["illustration_prompt"]
+        .as_str()
+        .expect("last assembled prompt should exist");
+    assert!(prompt.contains("中近景"));
+}
+
+#[test]
+fn provider_output_allows_overhead_final_page_camera() {
+    let normalized = normalize_provider_output(
+        json!({
+            "pages": [
+                storybook_page_with_camera(1, "远景，画面建立森林入口和排队的小动物"),
+                storybook_page_with_camera(2, "中景，画面聚焦小松鼠和小兔讨论路线"),
+                storybook_page_with_camera(3, "近景，画面聚焦小松鼠发现发光叶子的表情"),
+                storybook_page_with_camera(4, "跟随视角，画面沿着小路跟随队伍前进"),
+                storybook_page_with_camera(5, "俯视，画面从上方呈现大家围住地图")
+            ]
+        }),
+        "deepseek",
+        "storybook_pages",
+        None,
+        None,
+        None,
+    )
+    .expect("overhead final page camera should be accepted");
+
+    let prompt = normalized["pages"][4]["illustration_prompt"]
+        .as_str()
+        .expect("last assembled prompt should exist");
+    assert!(prompt.contains("俯视"));
 }
 
 #[test]

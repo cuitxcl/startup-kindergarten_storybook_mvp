@@ -26,19 +26,35 @@ pub(crate) struct ImagePlacement {
 }
 
 pub(crate) fn image_placement(image: &PdfImage) -> ImagePlacement {
+    image_placement_in_box(
+        image,
+        IMAGE_BOX_X,
+        IMAGE_BOX_Y,
+        IMAGE_BOX_WIDTH,
+        IMAGE_BOX_HEIGHT,
+    )
+}
+
+pub(crate) fn image_placement_in_box(
+    image: &PdfImage,
+    box_x: f64,
+    box_y: f64,
+    box_width: f64,
+    box_height: f64,
+) -> ImagePlacement {
     let image_width = image.width.max(1) as f64;
     let image_height = image.height.max(1) as f64;
     let image_ratio = image_width / image_height;
-    let box_ratio = IMAGE_BOX_WIDTH / IMAGE_BOX_HEIGHT;
+    let box_ratio = box_width / box_height;
     let (width, height) = if image_ratio >= box_ratio {
-        (IMAGE_BOX_WIDTH, IMAGE_BOX_WIDTH / image_ratio)
+        (box_width, box_width / image_ratio)
     } else {
-        (IMAGE_BOX_HEIGHT * image_ratio, IMAGE_BOX_HEIGHT)
+        (box_height * image_ratio, box_height)
     };
 
     ImagePlacement {
-        x: IMAGE_BOX_X + (IMAGE_BOX_WIDTH - width) / 2.0,
-        y: IMAGE_BOX_Y + (IMAGE_BOX_HEIGHT - height) / 2.0,
+        x: box_x + (box_width - width) / 2.0,
+        y: box_y + (box_height - height) / 2.0,
         width,
         height,
     }

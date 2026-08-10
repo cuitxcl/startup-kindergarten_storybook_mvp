@@ -118,7 +118,7 @@ async fn write_export_file(
     storybook_id: Uuid,
 ) -> Result<String, DbErr> {
     let storybook = storybooks::find_any(db, storybook_id).await?;
-    let page_images = latest_storybook_page_image_paths(db, storybook_id).await?;
+    let page_images = latest_storybook_image_paths(db, storybook_id).await?;
     let file_name = export_file_name(export_id);
     let pdf = encode_storybook_pdf_with_images(&storybook, &page_images);
     crate::repositories::storage_quota::ensure_workspace_storage_available_for_user(
@@ -152,11 +152,20 @@ async fn export_created_by(
     row.try_get("", "created_by")
 }
 
-async fn latest_storybook_page_image_paths(
+async fn latest_storybook_image_paths(
     db: &DatabaseConnection,
     storybook_id: Uuid,
 ) -> Result<HashMap<Uuid, PathBuf>, DbErr> {
     let mut images = HashMap::new();
+    if let Some(image_url) =
+        crate::repositories::storybook_image_variants::selected_cover_image_path(db, storybook_id)
+            .await?
+        && let Some(file_name) = export_image_file_name(&image_url)
+    {
+        let image_path = storage::local_generated_image_path(&file_name).map_err(DbErr::Custom)?;
+        images.insert(storybook_id, image_path);
+    }
+
     for (page_id, image_url) in
         crate::repositories::storybook_image_variants::selected_page_image_paths(db, storybook_id)
             .await?

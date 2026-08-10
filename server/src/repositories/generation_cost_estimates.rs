@@ -148,7 +148,7 @@ pub(crate) fn provider_usage_units(output: &JsonValue) -> Option<(i32, i32)> {
 pub(crate) fn is_image_job(job_type: &str) -> bool {
     matches!(
         job_type,
-        "storybook_page_image" | "storybook_role_reference_image"
+        "storybook_cover_image" | "storybook_page_image" | "storybook_role_reference_image"
     )
 }
 

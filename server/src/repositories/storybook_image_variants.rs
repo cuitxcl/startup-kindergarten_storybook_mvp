@@ -10,6 +10,7 @@ use crate::models::{GenerationJob, ImageVariantListQuery, StorybookImageVariant}
 
 pub const TARGET_ROLE_REFERENCE: &str = "role_reference";
 pub const TARGET_PAGE_ILLUSTRATION: &str = "page_illustration";
+pub const TARGET_COVER_ILLUSTRATION: &str = "cover_illustration";
 
 pub async fn create_generating_variant_for_job(
     db: &DatabaseConnection,
@@ -246,6 +247,31 @@ pub async fn selected_page_image_paths(
         .collect()
 }
 
+pub async fn selected_cover_image_path(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<Option<String>, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select image_url
+            from storybook_image_variants
+            where storybook_id = $1
+              and target_type = 'cover_illustration'
+              and target_id = $1
+              and status = 'ready'
+              and image_url is not null
+              and is_selected
+            order by updated_at desc
+            limit 1
+            "#,
+            [storybook_id.into()],
+        ))
+        .await?;
+    row.map(|row| row.try_get("", "image_url")).transpose()
+}
+
 fn target_from_job(job: &GenerationJob) -> Result<(&'static str, Uuid), DbErr> {
     if job.job_type == "storybook_role_reference_image" {
         let role_id = input_uuid(&job.input_json, "role_id", "角色参考图任务缺少 role_id")?;
@@ -253,6 +279,17 @@ fn target_from_job(job: &GenerationJob) -> Result<(&'static str, Uuid), DbErr> {
     } else if job.job_type == "storybook_page_image" {
         let page_id = input_uuid(&job.input_json, "page_id", "插图任务缺少 page_id")?;
         Ok((TARGET_PAGE_ILLUSTRATION, page_id))
+    } else if job.job_type == "storybook_cover_image" {
+        let Some(storybook_id) = job.storybook_id else {
+            return Err(DbErr::Custom("封面图任务缺少 storybook_id".to_string()));
+        };
+        let cover_id = input_uuid(&job.input_json, "cover_id", "封面图任务缺少 cover_id")?;
+        if cover_id != storybook_id {
+            return Err(DbErr::Custom(
+                "封面图任务 cover_id 与 storybook_id 不一致".to_string(),
+            ));
+        }
+        Ok((TARGET_COVER_ILLUSTRATION, cover_id))
     } else {
         Err(DbErr::Custom("不是图片生成任务".to_string()))
     }

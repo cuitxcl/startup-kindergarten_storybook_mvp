@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use crate::services::{
@@ -224,7 +222,7 @@ fn normalize_storybook_pages_values(
         }
         page_object.insert("illustration_prompt".to_string(), json!(assembled));
     }
-    validate_storybook_page_camera_rhythm(&structured_prompts)?;
+    validate_storybook_page_camera_presence(&structured_prompts)?;
     Ok(())
 }
 
@@ -245,13 +243,9 @@ fn normalize_camera_shot(prompt: &str) -> Option<&'static str> {
         .find_map(|(needle, label)| prompt.contains(*needle).then_some(*label))
 }
 
-fn validate_storybook_page_camera_rhythm(
+fn validate_storybook_page_camera_presence(
     prompts: &[String],
 ) -> Result<(), GenerationProviderError> {
-    if prompts.len() < 5 {
-        return Ok(());
-    }
-
     let shots: Vec<Option<&'static str>> = prompts
         .iter()
         .map(|prompt| normalize_camera_shot(prompt))
@@ -265,41 +259,6 @@ fn validate_storybook_page_camera_rhythm(
         return Err(GenerationProviderError::new(format!(
             "provider 输出 storybook_pages.pages[{index}] 插图提示词缺少明确镜头景别，请在 camera 中写出远景、全景、中景、中近景、近景、特写、局部特写、俯视或跟随视角"
         )));
-    }
-
-    let shot_values: Vec<&str> = shots.into_iter().flatten().collect();
-    let unique: HashSet<&str> = shot_values.iter().copied().collect();
-    if unique.len() < 3 {
-        return Err(GenerationProviderError::new(
-            "provider 输出 storybook_pages.pages 镜头节奏过于单一：5 页及以上绘本至少需要 3 种景别，避免整本都像中近景".to_string(),
-        ));
-    }
-
-    for (start, window) in shot_values.windows(3).enumerate() {
-        if window[0] == window[1] && window[1] == window[2] {
-            return Err(GenerationProviderError::new(format!(
-                "provider 输出 storybook_pages.pages 镜头节奏重复：第 {}-{} 页连续使用 {}，请改成交替景别",
-                start + 1,
-                start + 3,
-                window[0]
-            )));
-        }
-    }
-
-    if let Some(first) = shot_values.first() {
-        if !matches!(*first, "远景" | "全景") {
-            return Err(GenerationProviderError::new(format!(
-                "provider 输出 storybook_pages.pages 镜头节奏不合理：第 1 页应使用远景或全景建立地点，现在是 {first}"
-            )));
-        }
-    }
-
-    if let Some(last) = shot_values.last() {
-        if !matches!(*last, "远景" | "全景" | "中景") {
-            return Err(GenerationProviderError::new(format!(
-                "provider 输出 storybook_pages.pages 镜头节奏不合理：最后一页应使用远景、全景或中景收束，现在是 {last}"
-            )));
-        }
     }
 
     Ok(())
