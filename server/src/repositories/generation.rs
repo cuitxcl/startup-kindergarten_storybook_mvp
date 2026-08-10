@@ -28,6 +28,7 @@ const ALLOWED_JOB_TYPES: &[&str] = &[
     "customization_plan",
 ];
 const INLINE_WORKER_ID: &str = "inline-mock-executor";
+const DEFAULT_MAX_AUTO_ATTEMPTS: i32 = 2;
 
 pub async fn retry_failed_job(
     db: &DatabaseConnection,
@@ -48,8 +49,13 @@ pub async fn retry_failed_job(
         ensure_storybook_in_workspace(db, workspace_id, storybook_id).await?;
     }
 
-    crate::repositories::generation_jobs::move_to_running(db, job.id, "failed", INLINE_WORKER_ID)
-        .await?;
+    let job = crate::repositories::generation_jobs::move_to_running(
+        db,
+        job.id,
+        "failed",
+        INLINE_WORKER_ID,
+    )
+    .await?;
     if job.job_type == "storybook_role_reference_image" {
         if let (Some(storybook_id), Some(role_id)) = (job.storybook_id, role_id_from_job(&job)) {
             mark_role_reference_status(db, storybook_id, role_id, "generating").await?;
@@ -86,7 +92,17 @@ pub async fn retry_failed_job(
                 mark_image_job_success_status(db, &completed, &job).await?;
                 completed
             }
-            Err(err) => fail_running_job(db, job.id, provider_name, &job.job_type, err).await?,
+            Err(err) => {
+                fail_running_job(
+                    db,
+                    job.id,
+                    provider_name,
+                    &job.job_type,
+                    job.attempt_count,
+                    err,
+                )
+                .await?
+            }
         }
     } else {
         match provider
@@ -97,7 +113,17 @@ pub async fn retry_failed_job(
             .await
         {
             Ok(output_json) => complete_and_apply_running_job(db, job.id, output_json).await?,
-            Err(err) => fail_running_job(db, job.id, provider_name, &job.job_type, err).await?,
+            Err(err) => {
+                fail_running_job(
+                    db,
+                    job.id,
+                    provider_name,
+                    &job.job_type,
+                    job.attempt_count,
+                    err,
+                )
+                .await?
+            }
         }
     };
 
@@ -140,6 +166,7 @@ async fn process_generation_backlog_scoped(
         db,
         workspace_id,
         age_minutes,
+        max_auto_attempts(),
     )
     .await?;
     let limit = limit.max(1);
@@ -150,6 +177,7 @@ async fn process_generation_backlog_scoped(
             db,
             worker_id,
             workspace_id,
+            max_auto_attempts(),
         )
         .await?
         else {
@@ -514,7 +542,10 @@ async fn execute_claimed_generation_record(
                 mark_image_job_success_status(db, &completed, &job).await?;
                 completed
             }
-            Err(err) => fail_running_job(db, job.id, provider_name, &job_type, err).await?,
+            Err(err) => {
+                fail_running_job(db, job.id, provider_name, &job_type, job.attempt_count, err)
+                    .await?
+            }
         }
     } else if job_type == "storybook_plan" && ConfiguredGenerationProvider::ready_for_text() {
         match provider
@@ -525,7 +556,10 @@ async fn execute_claimed_generation_record(
             .await
         {
             Ok(output_json) => complete_and_apply_running_job(db, job.id, output_json).await?,
-            Err(err) => fail_running_job(db, job.id, provider_name, &job_type, err).await?,
+            Err(err) => {
+                fail_running_job(db, job.id, provider_name, &job_type, job.attempt_count, err)
+                    .await?
+            }
         }
     } else {
         match provider
@@ -536,7 +570,10 @@ async fn execute_claimed_generation_record(
             .await
         {
             Ok(output_json) => complete_and_apply_running_job(db, job.id, output_json).await?,
-            Err(err) => fail_running_job(db, job.id, provider_name, &job_type, err).await?,
+            Err(err) => {
+                fail_running_job(db, job.id, provider_name, &job_type, job.attempt_count, err)
+                    .await?
+            }
         }
     };
 
@@ -572,10 +609,12 @@ async fn fail_running_job(
     job_id: Uuid,
     provider_name: &str,
     job_type: &str,
+    attempt_count: i32,
     err: GenerationProviderError,
 ) -> Result<GenerationJob, DbErr> {
     let safe_message = err.safe_message();
-    let next_run_interval = if err.retryable {
+    let should_auto_retry = err.retryable && attempt_count < max_auto_attempts();
+    let next_run_interval = if should_auto_retry {
         Some("30 seconds")
     } else {
         None
@@ -588,7 +627,10 @@ async fn fail_running_job(
         "error": {
             "code": "provider_failed",
             "message": safe_message.clone(),
-            "retryable": err.retryable
+            "retryable": err.retryable,
+            "auto_retry": should_auto_retry,
+            "attempt_count": attempt_count,
+            "max_auto_attempts": max_auto_attempts()
         }
     });
     let job = crate::repositories::generation_jobs::fail_running_job(
@@ -629,6 +671,14 @@ async fn fail_running_job(
     }
     record_generation_cost_log(db, &job).await?;
     Ok(job)
+}
+
+fn max_auto_attempts() -> i32 {
+    std::env::var("KINDLEAF_GENERATION_MAX_AUTO_ATTEMPTS")
+        .ok()
+        .and_then(|value| value.trim().parse::<i32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_AUTO_ATTEMPTS)
 }
 
 async fn mark_image_job_success_status(
@@ -753,7 +803,13 @@ pub async fn claim_next_ready_job(
     db: &DatabaseConnection,
     worker_id: &str,
 ) -> Result<Option<GenerationJob>, DbErr> {
-    crate::repositories::generation_jobs::claim_next_ready_job_scoped(db, worker_id, None).await
+    crate::repositories::generation_jobs::claim_next_ready_job_scoped(
+        db,
+        worker_id,
+        None,
+        max_auto_attempts(),
+    )
+    .await
 }
 
 pub async fn find_job(

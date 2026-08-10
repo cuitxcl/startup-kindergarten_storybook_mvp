@@ -177,8 +177,10 @@ pub async fn requeue_stale_jobs_scoped(
     db: &DatabaseConnection,
     workspace_id: Option<Uuid>,
     age_minutes: i64,
+    max_attempts: i32,
 ) -> Result<u64, DbErr> {
     let age_minutes = age_minutes.max(1);
+    let max_attempts = max_attempts.max(1);
     let row = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -193,8 +195,13 @@ pub async fn requeue_stale_jobs_scoped(
               and locked_at is not null
               and locked_at < now() - ($1::text)::interval
               and ($2::uuid is null or workspace_id = $2)
+              and attempt_count < $3
             "#,
-            [format!("{age_minutes} minutes").into(), workspace_id.into()],
+            [
+                format!("{age_minutes} minutes").into(),
+                workspace_id.into(),
+                max_attempts.into(),
+            ],
         ))
         .await?;
     Ok(row.rows_affected())
@@ -204,7 +211,9 @@ pub async fn claim_next_ready_job_scoped(
     db: &DatabaseConnection,
     worker_id: &str,
     workspace_id: Option<Uuid>,
+    max_attempts: i32,
 ) -> Result<Option<GenerationJob>, DbErr> {
+    let max_attempts = max_attempts.max(1);
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -220,8 +229,15 @@ pub async fn claim_next_ready_job_scoped(
             where id = (
                 select id
                 from generation_jobs
-                where status in ('queued', 'failed')
-                  and (next_run_at is null or next_run_at <= now())
+                where (
+                    status = 'queued'
+                    or (
+                      status = 'failed'
+                      and next_run_at is not null
+                      and next_run_at <= now()
+                      and attempt_count < $3
+                    )
+                  )
                   and (locked_at is null or locked_at < now() - interval '15 minutes')
                   and ($2::uuid is null or workspace_id = $2)
                 order by created_at asc
@@ -232,7 +248,7 @@ pub async fn claim_next_ready_job_scoped(
               id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             "#,
-            [worker_id.into(), workspace_id.into()],
+            [worker_id.into(), workspace_id.into(), max_attempts.into()],
         ))
         .await?;
 
