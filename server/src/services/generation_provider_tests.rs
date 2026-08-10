@@ -46,6 +46,31 @@ fn provider_config_uses_first_non_empty_value() {
 }
 
 #[test]
+fn provider_env_defaults_to_mock_until_real_mode_is_explicit() {
+    let previous = std::env::var("KINDLEAF_GENERATION_PROVIDER").ok();
+
+    unsafe { std::env::remove_var("KINDLEAF_GENERATION_PROVIDER") };
+    assert_eq!(ConfiguredGenerationProvider::from_env().name(), "mock");
+
+    unsafe { std::env::set_var("KINDLEAF_GENERATION_PROVIDER", "mock") };
+    assert_eq!(ConfiguredGenerationProvider::from_env().name(), "mock");
+
+    unsafe { std::env::set_var("KINDLEAF_GENERATION_PROVIDER", "unexpected") };
+    assert_eq!(ConfiguredGenerationProvider::from_env().name(), "mock");
+
+    unsafe { std::env::set_var("KINDLEAF_GENERATION_PROVIDER", "composite") };
+    assert_eq!(
+        ConfiguredGenerationProvider::from_env().name(),
+        "deepseek+seedream"
+    );
+
+    match previous {
+        Some(value) => unsafe { std::env::set_var("KINDLEAF_GENERATION_PROVIDER", value) },
+        None => unsafe { std::env::remove_var("KINDLEAF_GENERATION_PROVIDER") },
+    }
+}
+
+#[test]
 fn composite_provider_names_match_job_type() {
     let provider = ConfiguredGenerationProvider::Composite {
         text: DeepSeekTextProvider {
@@ -1694,7 +1719,7 @@ fn single_page_prompt_output_requires_confirmed_role_reference() {
 }
 
 #[test]
-fn single_page_prompt_rejects_role_mentioned_too_many_times() {
+fn single_page_prompt_rejects_extreme_role_repetition() {
     let output = normalize_provider_output(
         json!({
             "page": {
@@ -1705,7 +1730,7 @@ fn single_page_prompt_rejects_role_mentioned_too_many_times() {
                     "contact_chain": "米米被队伍夹在中间",
                     "crowd": "后排还有几只小动物排队",
                     "action": "米米踮起脚尖看着水龙头",
-                    "expression": "米米眼睛半眯"
+                    "expression": "米米看见米米排在米米身后，米米眼睛半眯，米米嘴角上扬，米米耳朵放松"
                 }
             }
         }),
@@ -1721,13 +1746,13 @@ fn single_page_prompt_rejects_role_mentioned_too_many_times() {
         "confirmed_roles": [{"name": "米米", "role_type": "protagonist", "appearance": "橘色条纹小猫", "story_function": "主角"}]
     });
     let err = validate_output_against_input(&output, &input, "storybook_page_prompt")
-        .expect_err("role mentioned too many times should fail");
+        .expect_err("extreme role repetition should fail");
 
-    assert!(err.safe_message().contains("被点名 4 次"));
+    assert!(err.safe_message().contains("被点名 9 次"));
 }
 
 #[test]
-fn single_page_prompt_rejects_role_mentioned_three_times() {
+fn single_page_prompt_allows_moderate_role_repetition() {
     let output = normalize_provider_output(
         json!({
             "page": {
@@ -1753,10 +1778,8 @@ fn single_page_prompt_rejects_role_mentioned_three_times() {
         "page": {"page_id": "x", "page_number": 2, "title": "耐心等一等", "body": "米米排队洗手。", "illustration_prompt": "旧描述"},
         "confirmed_roles": [{"name": "米米", "role_type": "protagonist", "appearance": "橘色条纹小猫", "story_function": "主角"}]
     });
-    let err = validate_output_against_input(&output, &input, "storybook_page_prompt")
-        .expect_err("three mentions should fail");
-
-    assert!(err.safe_message().contains("被点名 3 次"));
+    validate_output_against_input(&output, &input, "storybook_page_prompt")
+        .expect("moderate role repetition should be handled by quality suggestions");
 }
 
 #[test]

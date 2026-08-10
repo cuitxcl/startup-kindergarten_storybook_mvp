@@ -293,8 +293,11 @@ else
 fi
 
 case "$provider" in
-  mock|deepseek|seedream|"")
-    ok "KINDLEAF_GENERATION_PROVIDER=${provider:-auto-composite}"
+  mock|deepseek|seedream|composite|deepseek+seedream)
+    ok "KINDLEAF_GENERATION_PROVIDER=$provider"
+    ;;
+  "")
+    fail "KINDLEAF_GENERATION_PROVIDER must be explicit for trial: use composite, deepseek, seedream, or mock"
     ;;
   *)
     fail "KINDLEAF_GENERATION_PROVIDER is unsupported: $provider"

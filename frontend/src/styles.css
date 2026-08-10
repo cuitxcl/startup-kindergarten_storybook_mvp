@@ -971,28 +971,32 @@ button.compact-row.active {
   grid-template-columns: 220px minmax(0, 980px);
   justify-content: center;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 #page-workspace {
-  max-height: calc(100vh - 170px);
+  height: clamp(520px, calc(100vh - 170px), 760px);
   min-height: 520px;
-  overflow: hidden;
+  overflow: visible;
 }
 .page-strip, .editor-panel { display: grid; gap: 10px; }
 .page-strip {
-  max-height: 100%;
+  min-height: 0;
+  height: 100%;
   overflow-y: auto;
   padding-right: 4px;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .storybook-workspace-main {
   display: grid;
   gap: 14px;
   min-width: 0;
-  max-height: 100%;
+  min-height: 0;
+  height: 100%;
   overflow-y: auto;
   padding-right: 4px;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .page-thumb { display: grid; gap: 6px; width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; text-align: left; background: #fff; }
 .page-thumb.active { border-color: var(--brand); background: #fff0ed; box-shadow: inset 3px 0 0 var(--brand); }

@@ -105,7 +105,7 @@ echo "2. start backend with trial-ready configuration"
   APP_HOST="https://trial.kindleaf.example" \
   DATABASE_URL="$DATABASE_URL" \
   KINDLEAF_DEMO_SEED=0 \
-  KINDLEAF_GENERATION_PROVIDER= \
+  KINDLEAF_GENERATION_PROVIDER=composite \
   KINDLEAF_AUTH_TOKEN_SECRET="operator-readiness-auth-secret-000000" \
   KINDLEAF_AUTH_TOKEN_TTL_SECONDS=604800 \
   DEEPSEEK_API_KEY="operator-readiness-deepseek-key" \

@@ -9,10 +9,23 @@ use crate::services::{
     generation_seedream_provider::SeedreamImageProvider,
 };
 
-/// 只描述真实 provider 的就绪状态；缺少 API key 时通过
-/// missing_configuration / diagnostic 明确暴露，不存在 mock 回退。
+/// 描述当前 provider 的就绪状态；mock 是显式本地模式，不访问外部 API。
 pub fn provider_summary(provider: &ConfiguredGenerationProvider) -> GenerationProviderSummary {
     match provider {
+        ConfiguredGenerationProvider::Mock(provider) => GenerationProviderSummary {
+            provider: provider.name().to_string(),
+            mode: "mock".to_string(),
+            schema_version: DEFAULT_TEXT_SCHEMA_VERSION.to_string(),
+            requires_api_key: false,
+            supports_text: supported_text_jobs(),
+            supports_image: supported_image_jobs(),
+            real_text_ready: false,
+            real_image_ready: false,
+            production_ready: false,
+            missing_configuration: vec![],
+            components: vec![],
+            diagnostic: "当前为本地 mock 生成，不会调用 DeepSeek 或 Seedream".to_string(),
+        },
         ConfiguredGenerationProvider::DeepSeek(provider) => {
             let text_ready = provider.api_key.is_some();
             GenerationProviderSummary {

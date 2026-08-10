@@ -190,7 +190,7 @@ echo "2. start backend with real composite provider"
 (
   cd "$ROOT_DIR/server"
   KINDLEAF_DEMO_SEED=1 \
-  KINDLEAF_GENERATION_PROVIDER= \
+  KINDLEAF_GENERATION_PROVIDER=composite \
   DATABASE_URL="$DATABASE_URL" \
   PORT="$API_PORT" \
   APP_HOST="$API_BASE_URL" \

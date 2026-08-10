@@ -23,6 +23,7 @@ const TEXT_JOB_TYPES: &[&str] = &[
 
 pub const SUPPORTED_TEXT_JOB_TYPES: &[&str] = TEXT_JOB_TYPES;
 pub const DEFAULT_TEXT_SCHEMA_VERSION: &str = "generation.provider.v1";
+const DEFAULT_VALIDATION_MAX_ATTEMPTS: u64 = 1;
 
 pub struct DeepSeekTextProvider {
     pub(crate) api_key: Option<String>,
@@ -250,10 +251,16 @@ impl AiGenerationProvider for DeepSeekTextProvider {
                 GenerationProviderError::new(format!("创建 DeepSeek 客户端失败：{err}"))
             })?;
 
-        // 输出校验未通过时，把失败原因反馈给模型自动重试一次；传输层错误仍交给任务队列重试。
+        // 默认不做 provider 内部二次请求，避免一次用户操作消耗多次 DeepSeek 调用。
+        // 如确需自动修复结构，可显式设置 DEEPSEEK_VALIDATION_MAX_ATTEMPTS=2。
+        let validation_max_attempts = env_u64(
+            "DEEPSEEK_VALIDATION_MAX_ATTEMPTS",
+            DEFAULT_VALIDATION_MAX_ATTEMPTS,
+        )
+        .clamp(1, 2);
         let mut retry_feedback: Option<String> = None;
         let mut last_validation_error: Option<GenerationProviderError> = None;
-        for attempt in 0..2 {
+        for attempt in 0..validation_max_attempts {
             let payload =
                 self.build_chat_payload_with_feedback(&request, retry_feedback.as_deref())?;
             let (content, usage) = self.request_content(&client, api_key, &payload).await?;
@@ -282,7 +289,7 @@ impl AiGenerationProvider for DeepSeekTextProvider {
             match result {
                 Ok(normalized) => return Ok(normalized),
                 Err(err) => {
-                    if attempt == 0 {
+                    if attempt + 1 < validation_max_attempts {
                         retry_feedback = Some(err.safe_message());
                         last_validation_error = Some(err);
                         continue;
@@ -407,13 +414,13 @@ pub(crate) fn validate_output_against_input(
                 "provider 输出 {location} 出现未确认替代角色：{animal}"
             )));
         }
-        // 同一角色在插图提示词里被反复点名时，文生图模型会把它画成多个；超过 2 次判不合格，
-        // 交给自动重试机制让模型把动作合并、压缩点名次数（槽位指引要求合计不超过 2 次）。
+        // 同一角色在插图提示词里被反复点名时，文生图模型可能会把它画成多个。
+        // 这里仅拦截极端重复，普通超限交给质量检查做建议，避免真实生成白白失败。
         for name in &confirmed_roles {
             let mention_count = prompt.matches(name).count();
-            if mention_count > 2 {
+            if mention_count > 8 {
                 return Err(GenerationProviderError::new(format!(
-                    "provider 输出 {location} 插图提示词中「{name}」被点名 {mention_count} 次，模型会把反复点名的角色画成多个；请把它的动作、表情合并进同一组描述，全页合计点名不超过 2 次"
+                    "provider 输出 {location} 插图提示词中「{name}」被点名 {mention_count} 次，重复过多会让模型把角色画成多个；请把它的动作、表情合并进同一组描述"
                 )));
             }
         }

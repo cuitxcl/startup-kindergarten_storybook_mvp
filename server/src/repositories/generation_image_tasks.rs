@@ -230,10 +230,16 @@ async fn cover_prompt(
     let use_scene: String = row.try_get("", "use_scene")?;
     let teaching_goal: String = row.try_get("", "teaching_goal")?;
     let cover_tone: String = row.try_get("", "cover_tone")?;
-    let roles = storybook_roles_for_prompt(db, storybook_id).await?;
+    let roles = storybook_cover_roles_for_prompt(db, storybook_id).await?;
+    let story_beats = storybook_cover_story_beats(db, storybook_id).await?;
     let style_guard = storybook_style_guard(&cover_tone);
     Ok(format!(
-        "为幼儿园绘本《{title}》生成封面插图。年龄段：{age_group}；使用场景：{use_scene}；教学目标：{teaching_goal}。主要角色：{}。画面要求：{style_guard} 封面应像绘本封面，温暖、有吸引力、主体清楚，适合老师和孩子一眼理解主题；可以出现主角和关键场景，但不要出现任何文字、标题、logo、水印或页码，文字由系统排版叠加。",
+        "为幼儿园绘本《{title}》生成封面插图。年龄段：{age_group}；使用场景：{use_scene}；教学目标：{teaching_goal}。故事线索：{}。角色关系：{}。画面要求：{style_guard} 角色外观由参考图决定，文字提示词只负责镜头、场景、关系和情绪，不要重复设计角色外观。封面应像真实绘本封面，选择一个最能概括故事主题的完整故事瞬间，不要做成白底角色设定图、角色排排站或单纯人物合照。镜头采用竖幅封面构图，中景或中远景，主体位于画面下半部或中下部，关键道具作为视觉焦点；角色之间要有明确关系，例如共同注视、靠近、守护、分享、发现或解决问题。背景要交代故事发生地点和情绪，有前景、中景、背景层次，光线自然温暖。画面上方或左上方使用自然简洁的低细节背景区域，便于后期排标题；不要绘制白色矩形、文本框、纸片、牌匾或任何人为留白块。不要出现任何文字、标题、logo、水印或页码，文字由系统排版叠加。",
+        if story_beats.is_empty() {
+            "围绕标题、教学目标和故事主题设计一个有情境的封面瞬间".to_string()
+        } else {
+            story_beats.join("；")
+        },
         if roles.is_empty() {
             "根据主题自然设计".to_string()
         } else {
@@ -242,7 +248,7 @@ async fn cover_prompt(
     ))
 }
 
-async fn storybook_roles_for_prompt(
+async fn storybook_cover_story_beats(
     db: &DatabaseConnection,
     storybook_id: Uuid,
 ) -> Result<Vec<String>, DbErr> {
@@ -250,7 +256,50 @@ async fn storybook_roles_for_prompt(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select name, role_type, appearance
+            with numbered_pages as (
+              select page_number, title, body, illustration_prompt
+              from storybook_pages
+              where storybook_id = $1
+            ),
+            bounds as (
+              select min(page_number) as first_page, max(page_number) as last_page
+              from numbered_pages
+            )
+            select page_number, title, body, illustration_prompt
+            from numbered_pages, bounds
+            where page_number = first_page or page_number = last_page
+            order by page_number asc
+            "#,
+            [storybook_id.into()],
+        ))
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            let page_number = row.try_get::<i32>("", "page_number").ok()?;
+            let title = row.try_get::<String>("", "title").ok()?;
+            let body = row.try_get::<String>("", "body").ok()?;
+            let illustration_prompt = row.try_get::<String>("", "illustration_prompt").ok()?;
+            Some(format!(
+                "第{}页《{}》：{}；画面：{}",
+                page_number,
+                clip_prompt_text(&title, 24),
+                clip_prompt_text(&body, 70),
+                clip_prompt_text(&illustration_prompt, 90)
+            ))
+        })
+        .collect())
+}
+
+async fn storybook_cover_roles_for_prompt(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<Vec<String>, DbErr> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select name, role_type, story_function
             from storybook_roles
             where storybook_id = $1
             order by
@@ -266,10 +315,23 @@ async fn storybook_roles_for_prompt(
         .filter_map(|row| {
             let name = row.try_get::<String>("", "name").ok()?;
             let role_type = row.try_get::<String>("", "role_type").ok()?;
-            let appearance = row.try_get::<String>("", "appearance").ok()?;
-            Some(format!("{name}（{role_type}）：{appearance}"))
+            let story_function = row.try_get::<String>("", "story_function").ok()?;
+            Some(format!(
+                "{name}（{role_type}）：{}",
+                clip_prompt_text(&story_function, 40)
+            ))
         })
         .collect::<Vec<_>>())
+}
+
+fn clip_prompt_text(value: &str, max_chars: usize) -> String {
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut clipped = trimmed.chars().take(max_chars).collect::<String>();
+    clipped.push('…');
+    clipped
 }
 
 async fn storybook_role_reference_images(

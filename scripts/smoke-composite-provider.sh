@@ -173,7 +173,7 @@ echo "3. start backend with composite provider"
 (
   cd "$ROOT_DIR/server"
   KINDLEAF_DEMO_SEED=1 \
-  KINDLEAF_GENERATION_PROVIDER= \
+  KINDLEAF_GENERATION_PROVIDER=composite \
   DEEPSEEK_API_KEY=test-key \
   DEEPSEEK_BASE_URL="$DEEPSEEK_BASE_URL" \
   SEEDREAM_API_KEY=test-key \
