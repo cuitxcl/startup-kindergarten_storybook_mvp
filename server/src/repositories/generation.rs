@@ -28,7 +28,9 @@ const ALLOWED_JOB_TYPES: &[&str] = &[
     "customization_plan",
 ];
 const INLINE_WORKER_ID: &str = "inline-mock-executor";
-const DEFAULT_MAX_AUTO_ATTEMPTS: i32 = 2;
+const DEFAULT_MAX_AUTO_ATTEMPTS: i32 = 1;
+const SINGLE_ACTIVE_STORYBOOK_JOB_TYPES: &[&str] =
+    &["storybook_plan", "storybook_roles", "storybook_pages"];
 
 pub async fn retry_failed_job(
     db: &DatabaseConnection,
@@ -205,6 +207,19 @@ pub async fn create_generation_job_record(
     }
     if let Some(storybook_id) = payload.storybook_id {
         ensure_storybook_in_workspace(db, workspace_id, storybook_id).await?;
+        if SINGLE_ACTIVE_STORYBOOK_JOB_TYPES.contains(&job_type)
+            && let Some(active_job) =
+                crate::repositories::generation_jobs::find_active_storybook_job(
+                    db,
+                    workspace_id,
+                    storybook_id,
+                    job_type,
+                    max_auto_attempts(),
+                )
+                .await?
+        {
+            return Ok(active_job);
+        }
     }
     if job_type == "customization_plan" {
         let child_id = payload

@@ -181,7 +181,45 @@ pub async fn requeue_stale_jobs_scoped(
 ) -> Result<u64, DbErr> {
     let age_minutes = age_minutes.max(1);
     let max_attempts = max_attempts.max(1);
-    let row = db
+    let stopped = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            update generation_jobs
+            set status = 'failed',
+                output_json = jsonb_build_object(
+                  'schema_version', 'generation.error.v1',
+                  'provider', coalesce(output_json->>'provider', 'system'),
+                  'mode', job_type,
+                  'message', '生成任务已达到自动恢复上限，已停止',
+                  'error', jsonb_build_object(
+                    'code', 'auto_attempts_exhausted',
+                    'message', '生成任务已达到自动恢复上限，已停止；可由用户手动重试',
+                    'retryable', false,
+                    'auto_retry', false,
+                    'attempt_count', attempt_count,
+                    'max_auto_attempts', $3
+                  )
+                ),
+                last_error = '生成任务已达到自动恢复上限，已停止；可由用户手动重试',
+                locked_by = null,
+                locked_at = null,
+                next_run_at = null,
+                finished_at = now()
+            where status = 'running'
+              and locked_at is not null
+              and locked_at < now() - ($1::text)::interval
+              and ($2::uuid is null or workspace_id = $2)
+              and attempt_count >= $3
+            "#,
+            [
+                format!("{age_minutes} minutes").into(),
+                workspace_id.into(),
+                max_attempts.into(),
+            ],
+        ))
+        .await?;
+    let requeued = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
@@ -204,7 +242,7 @@ pub async fn requeue_stale_jobs_scoped(
             ],
         ))
         .await?;
-    Ok(row.rows_affected())
+    Ok(stopped.rows_affected() + requeued.rows_affected())
 }
 
 pub async fn claim_next_ready_job_scoped(
@@ -252,6 +290,47 @@ pub async fn claim_next_ready_job_scoped(
         ))
         .await?;
 
+    row.map(job_from_row).transpose()
+}
+
+pub async fn find_active_storybook_job(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    job_type: &str,
+    max_attempts: i32,
+) -> Result<Option<GenerationJob>, DbErr> {
+    let max_attempts = max_attempts.max(1);
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
+              attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
+            from generation_jobs
+            where workspace_id = $1
+              and storybook_id = $2
+              and job_type = $3
+              and (
+                status in ('queued', 'running')
+                or (
+                  status = 'failed'
+                  and next_run_at is not null
+                  and attempt_count < $4
+                )
+              )
+            order by created_at desc
+            limit 1
+            "#,
+            [
+                workspace_id.into(),
+                storybook_id.into(),
+                job_type.into(),
+                max_attempts.into(),
+            ],
+        ))
+        .await?;
     row.map(job_from_row).transpose()
 }
 
