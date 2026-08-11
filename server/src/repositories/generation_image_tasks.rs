@@ -3,7 +3,7 @@ use serde_json::{Value as JsonValue, json};
 use uuid::Uuid;
 
 use crate::models::{CreateImageTaskRequest, GenerationJob};
-use crate::page_aspect::page_aspect_spec;
+use crate::page_aspect::{image_size_for_aspect_with_fallback, page_aspect_spec};
 use crate::services::generation_provider::{ImageGenerationMode, ImageReference};
 
 pub struct PageImageRequestInput {
@@ -107,8 +107,9 @@ pub async fn page_image_job_input(
     } else {
         format!("{prompt} 角色结构约束：{}。", anatomy_rules.join("；"))
     };
+    let shot_instruction = page_camera_shot_instruction(&prompt);
     let prompt = format!(
-        "{prompt} {} {}",
+        "{shot_instruction} 原始插图描述：{prompt} {} {}",
         storybook_style_guard(&cover_tone),
         aspect.prompt_clause
     );
@@ -127,7 +128,9 @@ pub async fn page_image_job_input(
         "{prompt} {dedup_subject}在画面中各自只出现一次，不要重复绘制同一角色。单幅连续场景，不要分格、不要上下拼接两个画面。"
     );
     let prompt = if has_scene_reference {
-        format!("{prompt} 参考上一页画面保持场景布局与在场人群连续，动作与构图以文字描述为准。")
+        format!(
+            "{prompt} 参考上一页画面保持角色、场景元素和光线连续；但本页镜头距离、主体大小、视角和构图必须以本页镜头要求为准，不要复制上一页景别。"
+        )
     } else {
         prompt
     };
@@ -421,11 +424,17 @@ pub fn image_request_from_job(job: &GenerationJob) -> Result<PageImageRequestInp
         .get("strength")
         .and_then(|value| value.as_f64())
         .map(|value| (value as f32).clamp(0.0, 1.0));
-    let size = job
+    let aspect_ratio = job
+        .input_json
+        .get("aspect_ratio")
+        .and_then(|value| value.as_str());
+    let requested_size = job
         .input_json
         .get("size")
         .and_then(|value| value.as_str())
-        .map(str::to_string);
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let size = image_size_for_aspect_with_fallback(aspect_ratio, requested_size);
 
     Ok(PageImageRequestInput {
         prompt,
@@ -654,6 +663,37 @@ fn storybook_style_guard(cover_tone: &str) -> String {
             "画面风格必须严格采用整本绘本选择的风格：{style_clause}；禁止改成水彩、平面卡通、手绘素描或其他未选择的画风。"
         )
     }
+}
+
+fn page_camera_shot_instruction(prompt: &str) -> &'static str {
+    if prompt.contains("局部特写") {
+        return "镜头执行：必须是局部特写，画面聚焦一个局部细节或关键物件，局部可占画面 70% 以上，允许合理裁切身体或环境；不要改成完整人物中景。";
+    }
+    if prompt.contains("特写") {
+        return "镜头执行：必须是特写，脸部、表情、手部动作或关键物件占主画面，背景只作少量氛围；不要改成半身中景。";
+    }
+    if prompt.contains("俯视") {
+        return "镜头执行：必须是俯视或鸟瞰视角，从上方向下看清地面、桌面或空间布局，人物和物件按平面关系分布；不要改成平视中景。";
+    }
+    if prompt.contains("跟随视角") {
+        return "镜头执行：必须是跟随视角，镜头像跟在角色身后或侧后方移动，前景、主体和前进方向有层次；不要改成静态正面中景。";
+    }
+    if prompt.contains("远景") {
+        return "最高优先级镜头执行：本图必须按远景生成。镜头明显拉远，环境占画面 65%-80%，角色全身可见且相对较小，用环境和位置关系讲故事；如果原始描述里出现眼睛、触角、咬痕、手部、表情等近距离细节，这些只作为故事信息，不要求清晰可见，不要为了看清它们而推近镜头；微小物件可以只呈现为小轮廓或色块；不要裁切身体，不要改成人物半身、近景或中景。";
+    }
+    if prompt.contains("全景") {
+        return "镜头执行：必须是全景，完整交代地点、角色全身和彼此位置关系，环境面积大于角色面积；不要改成近距离人物中景。";
+    }
+    if prompt.contains("中近景") {
+        return "镜头执行：必须是中近景，角色上半身和手部互动清楚，仍保留少量环境线索；不要拉成远景，也不要推成脸部特写。";
+    }
+    if prompt.contains("近景") {
+        return "镜头执行：必须是近景，重点表现角色动作和表情，主体较大但保留必要动作空间；不要退成远景或普通中景。";
+    }
+    if prompt.contains("中景") {
+        return "镜头执行：必须是中景，角色半身到全身上部与周围环境平衡呈现，动作和关系清楚；不要自动变成脸部特写。";
+    }
+    "镜头执行：严格按照插图描述里的镜头、视角和构图重点执行，主体大小要匹配该镜头；不要把所有页面统一生成为中景。"
 }
 
 fn is_limb_free_character(name: &str, role_type: &str, appearance: &str) -> bool {

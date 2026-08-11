@@ -1603,7 +1603,7 @@ export function StorybookDetailPage() {
               <div className="preview-image-block">
                 <Badge tone="info">当前页插图结果</Badge>
                 {currentImagePreviewUrl ? (
-                  <button className="image-zoom-trigger" type="button" style={{ aspectRatio: pageAspectCssRatio(book.pageAspectRatio) }} title="点击放大查看" onClick={() => setZoomedImage({ src: currentImagePreviewUrl, alt: currentPageImage.altText || selectedPage.title })}>
+                  <button className="image-zoom-trigger current-image-preview" type="button" style={{ aspectRatio: pageAspectCssRatio(book.pageAspectRatio) }} title="点击放大查看" onClick={() => setZoomedImage({ src: currentImagePreviewUrl, alt: currentPageImage.altText || selectedPage.title })}>
                     <img src={currentImagePreviewUrl} alt={currentPageImage.altText || selectedPage.title} />
                   </button>
                 ) : currentImagePreviewError ? (

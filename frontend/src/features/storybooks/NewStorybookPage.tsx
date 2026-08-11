@@ -166,19 +166,6 @@ export function NewStorybookPage() {
           && isActiveJobStatus(job.status)
         ));
         if (!active) {
-          if (!resumeBookId) {
-            const latestRecoverable = page.data
-              .filter((job) => (
-                ["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)
-                && job.storybookId
-                && job.status === "succeeded"
-              ))
-              .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
-            if (latestRecoverable?.storybookId) {
-              if (suppressAutoRecoverRef.current) return;
-              setSearchParams({ bookId: latestRecoverable.storybookId }, { replace: true });
-            }
-          }
           return;
         }
         const input = (active.input || {}) as Record<string, unknown>;

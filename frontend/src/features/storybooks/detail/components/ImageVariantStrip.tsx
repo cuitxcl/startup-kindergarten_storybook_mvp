@@ -21,12 +21,13 @@ export function ImageVariantStrip({
   onSelect: (variant: StorybookImageVariant) => void;
   onZoom: (src: string) => void;
 }) {
-  if (!variants.length) {
+  const displayVariants = variants.filter((variant) => variant.status !== "failed");
+  if (!displayVariants.length) {
     return <div className="image-variant-strip empty">{emptyText}</div>;
   }
   return (
     <div className="image-variant-strip">
-      {variants.map((variant) => (
+      {displayVariants.map((variant) => (
         <ImageVariantThumb
           key={variant.id}
           workspaceId={workspaceId}

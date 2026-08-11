@@ -34,6 +34,7 @@ export function ReferenceImagePicker({
   const [referenceVariants, setReferenceVariants] = useState<StorybookImageVariant[]>([]);
   const [selectingVariantId, setSelectingVariantId] = useState<string | null>(null);
   const [zoomedVariantId, setZoomedVariantId] = useState<string | null>(null);
+  const displayReferenceVariants = referenceVariants.filter((variant) => variant.status !== "failed");
 
   useEffect(() => {
     if (!storybookId || !role.id) {
@@ -96,14 +97,14 @@ export function ReferenceImagePicker({
       </div>
       <ImageVariantStrip
         workspaceId={workspaceId}
-        variants={referenceVariants}
+        variants={displayReferenceVariants}
         emptyText={role.id ? "还没有历史参考图" : "生成参考图后会在这里保留历史候选"}
         onOpen={(variant) => setZoomedVariantId(variant.id)}
       />
       {zoomedVariantId && (
         <ReferenceVariantLightbox
           workspaceId={workspaceId}
-          variants={referenceVariants}
+          variants={displayReferenceVariants}
           variantId={zoomedVariantId}
           alt={`${role.name || "角色"}的候选参考图`}
           selectingVariantId={selectingVariantId}
