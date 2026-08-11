@@ -19,6 +19,7 @@ export type StorybookStatus =
   | "listed";
 
 export type Visibility = "private" | "workspace" | "market_submission" | "market_listed";
+export type PageAspectRatio = "portrait_4_5" | "landscape_16_9" | "square_1_1";
 
 export interface User {
   id: string;
@@ -137,6 +138,7 @@ export interface Storybook {
   useScene: string;
   teachingGoal: string;
   coverTone: string;
+  pageAspectRatio: PageAspectRatio;
   teacherReviewStatus?: "pending" | "confirmed";
   teacherReviewedBy?: string;
   teacherReviewedAt?: string;

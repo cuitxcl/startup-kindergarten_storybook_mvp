@@ -277,6 +277,7 @@ async fn seedream_provider_parses_real_http_image_response() {
             edit_instruction: None,
             image_mode: ImageGenerationMode::TextToImage,
             strength: None,
+            size: None,
         })
         .await
         .expect("seedream image response should be parsed");
@@ -322,6 +323,7 @@ async fn seedream_provider_sends_reference_image_payload_for_edit_mode() {
             edit_instruction: Some("保持角色身份，改成更清晰的正面半身形象".to_string()),
             image_mode: ImageGenerationMode::EditImage,
             strength: Some(0.45),
+            size: None,
         })
         .await
         .expect("seedream edit response should be parsed");
@@ -406,6 +408,7 @@ async fn seedream_provider_redacts_private_image_prompt_output() {
             edit_instruction: None,
             image_mode: ImageGenerationMode::TextToImage,
             strength: None,
+            size: None,
         })
         .await
         .expect("seedream image response should be parsed");

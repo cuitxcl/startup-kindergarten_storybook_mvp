@@ -6,6 +6,7 @@ use crate::models::{
     StorybookListQuery, StorybookPage, StorybookRole, StorybookStatus, UpdatePageRequest,
     UpdateRoleRequest, UpdateStorybookRequest,
 };
+use crate::page_aspect::normalize_page_aspect_ratio;
 use crate::repositories::storybook_rules::{
     ensure_deliverable_ready, ensure_status_transition, ensure_teacher_review_ready,
     storybook_status_name, visibility_name,
@@ -73,9 +74,9 @@ pub async fn seed_demo_storybooks(db: &DatabaseConnection) -> Result<(), DbErr> 
             &format!(
                 r#"
                 insert into storybooks
-                  (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, creator_id, created_at, updated_at)
+                  (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
                 values
-                  ('{id}', '{workspace_id}', '{storybook_type}', '{status}', '{visibility}', '{source}', '{title}', '4-5 岁', '{use_scene}', '{teaching_goal}', '温暖、清楚', '00000000-0000-0000-0000-000000000001', now(), now())
+                  ('{id}', '{workspace_id}', '{storybook_type}', '{status}', '{visibility}', '{source}', '{title}', '4-5 岁', '{use_scene}', '{teaching_goal}', '温暖、清楚', 'portrait_4_5', '00000000-0000-0000-0000-000000000001', now(), now())
                 on conflict (id) do update
                   set status = excluded.status,
                       visibility = excluded.visibility,
@@ -178,6 +179,9 @@ pub async fn update(
     if let Some(value) = payload.cover_tone {
         book.cover_tone = value;
     }
+    if let Some(value) = payload.page_aspect_ratio {
+        book.page_aspect_ratio = normalize_page_aspect_ratio(Some(&value));
+    }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
@@ -189,9 +193,10 @@ pub async fn update(
             use_scene = $7,
             teaching_goal = $8,
             cover_tone = $9,
-            teacher_review_status = case when $12::boolean then $10::text else teacher_review_status end,
-            teacher_reviewed_by = case when $12::boolean then case when $10::text = 'confirmed' then $11::uuid else null end else teacher_reviewed_by end,
-            teacher_reviewed_at = case when $12::boolean then case when $10::text = 'confirmed' then now() else null end else teacher_reviewed_at end,
+            page_aspect_ratio = $10,
+            teacher_review_status = case when $13::boolean then $11::text else teacher_review_status end,
+            teacher_reviewed_by = case when $13::boolean then case when $11::text = 'confirmed' then $12::uuid else null end else teacher_reviewed_by end,
+            teacher_reviewed_at = case when $13::boolean then case when $11::text = 'confirmed' then now() else null end else teacher_reviewed_at end,
             updated_at = now()
         where workspace_id = $1 and id = $2
         "#,
@@ -205,6 +210,7 @@ pub async fn update(
             book.use_scene.clone().into(),
             book.teaching_goal.clone().into(),
             book.cover_tone.clone().into(),
+            book.page_aspect_ratio.clone().into(),
             book.teacher_review_status.clone().into(),
             actor_user_id.into(),
             teacher_review_status_changed.into(),

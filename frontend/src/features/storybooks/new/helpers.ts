@@ -1,4 +1,4 @@
-import type { StorybookPage, StorybookRole } from "../../../types/domain";
+import type { PageAspectRatio, StorybookPage, StorybookRole } from "../../../types/domain";
 import type { EditablePage, EditablePlan, EditableRole } from "./types";
 
 export function linesFromRows(value: string) {
@@ -27,7 +27,7 @@ export function planDraftFromOutput(output: unknown, form: { title: string; them
 
 export function generationInputFor(
   jobType: string,
-  form: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string; storyStyle?: string; storyFramework?: string },
+  form: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string; pageAspectRatio: PageAspectRatio; storyStyle?: string; storyFramework?: string },
   plan: EditablePlan,
   roles: EditableRole[],
   pages: EditablePage[],
@@ -39,6 +39,7 @@ export function generationInputFor(
     page_count: form.pageCount,
     use_scene: form.useScene,
     style: form.style,
+    page_aspect_ratio: form.pageAspectRatio,
   };
   if (form.storyStyle?.trim()) {
     base.story_style = form.storyStyle.trim();

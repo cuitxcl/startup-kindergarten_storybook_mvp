@@ -33,6 +33,7 @@ import { ActionButton, Badge, Card, ImageLightbox, Modal, Notice, PageHeader, Sk
 import type { Storybook, StorybookImageVariant, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
 import { absoluteAppUrl, copyText } from "../../utils/clipboard";
 import { cacheImagePreview, getCachedImagePreview } from "../../utils/imagePreviewCache";
+import { pageAspectCssRatio, pageAspectLabel } from "../../utils/pageAspect";
 import {
   generationErrorMessage,
   generationStatusLabel,
@@ -128,6 +129,7 @@ export function StorybookDetailPage() {
     useScene: "",
     teachingGoal: "",
     coverTone: "",
+    pageAspectRatio: "portrait_4_5" as Storybook["pageAspectRatio"],
   });
   const [imageGenerating, setImageGenerating] = useState(false);
   // 记录正在重写插图描述的页面 ID，避免切换绘本/分页后按钮状态残留。
@@ -341,8 +343,9 @@ export function StorybookDetailPage() {
       useScene: book.useScene,
       teachingGoal: book.teachingGoal,
       coverTone: book.coverTone,
+      pageAspectRatio: book.pageAspectRatio,
     });
-  }, [book?.id, book?.title, book?.visibility, book?.ageGroup, book?.useScene, book?.teachingGoal, book?.coverTone]);
+  }, [book?.id, book?.title, book?.visibility, book?.ageGroup, book?.useScene, book?.teachingGoal, book?.coverTone, book?.pageAspectRatio]);
 
   useEffect(() => {
     if (!selectedRole) return;
@@ -1115,6 +1118,7 @@ export function StorybookDetailPage() {
         useScene: metaForm.useScene,
         teachingGoal: metaForm.teachingGoal,
         coverTone: metaForm.coverTone,
+        pageAspectRatio: metaForm.pageAspectRatio,
       });
       setRemoteBook(updated);
       setMetaOpen(false);
@@ -1459,20 +1463,20 @@ export function StorybookDetailPage() {
             <Card className="preview-panel cover-preview-panel">
               <div className="cover-page-preview">
                 {coverImagePreviewUrl ? (
-                  <button className="cover-image-zoom-trigger" type="button" title="点击放大查看" onClick={() => setZoomedImage({ src: coverImagePreviewUrl, alt: currentCoverImage?.altText || `${book.title}封面图` })}>
+                  <button className="cover-image-zoom-trigger" type="button" style={{ aspectRatio: pageAspectCssRatio(book.pageAspectRatio) }} title="点击放大查看" onClick={() => setZoomedImage({ src: coverImagePreviewUrl, alt: currentCoverImage?.altText || `${book.title}封面图` })}>
                     <img src={coverImagePreviewUrl} alt={currentCoverImage?.altText || `${book.title}封面图`} />
                   </button>
                 ) : coverImagePreviewError ? (
                   <p>封面图读取失败：{coverImagePreviewError}</p>
                 ) : activeCoverImageJob ? (
-                  <div className="cover-image-placeholder">
+                  <div className="cover-image-placeholder" style={{ aspectRatio: pageAspectCssRatio(book.pageAspectRatio) }}>
                     <strong>正在生成封面图</strong>
                     <small>任务{generationStatusLabel(activeCoverImageJob.status)}，编号：{activeCoverImageJob.id.slice(0, 8)}。</small>
                   </div>
                 ) : (
-                  <div className="cover-image-placeholder">
+                  <div className="cover-image-placeholder" style={{ aspectRatio: pageAspectCssRatio(book.pageAspectRatio) }}>
                     <strong>封面图待生成</strong>
-                    <small>生成后会显示在封面主视觉位置。</small>
+                    <small>生成后会显示在{pageAspectLabel(book.pageAspectRatio)}主视觉位置。</small>
                   </div>
                 )}
                 <span>Kindleaf 绘本</span>
@@ -1509,6 +1513,7 @@ export function StorybookDetailPage() {
                 variants={coverImageVariants}
                 selectingVariantId={selectingVariantId}
                 emptyText="还没有历史封面图"
+                aspectRatio={pageAspectCssRatio(book.pageAspectRatio)}
                 onSelect={selectImageVariant}
                 onZoom={(src) => setZoomedImage({ src, alt: `${book.title} 的候选封面图` })}
               />
@@ -1598,7 +1603,7 @@ export function StorybookDetailPage() {
               <div className="preview-image-block">
                 <Badge tone="info">当前页插图结果</Badge>
                 {currentImagePreviewUrl ? (
-                  <button className="image-zoom-trigger" type="button" title="点击放大查看" onClick={() => setZoomedImage({ src: currentImagePreviewUrl, alt: currentPageImage.altText || selectedPage.title })}>
+                  <button className="image-zoom-trigger" type="button" style={{ aspectRatio: pageAspectCssRatio(book.pageAspectRatio) }} title="点击放大查看" onClick={() => setZoomedImage({ src: currentImagePreviewUrl, alt: currentPageImage.altText || selectedPage.title })}>
                     <img src={currentImagePreviewUrl} alt={currentPageImage.altText || selectedPage.title} />
                   </button>
                 ) : currentImagePreviewError ? (
@@ -1618,6 +1623,7 @@ export function StorybookDetailPage() {
               variants={pageImageVariants}
               selectingVariantId={selectingVariantId}
               emptyText="还没有历史插图"
+              aspectRatio={pageAspectCssRatio(book.pageAspectRatio)}
               onSelect={selectImageVariant}
               onZoom={(src) => setZoomedImage({ src, alt: `${selectedPage.title} 的候选插图` })}
             />

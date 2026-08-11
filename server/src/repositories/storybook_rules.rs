@@ -649,6 +649,7 @@ mod tests {
             use_scene: "规则引导".to_string(),
             teaching_goal: "学习轮流与分享".to_string(),
             cover_tone: "温暖、清楚".to_string(),
+            page_aspect_ratio: "portrait_4_5".to_string(),
             teacher_review_status: "pending".to_string(),
             teacher_reviewed_by: None,
             teacher_reviewed_at: None,

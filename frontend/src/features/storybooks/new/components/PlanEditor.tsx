@@ -1,15 +1,4 @@
-import type { EditablePlan } from "../types";
-
-type PlanEditorForm = {
-  title: string;
-  theme: string;
-  ageGroup: string;
-  pageCount: string;
-  useScene: string;
-  style: string;
-  storyStyle: string;
-  storyFramework: string;
-};
+import type { EditablePlan, StorybookRequestForm } from "../types";
 
 export function PlanEditor({
   form,
@@ -17,9 +6,9 @@ export function PlanEditor({
   onFormChange,
   onPlanChange,
 }: {
-  form: PlanEditorForm;
+  form: StorybookRequestForm;
   plan: EditablePlan;
-  onFormChange: (value: PlanEditorForm) => void;
+  onFormChange: (value: StorybookRequestForm) => void;
   onPlanChange: (plan: EditablePlan) => void;
 }) {
   return (

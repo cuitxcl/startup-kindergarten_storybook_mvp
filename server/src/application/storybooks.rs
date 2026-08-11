@@ -16,6 +16,7 @@ use crate::{
         CreateStorybookRequest, DuplicateStorybookRequest, Storybook, StorybookListQuery,
         StorybookStatus, UpdateStorybookRequest,
     },
+    page_aspect::normalize_page_aspect_ratio,
 };
 
 #[cfg(not(feature = "db"))]
@@ -92,6 +93,9 @@ pub async fn create(
                 use_scene,
                 teaching_goal,
                 cover_tone: payload.cover_tone,
+                page_aspect_ratio: Some(normalize_page_aspect_ratio(
+                    payload.page_aspect_ratio.as_deref(),
+                )),
             },
         )
         .await
@@ -135,6 +139,7 @@ pub async fn create(
             use_scene: common::required(payload.use_scene, "use_scene")?,
             teaching_goal: common::required(payload.teaching_goal, "teaching_goal")?,
             cover_tone: "温暖、清楚".to_string(),
+            page_aspect_ratio: normalize_page_aspect_ratio(payload.page_aspect_ratio.as_deref()),
             teacher_review_status: "pending".to_string(),
             teacher_reviewed_by: None,
             teacher_reviewed_at: None,
@@ -188,6 +193,9 @@ pub async fn update(
             use_scene: clean_optional(payload.use_scene, "use_scene")?,
             teaching_goal: clean_optional(payload.teaching_goal, "teaching_goal")?,
             cover_tone: clean_optional(payload.cover_tone, "cover_tone")?,
+            page_aspect_ratio: payload
+                .page_aspect_ratio
+                .map(|value| normalize_page_aspect_ratio(Some(&value))),
         };
         let book = crate::repositories::storybooks::update(
             &ctx.db,
@@ -265,6 +273,9 @@ pub async fn update(
         }
         if let Some(value) = payload.cover_tone {
             book.cover_tone = common::required(value, "cover_tone")?;
+        }
+        if let Some(value) = payload.page_aspect_ratio {
+            book.page_aspect_ratio = normalize_page_aspect_ratio(Some(&value));
         }
         book.updated_at = "刚刚".to_string();
         Ok(book.clone())

@@ -1,4 +1,4 @@
-import type { StorybookRole } from "../../../types/domain";
+import type { PageAspectRatio, StorybookRole } from "../../../types/domain";
 
 export type EditablePlan = {
   summary: string;
@@ -34,6 +34,7 @@ export type StorybookRequestForm = {
   pageCount: string;
   useScene: string;
   style: string;
+  pageAspectRatio: PageAspectRatio;
   storyStyle: string;
   storyFramework: string;
 };

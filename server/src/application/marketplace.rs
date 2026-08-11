@@ -149,6 +149,7 @@ pub async fn copy_template(
             use_scene: template.use_scene,
             teaching_goal: template.summary,
             cover_tone: "柔和、安静".to_string(),
+            page_aspect_ratio: "portrait_4_5".to_string(),
             teacher_review_status: "pending".to_string(),
             teacher_reviewed_by: None,
             teacher_reviewed_at: None,

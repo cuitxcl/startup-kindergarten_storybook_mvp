@@ -1,5 +1,7 @@
 import type { FormEvent } from "react";
 import { Modal } from "../../../../components/ui";
+import type { Storybook } from "../../../../types/domain";
+import { PAGE_ASPECT_OPTIONS } from "../../../../utils/pageAspect";
 
 export type StorybookMetaForm = {
   title: string;
@@ -7,6 +9,7 @@ export type StorybookMetaForm = {
   useScene: string;
   teachingGoal: string;
   coverTone: string;
+  pageAspectRatio: Storybook["pageAspectRatio"];
 };
 
 export function DeleteStorybookModal({
@@ -59,6 +62,23 @@ export function EditStorybookMetaModal({
           </select>
         </label>
         <label>使用场景<input value={form.useScene} onChange={(event) => onChange({ ...form, useScene: event.target.value })} /></label>
+        <div>
+          <span className="field-label">页面比例</span>
+          <div className="page-aspect-options compact">
+            {PAGE_ASPECT_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`page-aspect-option ${form.pageAspectRatio === option.value ? "active" : ""}`}
+                onClick={() => onChange({ ...form, pageAspectRatio: option.value })}
+              >
+                <span className="page-aspect-shape" style={{ aspectRatio: option.cssRatio }} aria-hidden="true" />
+                <strong>{option.label}</strong>
+                <small>{option.hint}</small>
+              </button>
+            ))}
+          </div>
+        </div>
         <label>教学目标<textarea rows={3} value={form.teachingGoal} onChange={(event) => onChange({ ...form, teachingGoal: event.target.value })} /></label>
         <label>封面风格<input value={form.coverTone} onChange={(event) => onChange({ ...form, coverTone: event.target.value })} /></label>
         <div className="modal-actions">

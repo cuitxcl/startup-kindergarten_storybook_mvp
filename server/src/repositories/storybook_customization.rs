@@ -24,8 +24,8 @@ pub async fn derive_custom(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, creator_id, created_at, updated_at)
-        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, '00000000-0000-0000-0000-000000000001', now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, $11, '00000000-0000-0000-0000-000000000001', now(), now())
         "#,
         [
             new_id.into(),
@@ -38,6 +38,7 @@ pub async fn derive_custom(
             customization.use_scene.into(),
             customization.teaching_goal.into(),
             customization.cover_tone.into(),
+            source.page_aspect_ratio.into(),
         ],
     ))
     .await?;
@@ -311,6 +312,7 @@ mod tests {
             use_scene: "规则引导".to_string(),
             teaching_goal: "学习轮流与分享".to_string(),
             cover_tone: "温暖、清楚".to_string(),
+            page_aspect_ratio: "portrait_4_5".to_string(),
             teacher_review_status: "pending".to_string(),
             teacher_reviewed_by: None,
             teacher_reviewed_at: None,

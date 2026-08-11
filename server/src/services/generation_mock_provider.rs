@@ -50,6 +50,7 @@ impl AiGenerationProvider for MockGenerationProvider {
                 "alt_text": "mock 生成图片",
                 "prompt": request.prompt,
                 "image_mode": request.image_mode.as_str(),
+                "size": request.size,
                 "reference_images": request.reference_images,
                 "edit_instruction": request.edit_instruction,
                 "strength": request.strength,

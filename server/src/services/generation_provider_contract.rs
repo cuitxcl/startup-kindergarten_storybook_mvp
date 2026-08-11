@@ -15,6 +15,7 @@ pub struct ImageGenerationRequest<'a> {
     pub edit_instruction: Option<String>,
     pub image_mode: ImageGenerationMode,
     pub strength: Option<f32>,
+    pub size: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

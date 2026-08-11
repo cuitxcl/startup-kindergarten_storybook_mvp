@@ -286,6 +286,7 @@ pub struct Storybook {
     pub use_scene: String,
     pub teaching_goal: String,
     pub cover_tone: String,
+    pub page_aspect_ratio: String,
     pub teacher_review_status: String,
     pub teacher_reviewed_by: Option<Uuid>,
     pub teacher_reviewed_at: Option<String>,
@@ -593,6 +594,7 @@ pub struct CreateStorybookRequest {
     pub teaching_goal: String,
     /// 可选：用户选择的画风描述，作为绘本级画风持久化（供角色参考图/插图拼接）。
     pub cover_tone: Option<String>,
+    pub page_aspect_ratio: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -610,6 +612,7 @@ pub struct UpdateStorybookRequest {
     pub use_scene: Option<String>,
     pub teaching_goal: Option<String>,
     pub cover_tone: Option<String>,
+    pub page_aspect_ratio: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -3,6 +3,7 @@ use serde_json::{Value as JsonValue, json};
 use uuid::Uuid;
 
 use crate::models::{CreateImageTaskRequest, GenerationJob};
+use crate::page_aspect::page_aspect_spec;
 use crate::services::generation_provider::{ImageGenerationMode, ImageReference};
 
 pub struct PageImageRequestInput {
@@ -11,6 +12,7 @@ pub struct PageImageRequestInput {
     pub edit_instruction: Option<String>,
     pub image_mode: ImageGenerationMode,
     pub strength: Option<f32>,
+    pub size: Option<String>,
 }
 
 pub struct ImageJobTarget {
@@ -32,6 +34,8 @@ pub async fn cover_image_job_input(
     payload: CreateImageTaskRequest,
 ) -> Result<JsonValue, DbErr> {
     let default_prompt = cover_prompt(db, workspace_id, storybook_id).await?;
+    let aspect_ratio = storybook_page_aspect_ratio(db, workspace_id, storybook_id).await?;
+    let aspect = page_aspect_spec(&aspect_ratio);
     let prompt = payload
         .prompt
         .clone()
@@ -46,6 +50,8 @@ pub async fn cover_image_job_input(
         "prompt": prompt,
         "mode": "storybook_cover_image",
         "image_mode": image_mode.as_str(),
+        "aspect_ratio": aspect.key,
+        "size": aspect.image_size,
         "reference_images": reference_images,
         "edit_instruction": clean_optional_text(payload.edit_instruction),
         "strength": payload.strength.map(|value| value.clamp(0.0, 1.0))
@@ -61,6 +67,8 @@ pub async fn page_image_job_input(
 ) -> Result<JsonValue, DbErr> {
     let page_prompt = page_prompt(db, workspace_id, storybook_id, page_id).await?;
     let cover_tone = storybook_cover_tone(db, workspace_id, storybook_id).await?;
+    let aspect_ratio = storybook_page_aspect_ratio(db, workspace_id, storybook_id).await?;
+    let aspect = page_aspect_spec(&aspect_ratio);
     let prompt = payload
         .prompt
         .clone()
@@ -99,7 +107,11 @@ pub async fn page_image_job_input(
     } else {
         format!("{prompt} 角色结构约束：{}。", anatomy_rules.join("；"))
     };
-    let prompt = format!("{prompt} {}", storybook_style_guard(&cover_tone));
+    let prompt = format!(
+        "{prompt} {} {}",
+        storybook_style_guard(&cover_tone),
+        aspect.prompt_clause
+    );
     // 高频或多主体描述容易让文生图模型把同一角色画成多个、拆成拼接场景；
     // 去重约束点名道姓（命中角色时），比泛指"每个角色"更有效。
     let dedup_subject = if named_roles.is_empty() {
@@ -133,6 +145,8 @@ pub async fn page_image_job_input(
         "prompt": prompt,
         "mode": "storybook_page_image",
         "image_mode": image_mode.as_str(),
+        "aspect_ratio": aspect.key,
+        "size": aspect.image_size,
         "reference_role_ids": payload.reference_role_ids,
         "reference_images": reference_images,
         "edit_instruction": edit_instruction,
@@ -216,7 +230,7 @@ async fn cover_prompt(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select title, age_group, use_scene, teaching_goal, cover_tone
+            select title, age_group, use_scene, teaching_goal, cover_tone, coalesce(page_aspect_ratio, 'portrait_4_5') as page_aspect_ratio
             from storybooks
             where workspace_id = $1 and id = $2
             limit 1
@@ -230,11 +244,13 @@ async fn cover_prompt(
     let use_scene: String = row.try_get("", "use_scene")?;
     let teaching_goal: String = row.try_get("", "teaching_goal")?;
     let cover_tone: String = row.try_get("", "cover_tone")?;
+    let page_aspect_ratio: String = row.try_get("", "page_aspect_ratio")?;
     let roles = storybook_cover_roles_for_prompt(db, storybook_id).await?;
     let story_beats = storybook_cover_story_beats(db, storybook_id).await?;
     let style_guard = storybook_style_guard(&cover_tone);
+    let aspect = page_aspect_spec(&page_aspect_ratio);
     Ok(format!(
-        "为幼儿园绘本《{title}》生成封面插图。年龄段：{age_group}；使用场景：{use_scene}；教学目标：{teaching_goal}。故事线索：{}。角色关系：{}。画面要求：{style_guard} 角色外观由参考图决定，文字提示词只负责镜头、场景、关系和情绪，不要重复设计角色外观。封面应像真实绘本封面，选择一个最能概括故事主题的完整故事瞬间，不要做成白底角色设定图、角色排排站或单纯人物合照。镜头采用竖幅封面构图，中景或中远景，主体位于画面下半部或中下部，关键道具作为视觉焦点；角色之间要有明确关系，例如共同注视、靠近、守护、分享、发现或解决问题。背景要交代故事发生地点和情绪，有前景、中景、背景层次，光线自然温暖。画面上方或左上方使用自然简洁的低细节背景区域，便于后期排标题；不要绘制白色矩形、文本框、纸片、牌匾或任何人为留白块。不要出现任何文字、标题、logo、水印或页码，文字由系统排版叠加。",
+        "为幼儿园绘本《{title}》生成封面插图。年龄段：{age_group}；使用场景：{use_scene}；教学目标：{teaching_goal}。故事线索：{}。角色关系：{}。画面要求：{style_guard} {} 角色外观由参考图决定，文字提示词只负责镜头、场景、关系和情绪，不要重复设计角色外观。封面应像真实绘本封面，选择一个最能概括故事主题的完整故事瞬间，不要做成白底角色设定图、角色排排站或单纯人物合照。镜头采用中景或中远景，关键道具作为视觉焦点；角色之间要有明确关系，例如共同注视、靠近、守护、分享、发现或解决问题。背景要交代故事发生地点和情绪，有前景、中景、背景层次，光线自然温暖。画面上方或左上方使用自然简洁的低细节背景区域，便于后期排标题；不要绘制白色矩形、文本框、纸片、牌匾或任何人为留白块。不要出现任何文字、标题、logo、水印或页码，文字由系统排版叠加。",
         if story_beats.is_empty() {
             "围绕标题、教学目标和故事主题设计一个有情境的封面瞬间".to_string()
         } else {
@@ -244,7 +260,8 @@ async fn cover_prompt(
             "根据主题自然设计".to_string()
         } else {
             roles.join("；")
-        }
+        },
+        aspect.prompt_clause
     ))
 }
 
@@ -404,6 +421,11 @@ pub fn image_request_from_job(job: &GenerationJob) -> Result<PageImageRequestInp
         .get("strength")
         .and_then(|value| value.as_f64())
         .map(|value| (value as f32).clamp(0.0, 1.0));
+    let size = job
+        .input_json
+        .get("size")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
 
     Ok(PageImageRequestInput {
         prompt,
@@ -411,6 +433,7 @@ pub fn image_request_from_job(job: &GenerationJob) -> Result<PageImageRequestInp
         edit_instruction,
         image_mode,
         strength,
+        size,
     })
 }
 
@@ -580,6 +603,26 @@ async fn storybook_cover_tone(
     .await?
     .ok_or_else(|| DbErr::RecordNotFound("storybook".to_string()))?
     .try_get("", "cover_tone")
+}
+
+async fn storybook_page_aspect_ratio(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+) -> Result<String, DbErr> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        select coalesce(page_aspect_ratio, 'portrait_4_5') as page_aspect_ratio
+        from storybooks
+        where workspace_id = $1 and id = $2
+        limit 1
+        "#,
+        [workspace_id.into(), storybook_id.into()],
+    ))
+    .await?
+    .ok_or_else(|| DbErr::RecordNotFound("storybook".to_string()))?
+    .try_get("", "page_aspect_ratio")
 }
 
 fn storybook_style_clause(cover_tone: &str) -> (String, bool) {

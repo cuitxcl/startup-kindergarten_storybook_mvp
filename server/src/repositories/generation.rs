@@ -86,6 +86,7 @@ pub async fn retry_failed_job(
                 edit_instruction: image_request.edit_instruction,
                 image_mode: image_request.image_mode,
                 strength: image_request.strength,
+                size: image_request.size,
             })
             .await
         {
@@ -549,6 +550,7 @@ async fn execute_claimed_generation_record(
                 edit_instruction: image_request.edit_instruction,
                 image_mode: image_request.image_mode,
                 strength: image_request.strength,
+                size: image_request.size,
             })
             .await
         {

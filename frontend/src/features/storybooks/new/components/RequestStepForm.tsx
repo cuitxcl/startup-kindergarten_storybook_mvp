@@ -1,5 +1,6 @@
 import { STORY_STYLE_PRESETS, STYLE_PRESETS } from "../presets";
 import type { StorybookRequestForm } from "../types";
+import { PAGE_ASPECT_OPTIONS } from "../../../../utils/pageAspect";
 
 export function RequestStepForm({
   form,
@@ -43,6 +44,25 @@ export function RequestStepForm({
           <option>区域活动延伸</option>
         </select>
       </label>
+      <div className="span-2">
+        <span className="field-label">页面比例</span>
+        <div className="page-aspect-options">
+          {PAGE_ASPECT_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`page-aspect-option ${form.pageAspectRatio === option.value ? "active" : ""}`}
+              disabled={disabled}
+              onClick={() => onChange({ pageAspectRatio: option.value })}
+            >
+              <span className="page-aspect-shape" style={{ aspectRatio: option.cssRatio }} aria-hidden="true" />
+              <strong>{option.label}</strong>
+              <small>{option.hint}</small>
+            </button>
+          ))}
+        </div>
+        <p className="form-hint">页面比例会同时影响插图生成尺寸、详情预览和 PDF 导出页面。</p>
+      </div>
       <div className="span-2">
         <span className="field-label">画面风格</span>
         <div className="style-preset-grid">

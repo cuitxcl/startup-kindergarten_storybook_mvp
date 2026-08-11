@@ -5,6 +5,7 @@ mod domains;
 mod error;
 mod local_env;
 mod models;
+mod page_aspect;
 pub(crate) mod repositories;
 mod services;
 mod state;

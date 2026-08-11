@@ -260,6 +260,7 @@ async fn create_storybooks(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
                 .col(string_null(Storybooks::UseScene))
                 .col(text_null(Storybooks::TeachingGoal))
                 .col(string_null(Storybooks::CoverTone))
+                .col(string_default(Storybooks::PageAspectRatio, "portrait_4_5"))
                 .col(uuid_null(Storybooks::CreatorId))
                 .col(ts(Storybooks::CreatedAt))
                 .col(ts(Storybooks::UpdatedAt))
@@ -608,6 +609,7 @@ enum Storybooks {
     UseScene,
     TeachingGoal,
     CoverTone,
+    PageAspectRatio,
     CreatorId,
     CreatedAt,
     UpdatedAt,

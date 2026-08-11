@@ -2,6 +2,7 @@
 
 use crate::{
     models::Storybook,
+    page_aspect::{PageAspectSpec, page_aspect_spec},
     services::pdf_images::{PdfImage, decode_png_for_pdf, image_placement, image_placement_in_box},
 };
 use std::{collections::HashMap, path::PathBuf};
@@ -28,6 +29,92 @@ const COVER_FRAME_HEIGHT: i32 = 500;
 const COVER_TEXT_TOP: i32 = 648;
 const COVER_TEXT_BOTTOM: i32 = 220;
 
+#[derive(Clone, Copy)]
+struct PdfLayout {
+    page_width: i32,
+    page_height: i32,
+    left: i32,
+    content_width: i32,
+    image_frame_x: i32,
+    image_frame_y: i32,
+    image_frame_width: i32,
+    image_frame_height: i32,
+    story_text_top: i32,
+    story_text_bottom: i32,
+    cover_frame_x: i32,
+    cover_frame_y: i32,
+    cover_frame_width: i32,
+    cover_frame_height: i32,
+    cover_text_top: i32,
+    cover_text_bottom: i32,
+}
+
+impl PdfLayout {
+    fn for_aspect(aspect: PageAspectSpec) -> Self {
+        if aspect.pdf_width == PAGE_WIDTH && aspect.pdf_height == PAGE_HEIGHT {
+            return Self {
+                page_width: PAGE_WIDTH,
+                page_height: PAGE_HEIGHT,
+                left: LEFT,
+                content_width: CONTENT_WIDTH,
+                image_frame_x: IMAGE_FRAME_X,
+                image_frame_y: IMAGE_FRAME_Y,
+                image_frame_width: IMAGE_FRAME_WIDTH,
+                image_frame_height: IMAGE_FRAME_HEIGHT,
+                story_text_top: STORY_TEXT_TOP,
+                story_text_bottom: STORY_TEXT_BOTTOM,
+                cover_frame_x: COVER_FRAME_X,
+                cover_frame_y: COVER_FRAME_Y,
+                cover_frame_width: COVER_FRAME_WIDTH,
+                cover_frame_height: COVER_FRAME_HEIGHT,
+                cover_text_top: COVER_TEXT_TOP,
+                cover_text_bottom: COVER_TEXT_BOTTOM,
+            };
+        }
+
+        let page_width = aspect.pdf_width;
+        let page_height = aspect.pdf_height;
+        let short_side = page_width.min(page_height);
+        let left = (short_side as f64 * 0.075).round() as i32;
+        let left = left.clamp(34, 54);
+        let content_width = page_width - left * 2;
+        let image_frame_x = left;
+        let image_frame_width = content_width;
+        let image_frame_height = (page_height as f64
+            * if page_width > page_height { 0.43 } else { 0.46 })
+        .round() as i32;
+        let image_frame_y = page_height - left - image_frame_height;
+        let story_text_top = image_frame_y - 30;
+        let story_text_bottom = (left + 24).min(story_text_top.saturating_sub(80));
+
+        let cover_frame_x = left;
+        let cover_frame_y = (page_height as f64 * 0.18).round() as i32;
+        let cover_frame_width = content_width;
+        let cover_frame_height = (page_height as f64 * 0.64).round() as i32;
+        let cover_text_top = cover_frame_y + cover_frame_height - 40;
+        let cover_text_bottom = cover_frame_y + 28;
+
+        Self {
+            page_width,
+            page_height,
+            left,
+            content_width,
+            image_frame_x,
+            image_frame_y,
+            image_frame_width,
+            image_frame_height,
+            story_text_top,
+            story_text_bottom,
+            cover_frame_x,
+            cover_frame_y,
+            cover_frame_width,
+            cover_frame_height,
+            cover_text_top,
+            cover_text_bottom,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Align {
     Left,
@@ -43,6 +130,7 @@ struct PdfLine {
 }
 
 struct PdfPage {
+    layout: PdfLayout,
     background: Vec<String>,
     text_top: i32,
     text_bottom: i32,
@@ -62,13 +150,22 @@ pub fn encode_storybook_pdf_with_images(
     storybook: &Storybook,
     image_paths: &HashMap<Uuid, PathBuf>,
 ) -> Vec<u8> {
-    let (pages, images) = storybook_pdf_pages(storybook, image_paths);
-    minimal_pdf(&pages, &images, &searchable_text(storybook))
+    let aspect = page_aspect_spec(&storybook.page_aspect_ratio);
+    let layout = PdfLayout::for_aspect(aspect);
+    let (pages, images) = storybook_pdf_pages(storybook, image_paths, layout);
+    minimal_pdf(
+        &pages,
+        &images,
+        &searchable_text(storybook),
+        layout.page_width,
+        layout.page_height,
+    )
 }
 
 fn storybook_pdf_pages(
     storybook: &Storybook,
     image_paths: &HashMap<Uuid, PathBuf>,
+    layout: PdfLayout,
 ) -> (Vec<PdfPage>, Vec<PdfImage>) {
     let mut images = Vec::new();
     let cover_image = image_paths
@@ -80,7 +177,7 @@ fn storybook_pdf_pages(
             images.push(image);
             index
         });
-    let mut pages = vec![cover_page(storybook, cover_image)];
+    let mut pages = vec![cover_page(storybook, cover_image, layout)];
 
     for page in &storybook.pages {
         let image = image_paths
@@ -92,13 +189,13 @@ fn storybook_pdf_pages(
                 images.push(image);
                 index
             });
-        pages.push(story_page(storybook, page, image));
+        pages.push(story_page(storybook, page, image, layout));
     }
 
     (pages, images)
 }
 
-fn cover_page(storybook: &Storybook, image: Option<usize>) -> PdfPage {
+fn cover_page(storybook: &Storybook, image: Option<usize>, layout: PdfLayout) -> PdfPage {
     let role_names = storybook
         .roles
         .iter()
@@ -149,18 +246,19 @@ fn cover_page(storybook: &Storybook, image: Option<usize>) -> PdfPage {
     }
 
     PdfPage {
-        background: cover_background(),
-        text_top: COVER_TEXT_TOP,
-        text_bottom: COVER_TEXT_BOTTOM,
+        layout,
+        background: cover_background(layout),
+        text_top: layout.cover_text_top,
+        text_bottom: layout.cover_text_bottom,
         lines,
         image_placeholder: false,
         footer: Some("Kindleaf 生成导出版".to_string()),
         image,
         image_box: Some((
-            COVER_FRAME_X as f64 + 34.0,
-            COVER_FRAME_Y as f64 + 34.0,
-            COVER_FRAME_WIDTH as f64 - 68.0,
-            260.0,
+            layout.cover_frame_x as f64 + 28.0,
+            layout.cover_frame_y as f64 + 28.0,
+            layout.cover_frame_width as f64 - 56.0,
+            (layout.cover_frame_height as f64 * 0.48).max(120.0),
         )),
     }
 }
@@ -169,6 +267,7 @@ fn story_page(
     storybook: &Storybook,
     page: &crate::models::StorybookPage,
     image: Option<usize>,
+    layout: PdfLayout,
 ) -> PdfPage {
     // 交付版 PDF 只呈现读者可见内容：页码标题、正文与插图。
     // illustration_prompt 是内部生成指令，不写入成品。
@@ -185,18 +284,30 @@ fn story_page(
         align: Align::Left,
     }));
     PdfPage {
-        background: story_page_background(),
-        text_top: STORY_TEXT_TOP,
-        text_bottom: STORY_TEXT_BOTTOM,
+        layout,
+        background: story_page_background(layout),
+        text_top: layout.story_text_top,
+        text_bottom: layout.story_text_bottom,
         lines,
         image_placeholder: image.is_none(),
         footer: Some(format!("{} / 第 {} 页", storybook.title, page.page_number)),
         image,
-        image_box: None,
+        image_box: Some((
+            layout.left as f64,
+            (layout.image_frame_y + 4) as f64,
+            layout.content_width as f64,
+            (layout.image_frame_height - 8).max(80) as f64,
+        )),
     }
 }
 
-fn minimal_pdf(pages: &[PdfPage], images: &[PdfImage], searchable_text: &str) -> Vec<u8> {
+fn minimal_pdf(
+    pages: &[PdfPage],
+    images: &[PdfImage],
+    searchable_text: &str,
+    page_width: i32,
+    page_height: i32,
+) -> Vec<u8> {
     let page_count = pages.len().max(1);
     let first_page_obj = 5usize;
     let first_content_obj = first_page_obj + page_count;
@@ -231,7 +342,7 @@ fn minimal_pdf(pages: &[PdfPage], images: &[PdfImage], searchable_text: &str) ->
             })
             .unwrap_or_default();
         objects.push(format!(
-            "{page_obj} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_WIDTH} {PAGE_HEIGHT}] /Resources << /Font << /F1 3 0 R >>{xobjects} >> /Contents {content_obj} 0 R >> endobj\n"
+            "{page_obj} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] /Resources << /Font << /F1 3 0 R >>{xobjects} >> /Contents {content_obj} 0 R >> endobj\n"
         ).into_bytes());
     }
 
@@ -311,8 +422,8 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
         content.push_str("BT\n/F1 14 Tf\n0.55 0.45 0.4 rg\n");
         content.push_str(&format!(
             "1 0 0 1 {} {} Tm\n<{}> Tj\n",
-            pdf_number(centered_x(label, 14)),
-            IMAGE_FRAME_Y + IMAGE_FRAME_HEIGHT / 2,
+            pdf_number(centered_x(label, 14, page.layout)),
+            page.layout.image_frame_y + page.layout.image_frame_height / 2,
             utf16be_hex(label)
         ));
         content.push_str("ET\n");
@@ -325,8 +436,8 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
             break;
         }
         let x = match line.align {
-            Align::Left => LEFT as f64,
-            Align::Center => centered_x(&line.text, line.size),
+            Align::Left => page.layout.left as f64,
+            Align::Center => centered_x(&line.text, line.size, page.layout),
         };
         content.push_str(&format!(
             "/F1 {} Tf\n1 0 0 1 {} {y} Tm\n",
@@ -339,7 +450,8 @@ fn page_content(page: &PdfPage, images: &[PdfImage]) -> String {
     if let Some(footer) = &page.footer {
         content.push_str("BT\n/F1 10 Tf\n0.5 0.42 0.38 rg\n");
         content.push_str(&format!(
-            "1 0 0 1 {LEFT} 36 Tm\n<{}> Tj\n",
+            "1 0 0 1 {} 36 Tm\n<{}> Tj\n",
+            page.layout.left,
             utf16be_hex(footer)
         ));
         content.push_str("ET\n");
@@ -356,8 +468,8 @@ fn estimate_text_width(text: &str, size: i32) -> f64 {
     units * size as f64
 }
 
-fn centered_x(text: &str, size: i32) -> f64 {
-    ((PAGE_WIDTH as f64 - estimate_text_width(text, size)) / 2.0).max(LEFT as f64)
+fn centered_x(text: &str, size: i32, layout: PdfLayout) -> f64 {
+    ((layout.page_width as f64 - estimate_text_width(text, size)) / 2.0).max(layout.left as f64)
 }
 
 fn pdf_number(value: f64) -> String {
@@ -372,24 +484,50 @@ fn pdf_number(value: f64) -> String {
     }
 }
 
-fn cover_background() -> Vec<String> {
+fn cover_background(layout: PdfLayout) -> Vec<String> {
     vec![
         // 暖纸底色 + 居中边框 + 标题分隔线。
-        "0.98 0.96 0.91 rg\n0 0 595 842 re f\n".to_string(),
         format!(
-            "0.72 0.33 0.28 RG\n1.5 w\n{COVER_FRAME_X} {COVER_FRAME_Y} {COVER_FRAME_WIDTH} {COVER_FRAME_HEIGHT} re S\n"
+            "0.98 0.96 0.91 rg\n0 0 {} {} re f\n",
+            layout.page_width, layout.page_height
         ),
-        "0.72 0.33 0.28 RG\n0.8 w\n220 616 m 375 616 l S\n".to_string(),
+        format!(
+            "0.72 0.33 0.28 RG\n1.5 w\n{} {} {} {} re S\n",
+            layout.cover_frame_x,
+            layout.cover_frame_y,
+            layout.cover_frame_width,
+            layout.cover_frame_height
+        ),
+        format!(
+            "0.72 0.33 0.28 RG\n0.8 w\n{} {} m {} {} l S\n",
+            layout.page_width / 2 - 78,
+            layout.cover_text_top - 32,
+            layout.page_width / 2 + 78,
+            layout.cover_text_top - 32
+        ),
     ]
 }
 
-fn story_page_background() -> Vec<String> {
+fn story_page_background(layout: PdfLayout) -> Vec<String> {
     vec![
-        "0.99 0.98 0.95 rg\n0 0 595 842 re f\n".to_string(),
-        // 插图区浅色衬底（有图时会被图片盖住，无图时作为占位底）。
-        format!("0.95 0.9 0.83 rg\n{LEFT} 440 {CONTENT_WIDTH} 330 re f\n"),
         format!(
-            "0.72 0.33 0.28 RG\n1.2 w\n{IMAGE_FRAME_X} {IMAGE_FRAME_Y} {IMAGE_FRAME_WIDTH} {IMAGE_FRAME_HEIGHT} re S\n"
+            "0.99 0.98 0.95 rg\n0 0 {} {} re f\n",
+            layout.page_width, layout.page_height
+        ),
+        // 插图区浅色衬底（有图时会被图片盖住，无图时作为占位底）。
+        format!(
+            "0.95 0.9 0.83 rg\n{} {} {} {} re f\n",
+            layout.left,
+            layout.image_frame_y + 4,
+            layout.content_width,
+            (layout.image_frame_height - 8).max(80)
+        ),
+        format!(
+            "0.72 0.33 0.28 RG\n1.2 w\n{} {} {} {} re S\n",
+            layout.image_frame_x,
+            layout.image_frame_y,
+            layout.image_frame_width,
+            layout.image_frame_height
         ),
     ]
 }
@@ -491,8 +629,10 @@ mod tests {
 
     #[test]
     fn page_content_positions_each_line_below_image_area() {
+        let layout = PdfLayout::for_aspect(page_aspect_spec("portrait_4_5"));
         let content = page_content(
             &PdfPage {
+                layout,
                 background: Vec::new(),
                 text_top: STORY_TEXT_TOP,
                 text_bottom: STORY_TEXT_BOTTOM,
@@ -527,7 +667,8 @@ mod tests {
     #[test]
     fn story_page_does_not_render_internal_illustration_prompt() {
         let storybook = test_storybook();
-        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new());
+        let layout = PdfLayout::for_aspect(page_aspect_spec(&storybook.page_aspect_ratio));
+        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new(), layout);
         let story_page = &pages[1];
         let content = page_content(story_page, &[]);
 
@@ -539,7 +680,8 @@ mod tests {
     #[test]
     fn story_page_without_image_draws_placeholder_label() {
         let storybook = test_storybook();
-        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new());
+        let layout = PdfLayout::for_aspect(page_aspect_spec(&storybook.page_aspect_ratio));
+        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new(), layout);
         let content = page_content(&pages[1], &[]);
 
         assert!(content.contains(&utf16be_hex("插图待生成")));
@@ -547,6 +689,7 @@ mod tests {
 
     #[test]
     fn text_that_overflows_page_bottom_is_clipped() {
+        let layout = PdfLayout::for_aspect(page_aspect_spec("portrait_4_5"));
         let lines = (0..30)
             .map(|_| PdfLine {
                 text: "一行正文".to_string(),
@@ -557,6 +700,7 @@ mod tests {
             .collect::<Vec<_>>();
         let content = page_content(
             &PdfPage {
+                layout,
                 background: Vec::new(),
                 text_top: STORY_TEXT_TOP,
                 text_bottom: STORY_TEXT_BOTTOM,
@@ -655,8 +799,10 @@ mod tests {
 
     #[test]
     fn page_content_uses_aspect_fit_image_transform() {
+        let layout = PdfLayout::for_aspect(page_aspect_spec("portrait_4_5"));
         let content = page_content(
             &PdfPage {
+                layout,
                 background: Vec::new(),
                 text_top: STORY_TEXT_TOP,
                 text_bottom: STORY_TEXT_BOTTOM,
@@ -682,7 +828,8 @@ mod tests {
     #[test]
     fn cover_title_is_centered() {
         let storybook = test_storybook();
-        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new());
+        let layout = PdfLayout::for_aspect(page_aspect_spec(&storybook.page_aspect_ratio));
+        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new(), layout);
         let content = page_content(&pages[0], &[]);
 
         // “Smoke 测试绘本” 宽 ≈ (6*0.55 + 4) * 30 = 219 → x ≈ (595-219)/2 = 188
@@ -717,6 +864,7 @@ mod tests {
             use_scene: "课堂共读".to_string(),
             teaching_goal: "学习轮流".to_string(),
             cover_tone: "温暖纸感".to_string(),
+            page_aspect_ratio: "portrait_4_5".to_string(),
             teacher_review_status: "pending".to_string(),
             teacher_reviewed_by: None,
             teacher_reviewed_at: None,

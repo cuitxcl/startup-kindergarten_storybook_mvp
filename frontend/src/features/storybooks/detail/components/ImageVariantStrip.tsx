@@ -9,6 +9,7 @@ export function ImageVariantStrip({
   variants,
   selectingVariantId,
   emptyText,
+  aspectRatio,
   onSelect,
   onZoom,
 }: {
@@ -16,6 +17,7 @@ export function ImageVariantStrip({
   variants: StorybookImageVariant[];
   selectingVariantId: string | null;
   emptyText: string;
+  aspectRatio?: string;
   onSelect: (variant: StorybookImageVariant) => void;
   onZoom: (src: string) => void;
 }) {
@@ -30,6 +32,7 @@ export function ImageVariantStrip({
           workspaceId={workspaceId}
           variant={variant}
           selecting={selectingVariantId === variant.id}
+          aspectRatio={aspectRatio}
           onSelect={onSelect}
           onZoom={onZoom}
         />
@@ -42,12 +45,14 @@ function ImageVariantThumb({
   workspaceId,
   variant,
   selecting,
+  aspectRatio,
   onSelect,
   onZoom,
 }: {
   workspaceId: string;
   variant: StorybookImageVariant;
   selecting: boolean;
+  aspectRatio?: string;
   onSelect: (variant: StorybookImageVariant) => void;
   onZoom: (src: string) => void;
 }) {
@@ -99,6 +104,7 @@ function ImageVariantThumb({
       <button
         type="button"
         className="image-variant-preview"
+        style={aspectRatio ? { aspectRatio } : undefined}
         disabled={!previewUrl}
         onClick={() => previewUrl && onZoom(previewUrl)}
         title={previewUrl ? "查看大图" : statusLabel}

@@ -190,6 +190,7 @@ type ApiStorybook = {
   use_scene: string;
   teaching_goal: string;
   cover_tone: string;
+  page_aspect_ratio?: Storybook["pageAspectRatio"];
   teacher_review_status?: Storybook["teacherReviewStatus"];
   teacher_reviewed_by?: string | null;
   teacher_reviewed_at?: string | null;
@@ -959,6 +960,7 @@ export async function createStorybook(
     useScene: string;
     teachingGoal: string;
     coverTone?: string;
+    pageAspectRatio?: Storybook["pageAspectRatio"];
   },
 ) {
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks`, {
@@ -969,6 +971,7 @@ export async function createStorybook(
       use_scene: payload.useScene,
       teaching_goal: payload.teachingGoal,
       cover_tone: optionalText(payload.coverTone),
+      page_aspect_ratio: payload.pageAspectRatio || "portrait_4_5",
     }),
   });
   return mapStorybook(response);
@@ -991,6 +994,7 @@ export async function updateStorybook(
     useScene?: string;
     teachingGoal?: string;
     coverTone?: string;
+    pageAspectRatio?: Storybook["pageAspectRatio"];
   },
 ) {
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}`, {
@@ -1004,6 +1008,7 @@ export async function updateStorybook(
       use_scene: optionalText(payload.useScene),
       teaching_goal: optionalText(payload.teachingGoal),
       cover_tone: optionalText(payload.coverTone),
+      page_aspect_ratio: payload.pageAspectRatio,
     }),
   });
   return mapStorybook(response);
@@ -1937,6 +1942,7 @@ function mapStorybook(book: ApiStorybook): Storybook {
     useScene: book.use_scene,
     teachingGoal: book.teaching_goal,
     coverTone: book.cover_tone,
+    pageAspectRatio: book.page_aspect_ratio || "portrait_4_5",
     teacherReviewStatus: book.teacher_review_status || "pending",
     teacherReviewedBy: book.teacher_reviewed_by || undefined,
     teacherReviewedAt: book.teacher_reviewed_at || undefined,

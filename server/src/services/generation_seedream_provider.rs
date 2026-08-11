@@ -112,10 +112,16 @@ impl AiGenerationProvider for SeedreamImageProvider {
                 GenerationProviderError::new(format!("创建 Seedream 客户端失败：{err}"))
             })?;
         let (sanitized_prompt, redaction_labels) = sanitize_image_prompt_with_audit(request.prompt);
+        let image_size = request
+            .size
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(self.size.as_str());
         let mut payload = json!({
             "model": self.model,
             "prompt": sanitized_prompt,
-            "size": self.size,
+            "size": image_size,
             "response_format": "b64_json",
             "output_format": self.output_format,
             "watermark": false,
@@ -185,6 +191,7 @@ impl AiGenerationProvider for SeedreamImageProvider {
                 "alt_text": "AI 生成的幼儿园绘本插图",
                 "prompt": sanitized_prompt,
                 "image_mode": request.image_mode.as_str(),
+                "size": image_size,
                 "reference_images": request.reference_images,
                 "edit_instruction": request.edit_instruction,
                 "strength": request.strength,

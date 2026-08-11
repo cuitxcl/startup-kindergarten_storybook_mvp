@@ -2,6 +2,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
 use uuid::Uuid;
 
 use crate::models::{CreateStorybookRequest, MarketplaceTemplate, Storybook};
+use crate::page_aspect::normalize_page_aspect_ratio;
 use crate::repositories::storybook_rules::storybook_type_name;
 
 pub async fn create_plain(
@@ -10,12 +11,13 @@ pub async fn create_plain(
     payload: CreateStorybookRequest,
 ) -> Result<Storybook, DbErr> {
     let storybook_id = Uuid::new_v4();
+    let page_aspect_ratio = normalize_page_aspect_ratio(payload.page_aspect_ratio.as_deref());
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, $7, '00000000-0000-0000-0000-000000000001', now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, $7, $8, '00000000-0000-0000-0000-000000000001', now(), now())
         "#,
         [
             storybook_id.into(),
@@ -30,6 +32,7 @@ pub async fn create_plain(
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "温暖、清楚".to_string())
                 .into(),
+            page_aspect_ratio.into(),
         ],
     ))
     .await?;
@@ -46,8 +49,8 @@ pub async fn create_from_marketplace_template(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, source_storybook_id, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'draft', 'private', 'marketplace', $3, $4, $5, $6, '柔和、安静', $7, '00000000-0000-0000-0000-000000000001', now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, source_storybook_id, creator_id, created_at, updated_at)
+        values ($1, $2, 'plain', 'draft', 'private', 'marketplace', $3, $4, $5, $6, '柔和、安静', 'portrait_4_5', $7, '00000000-0000-0000-0000-000000000001', now(), now())
         "#,
         [
             storybook_id.into(),
@@ -82,8 +85,8 @@ pub async fn duplicate(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, creator_id, created_at, updated_at)
-        values ($1, $2, $3, 'draft', 'private', 'duplicate', $4, $5, $6, $7, $8, $9, $10, '00000000-0000-0000-0000-000000000001', now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, $3, 'draft', 'private', 'duplicate', $4, $5, $6, $7, $8, $9, $10, $11, '00000000-0000-0000-0000-000000000001', now(), now())
         "#,
         [
             new_id.into(),
@@ -96,6 +99,7 @@ pub async fn duplicate(
             source.use_scene.into(),
             source.teaching_goal.into(),
             source.cover_tone.into(),
+            source.page_aspect_ratio.into(),
         ],
     ))
     .await?;

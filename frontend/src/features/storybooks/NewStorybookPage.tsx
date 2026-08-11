@@ -80,6 +80,7 @@ export function NewStorybookPage() {
     pageCount: "6",
     useScene: "规则引导",
     style: STYLE_PRESETS[0].value,
+    pageAspectRatio: "portrait_4_5",
     storyStyle: STORY_STYLE_PRESETS[0].value,
     storyFramework: "",
   });
@@ -189,6 +190,7 @@ export function NewStorybookPage() {
           pageCount: typeof input.page_count === "string" && input.page_count ? input.page_count : current.pageCount,
           useScene: typeof input.use_scene === "string" && input.use_scene ? input.use_scene : current.useScene,
           style: typeof input.style === "string" && input.style ? input.style : current.style,
+          pageAspectRatio: input.page_aspect_ratio === "landscape_16_9" || input.page_aspect_ratio === "square_1_1" || input.page_aspect_ratio === "portrait_4_5" ? input.page_aspect_ratio : current.pageAspectRatio,
           storyStyle: typeof input.story_style === "string" && input.story_style ? input.story_style : current.storyStyle,
           storyFramework: typeof input.story_framework === "string" ? input.story_framework : current.storyFramework,
         }));
@@ -272,6 +274,7 @@ export function NewStorybookPage() {
           pageCount: typeof planInput.page_count === "string" && planInput.page_count ? planInput.page_count : current.pageCount,
           useScene: typeof planInput.use_scene === "string" && planInput.use_scene ? planInput.use_scene : book.useScene || current.useScene,
           style: typeof planInput.style === "string" && planInput.style ? planInput.style : book.coverTone || current.style,
+          pageAspectRatio: planInput.page_aspect_ratio === "landscape_16_9" || planInput.page_aspect_ratio === "square_1_1" || planInput.page_aspect_ratio === "portrait_4_5" ? planInput.page_aspect_ratio : book.pageAspectRatio || current.pageAspectRatio,
           storyStyle: typeof planInput.story_style === "string" ? planInput.story_style : current.storyStyle,
           storyFramework: typeof planInput.story_framework === "string" ? planInput.story_framework : current.storyFramework,
         }));
@@ -327,6 +330,7 @@ export function NewStorybookPage() {
             pageCount: typeof activeInput.page_count === "string" && activeInput.page_count ? activeInput.page_count : current.pageCount,
             useScene: typeof activeInput.use_scene === "string" && activeInput.use_scene ? activeInput.use_scene : current.useScene,
             style: typeof activeInput.style === "string" && activeInput.style ? activeInput.style : current.style,
+            pageAspectRatio: activeInput.page_aspect_ratio === "landscape_16_9" || activeInput.page_aspect_ratio === "square_1_1" || activeInput.page_aspect_ratio === "portrait_4_5" ? activeInput.page_aspect_ratio : current.pageAspectRatio,
             storyStyle: typeof activeInput.story_style === "string" ? activeInput.story_style : current.storyStyle,
             storyFramework: typeof activeInput.story_framework === "string" ? activeInput.story_framework : current.storyFramework,
           }));
@@ -409,6 +413,7 @@ export function NewStorybookPage() {
         useScene: form.useScene,
         teachingGoal: form.theme.trim() || "帮助孩子理解班级规则和生活习惯",
         coverTone: form.style.trim(),
+        pageAspectRatio: form.pageAspectRatio,
       });
       suppressAutoRecoverRef.current = false;
       setCreatedBookId(book.id);
@@ -574,6 +579,7 @@ export function NewStorybookPage() {
       useScene: form.useScene,
       teachingGoal: form.theme.trim() || "帮助孩子理解班级规则和生活习惯",
       coverTone: form.style.trim(),
+      pageAspectRatio: form.pageAspectRatio,
     });
   };
   const generateRoleReference = async (role: EditableRole, roleIndex: number) => {
