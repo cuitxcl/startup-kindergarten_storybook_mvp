@@ -5,9 +5,9 @@ export function isActiveJobStatus(status: string) {
   return status === "queued" || status === "running";
 }
 
-export function generationErrorMessage(job: Pick<GenerationJob, "output">) {
+export function generationErrorMessage(job: Pick<GenerationJob, "output" | "lastError">) {
   const output = job.output as { error?: { message?: string } } | undefined;
-  return output?.error?.message || "生成任务失败，可稍后重试";
+  return output?.error?.message || job.lastError || "生成任务失败，可稍后重试";
 }
 
 export function generationStatusLabel(status: string) {

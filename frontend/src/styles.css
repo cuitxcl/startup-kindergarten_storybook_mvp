@@ -1626,6 +1626,31 @@ button.compact-row.active {
 .check-row input { width: auto; min-height: auto; }
 .span-2 { grid-column: 1 / -1; }
 .review-block { display: grid; gap: 14px; }
+.review-block-head-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.review-block-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.review-block-tools .button {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 0.92rem;
+}
+.review-block-tools .button.ghost {
+  color: var(--muted);
+}
+.review-block-tools .button.ghost:hover {
+  color: var(--ink);
+}
 .plan-review-summary {
   display: grid;
   gap: 18px;
@@ -1972,6 +1997,23 @@ button.compact-row.active {
   border-radius: 999px;
   padding: 5px 9px;
   background: var(--panel-soft);
+}
+.wizard-actions {
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(222, 212, 194, 0.9);
+}
+.wizard-actions > :first-child {
+  margin-right: auto;
+}
+.wizard-actions > :last-child {
+  min-width: min(100%, 320px);
+}
+.wizard-actions .button.primary,
+.wizard-actions .button.secondary,
+.wizard-actions .button.is-disabled {
+  min-height: 48px;
 }
 .review-list { display: grid; gap: 10px; }
 .review-list div { display: grid; gap: 4px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: #fff; }
@@ -2536,6 +2578,18 @@ button.compact-row.active {
     box-shadow: none;
   }
   .page-actions, .wizard-actions { justify-content: stretch; }
+  .review-block-head-actions,
+  .review-block-tools {
+    width: 100%;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  .review-block-head-actions .badge {
+    align-self: flex-start;
+  }
+  .review-block-tools .button {
+    width: auto;
+  }
   .button { width: 100%; }
   .storybook-detail-actions {
     display: flex;

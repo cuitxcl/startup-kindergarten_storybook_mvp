@@ -24,6 +24,9 @@ export function GenerationReviewBlock({
   reviewContent,
   editing = false,
   regenerating = false,
+  regenerateLabel = "重新生成",
+  editLabel = "手动修改",
+  collapseLabel = "收起编辑",
 }: {
   title: string;
   items: string[];
@@ -35,6 +38,9 @@ export function GenerationReviewBlock({
   reviewContent?: ReactNode;
   editing?: boolean;
   regenerating?: boolean;
+  regenerateLabel?: string;
+  editLabel?: string;
+  collapseLabel?: string;
 }) {
   const meta = showMeta ? generationOutputMeta(output) : null;
   const hasActions = Boolean(onRegenerate || onEdit);
@@ -48,7 +54,23 @@ export function GenerationReviewBlock({
               <h2>{title}</h2>
               <p>{meta.message}</p>
             </div>
-            <Badge tone={meta.real ? "good" : "neutral"}>{meta.real ? "真实生成" : meta.provider}</Badge>
+            <div className="review-block-head-actions">
+              {hasActions && (
+                <div className="review-block-tools">
+                  {onRegenerate && (
+                    <button className="button secondary" type="button" disabled={regenerating} onClick={onRegenerate}>
+                      {regenerating ? "生成中..." : regenerateLabel}
+                    </button>
+                  )}
+                  {onEdit && (
+                    <button className={editing ? "button ghost" : "button secondary"} type="button" onClick={onEdit}>
+                      {editing ? collapseLabel : editLabel}
+                    </button>
+                  )}
+                </div>
+              )}
+              <Badge tone={meta.real ? "good" : "neutral"}>{meta.real ? "真实生成" : meta.provider}</Badge>
+            </div>
           </div>
           <div className="review-meta">
             <span>来源：{meta.provider}</span>
@@ -67,16 +89,6 @@ export function GenerationReviewBlock({
       ) : (
         <div className="review-list">
           {items.map((item) => <div key={item}><span>确认项</span><strong>{item}</strong></div>)}
-        </div>
-      )}
-      {hasActions && (
-        <div className="inline-actions">
-          {onRegenerate && (
-            <button className="button secondary" type="button" disabled={regenerating} onClick={onRegenerate}>{regenerating ? "生成中..." : "重新生成"}</button>
-          )}
-          {onEdit && (
-            <button className="button secondary" type="button" onClick={onEdit}>{editing ? "收起修改" : "手动修改"}</button>
-          )}
         </div>
       )}
     </div>

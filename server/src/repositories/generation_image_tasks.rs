@@ -6,6 +6,14 @@ use crate::models::{CreateImageTaskRequest, GenerationJob};
 use crate::page_aspect::{image_size_for_aspect_with_fallback, page_aspect_spec};
 use crate::services::generation_provider::{ImageGenerationMode, ImageReference};
 
+#[derive(Clone, Debug)]
+struct PageNamedRole {
+    name: String,
+    role_type: String,
+    appearance: String,
+    story_function: String,
+}
+
 pub struct PageImageRequestInput {
     pub prompt: String,
     pub reference_images: Vec<ImageReference>,
@@ -84,22 +92,34 @@ pub async fn page_image_job_input(
         }
     }
     // 把本页点名角色的外观关键词注入提示词：参考图未就绪或模型没吃参考图时，形象也不漂。
-    let named_roles = page_named_role_appearances(db, storybook_id, &prompt).await?;
+    let named_roles = page_named_roles(db, storybook_id, &prompt).await?;
+    let page_story_context = page_story_context(db, workspace_id, storybook_id, page_id).await?;
     let prompt = if named_roles.is_empty() {
         prompt
     } else {
         let roster = named_roles
             .iter()
-            .map(|(name, _, appearance)| format!("{name}={appearance}"))
+            .map(|role| format!("{}={}", role.name, role.appearance))
             .collect::<Vec<_>>()
             .join("；");
         format!("{prompt} 角色外观：{roster}。")
     };
+    let prompt = if page_story_context.is_empty() {
+        prompt
+    } else {
+        format!("{prompt} 本页故事关系：{page_story_context}。")
+    };
+    let relation_clause = page_role_relation_clause(&named_roles);
+    let prompt = if relation_clause.is_empty() {
+        prompt
+    } else {
+        format!("{prompt} 角色关系与站位：{relation_clause}。")
+    };
     let anatomy_rules = named_roles
         .iter()
-        .filter_map(|(name, role_type, appearance)| {
-            let clause = role_anatomy_clause(name, role_type, appearance);
-            is_limb_free_character(name, role_type, appearance).then_some(clause)
+        .filter_map(|role| {
+            let clause = role_anatomy_clause(&role.name, &role.role_type, &role.appearance);
+            is_limb_free_character(&role.name, &role.role_type, &role.appearance).then_some(clause)
         })
         .collect::<Vec<_>>();
     let prompt = if anatomy_rules.is_empty() {
@@ -108,8 +128,9 @@ pub async fn page_image_job_input(
         format!("{prompt} 角色结构约束：{}。", anatomy_rules.join("；"))
     };
     let shot_instruction = page_camera_shot_instruction(&prompt);
+    let shot_priority = page_camera_priority_guard(&prompt);
     let prompt = format!(
-        "{shot_instruction} 原始插图描述：{prompt} {} {}",
+        "{shot_instruction} {shot_priority} 原始插图描述：{prompt} {} {}",
         storybook_style_guard(&cover_tone),
         aspect.prompt_clause
     );
@@ -120,7 +141,7 @@ pub async fn page_image_job_input(
     } else {
         named_roles
             .iter()
-            .map(|(name, _, _)| name.as_str())
+            .map(|role| role.name.as_str())
             .collect::<Vec<_>>()
             .join("、")
     };
@@ -129,10 +150,12 @@ pub async fn page_image_job_input(
     );
     let prompt = if has_scene_reference {
         format!(
-            "{prompt} 参考上一页画面保持角色、场景元素和光线连续；但本页镜头距离、主体大小、视角和构图必须以本页镜头要求为准，不要复制上一页景别。"
+            "{prompt} 参考上一页画面保持角色、场景元素和光线连续；但本页镜头距离、主体大小、视角和构图必须以本页镜头要求为准，不要复制上一页景别。最终检查：如果镜头要求和人物关系、动作、道具细节冲突，一律保镜头，不要改景别。"
         )
     } else {
-        prompt
+        format!(
+            "{prompt} 最终检查：如果镜头要求和人物关系、动作、道具细节冲突，一律保镜头，不要改景别。"
+        )
     };
     let image_mode =
         normalize_image_mode(payload.image_mode.as_deref(), !reference_images.is_empty());
@@ -696,6 +719,22 @@ fn page_camera_shot_instruction(prompt: &str) -> &'static str {
     "镜头执行：严格按照插图描述里的镜头、视角和构图重点执行，主体大小要匹配该镜头；不要把所有页面统一生成为中景。"
 }
 
+fn page_camera_priority_guard(prompt: &str) -> &'static str {
+    if prompt.contains("远景") || prompt.contains("全景") {
+        return "镜头优先级最高：必须先满足本页景别要求，再处理人物关系、动作和道具细节。若正文或细节描述与景别冲突，允许弱化眼睛、手部、表情、咬痕、触角等局部信息，也不能把镜头推近。";
+    }
+    if prompt.contains("俯视") || prompt.contains("跟随视角") {
+        return "镜头优先级最高：必须先满足本页视角要求，再处理人物关系和细节。若正文里出现不适合该视角的局部描写，可保留为故事信息，但不能改成平视或普通中景。";
+    }
+    if prompt.contains("特写") || prompt.contains("近景") || prompt.contains("中近景") {
+        return "镜头优先级最高：必须先满足本页近距离景别要求，主体应足够大。若正文里有环境、队伍或背景信息，只保留少量必要线索，不能为了交代全环境把镜头拉远。";
+    }
+    if prompt.contains("中景") {
+        return "镜头优先级最高：必须保持中景，兼顾人物关系和必要环境。不要为了脸部细节推成特写，也不要为了交代全场退成全景。";
+    }
+    "镜头优先级最高：先满足景别、视角和构图，再安排关系、动作和细节；不要让任何局部细节覆盖镜头要求。"
+}
+
 fn is_limb_free_character(name: &str, role_type: &str, appearance: &str) -> bool {
     let text = format!("{name} {role_type} {appearance}");
     [
@@ -812,16 +851,16 @@ async fn page_prompt(
 
 /// 查询本页提示词里点名角色的（名字, 类型, 外观设定）清单；没有命中则返回空 vec。
 /// 最多取 4 个，避免清单过长稀释画面描述。
-async fn page_named_role_appearances(
+async fn page_named_roles(
     db: &DatabaseConnection,
     storybook_id: Uuid,
     prompt: &str,
-) -> Result<Vec<(String, String, String)>, DbErr> {
+) -> Result<Vec<PageNamedRole>, DbErr> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select name, role_type, appearance
+            select name, role_type, appearance, story_function
             from storybook_roles
             where storybook_id = $1
             order by name asc, id asc
@@ -835,20 +874,200 @@ async fn page_named_role_appearances(
             let name = row.try_get::<String>("", "name").ok()?;
             let role_type = row.try_get::<String>("", "role_type").ok()?;
             let appearance = row.try_get::<String>("", "appearance").ok()?;
+            let story_function = row.try_get::<String>("", "story_function").ok()?;
             let name = name.trim();
             let role_type = role_type.trim();
             let appearance = appearance.trim().trim_end_matches(['。', '；', ';']);
+            let story_function = story_function.trim().trim_end_matches(['。', '；', ';']);
             (!name.is_empty() && !appearance.is_empty() && prompt.contains(name)).then(|| {
-                (
-                    name.to_string(),
-                    role_type.to_string(),
-                    appearance.to_string(),
-                )
+                PageNamedRole {
+                    name: name.to_string(),
+                    role_type: role_type.to_string(),
+                    appearance: appearance.to_string(),
+                    story_function: story_function.to_string(),
+                }
             })
         })
         .take(4)
         .collect::<Vec<_>>();
     Ok(pairs)
+}
+
+async fn page_story_context(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    page_id: Uuid,
+) -> Result<String, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            with current_page as (
+              select p.page_number, p.title, p.body
+              from storybook_pages p
+              join storybooks s on s.id = p.storybook_id
+              where s.workspace_id = $1 and s.id = $2 and p.id = $3
+              limit 1
+            ),
+            previous_page as (
+              select title, body
+              from storybook_pages
+              where storybook_id = $2
+                and page_number = (select page_number - 1 from current_page)
+              limit 1
+            ),
+            next_page as (
+              select title, body
+              from storybook_pages
+              where storybook_id = $2
+                and page_number = (select page_number + 1 from current_page)
+              limit 1
+            )
+            select
+              (select title from current_page) as current_title,
+              (select body from current_page) as current_body,
+              (select title from previous_page) as prev_title,
+              (select body from previous_page) as prev_body,
+              (select title from next_page) as next_title,
+              (select body from next_page) as next_body
+            "#,
+            [workspace_id.into(), storybook_id.into(), page_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("page".to_string()))?;
+
+    let current_title = row.try_get::<String>("", "current_title").unwrap_or_default();
+    let current_body = row.try_get::<String>("", "current_body").unwrap_or_default();
+    let prev_title = row.try_get::<Option<String>>("", "prev_title")?.unwrap_or_default();
+    let prev_body = row.try_get::<Option<String>>("", "prev_body")?.unwrap_or_default();
+    let next_title = row.try_get::<Option<String>>("", "next_title")?.unwrap_or_default();
+    let next_body = row.try_get::<Option<String>>("", "next_body")?.unwrap_or_default();
+
+    let mut parts = vec![format!(
+        "本页标题《{}》，核心情节：{}",
+        clip_prompt_text(&current_title, 18),
+        clip_prompt_text(&current_body, 52)
+    )];
+    if !prev_body.trim().is_empty() {
+        parts.push(format!(
+            "承接上一页《{}》：{}",
+            clip_prompt_text(&prev_title, 18),
+            clip_prompt_text(&prev_body, 40)
+        ));
+    }
+    if !next_body.trim().is_empty() {
+        parts.push(format!(
+            "为下一页《{}》做铺垫：{}",
+            clip_prompt_text(&next_title, 18),
+            clip_prompt_text(&next_body, 40)
+        ));
+    }
+    Ok(parts.join("；"))
+}
+
+fn page_role_relation_clause(named_roles: &[PageNamedRole]) -> String {
+    if named_roles.is_empty() {
+        return String::new();
+    }
+    let protagonist = named_roles
+        .iter()
+        .find(|role| role.role_type == "protagonist")
+        .map(|role| role.name.as_str());
+    let teacher = named_roles
+        .iter()
+        .find(|role| role.role_type == "teacher")
+        .map(|role| role.name.as_str());
+    let supporting = named_roles
+        .iter()
+        .filter(|role| role.role_type == "supporting" || role.role_type == "peer")
+        .map(|role| role.name.as_str())
+        .collect::<Vec<_>>();
+    let props = named_roles
+        .iter()
+        .filter(|role| role.role_type == "prop")
+        .map(|role| role.name.as_str())
+        .collect::<Vec<_>>();
+
+    let mut parts: Vec<String> = named_roles
+        .iter()
+        .map(|role| format!("{}：{}", role.name, clip_prompt_text(&role.story_function, 36)))
+        .collect();
+
+    if let Some(name) = protagonist {
+        parts.push(format!(
+            "{name}是本页视觉主角，构图中心优先围绕{name}展开，其余角色围绕{name}形成明确互动，不要平均分散站位"
+        ));
+    }
+    if let (Some(protagonist), Some(teacher)) = (protagonist, teacher) {
+        parts.push(format!(
+            "{teacher}与{protagonist}之间要有清晰的引导或回应关系，可用注视、靠近、弯腰、陪伴、示范等动作表现"
+        ));
+    }
+    if let Some(protagonist) = protagonist.filter(|_| !supporting.is_empty()) {
+        parts.push(format!(
+            "{}与{}之间必须表现具体关系，例如一起观察、请求回应、鼓励帮助、对话或协作，不要只是并排站立",
+            protagonist,
+            supporting.join("、")
+        ));
+    }
+    if let Some(protagonist) = protagonist.filter(|_| !props.is_empty()) {
+        parts.push(format!(
+            "{}与关键道具{}要有明确物理关系，如拿着、指向、背着、递给、围着观察或共同注视，避免道具漂浮在背景里",
+            protagonist,
+            props.join("、")
+        ));
+    }
+    parts.push("角色之间要有远近、朝向和遮挡层次，明确谁靠前、谁靠后、谁在看谁、谁在回应谁".to_string());
+    parts.join("；")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PageNamedRole, page_camera_priority_guard, page_role_relation_clause};
+
+    #[test]
+    fn page_role_relation_clause_emphasizes_relationships_and_staging() {
+        let clause = page_role_relation_clause(&[
+            PageNamedRole {
+                name: "图图".to_string(),
+                role_type: "protagonist".to_string(),
+                appearance: "小狐狸".to_string(),
+                story_function: "面对灰灰的不合理要求，从不敢拒绝到学会勇敢说不".to_string(),
+            },
+            PageNamedRole {
+                name: "灰灰".to_string(),
+                role_type: "supporting".to_string(),
+                appearance: "小灰狼".to_string(),
+                story_function: "向图图提出要求，推动冲突".to_string(),
+            },
+            PageNamedRole {
+                name: "兔老师".to_string(),
+                role_type: "teacher".to_string(),
+                appearance: "兔子老师".to_string(),
+                story_function: "引导图图表达内心，帮助他建立规则意识".to_string(),
+            },
+            PageNamedRole {
+                name: "布书包".to_string(),
+                role_type: "prop".to_string(),
+                appearance: "浅蓝色布书包".to_string(),
+                story_function: "象征不合理请求".to_string(),
+            },
+        ]);
+
+        assert!(clause.contains("图图是本页视觉主角"));
+        assert!(clause.contains("兔老师与图图之间要有清晰的引导或回应关系"));
+        assert!(clause.contains("图图与灰灰之间必须表现具体关系"));
+        assert!(clause.contains("图图与关键道具布书包要有明确物理关系"));
+        assert!(clause.contains("谁靠前、谁靠后、谁在看谁、谁在回应谁"));
+    }
+
+    #[test]
+    fn page_camera_priority_guard_keeps_wide_shots_above_local_details() {
+        let guard = page_camera_priority_guard("儿童绘本插图，全景，老师弯腰看着孩子，孩子眼睛亮晶晶。");
+        assert!(guard.contains("镜头优先级最高"));
+        assert!(guard.contains("也不能把镜头推近"));
+    }
 }
 
 async fn role_reference_prompt(

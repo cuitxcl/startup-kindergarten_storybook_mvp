@@ -249,6 +249,33 @@ async fn deepseek_provider_parses_real_http_response() {
 }
 
 #[tokio::test]
+async fn deepseek_provider_accepts_valid_json_even_if_charset_header_is_wrong() {
+    let body = r#"{"choices":[{"message":{"content":"{\"plan\":{\"title\":\"排队喝水\",\"theme\":\"排队喝水\",\"age_group\":\"4-5 岁\",\"summary\":\"孩子们学会轮流接水。\",\"page_count\":2,\"outline\":[{\"page_range\":\"1\",\"goal\":\"进入场景\",\"beat\":\"孩子来到水杯架前\"},{\"page_range\":\"2\",\"goal\":\"理解秩序\",\"beat\":\"大家轮流接水\"}],\"role_requirements\":[\"主角儿童\"],\"review_points\":[\"教学目标是否准确\"]}}"}}]}"#;
+    let base_url =
+        spawn_http_server_with_content_type(body.as_bytes(), "application/json; charset=gbk");
+    let provider = DeepSeekTextProvider {
+        api_key: Some("test-key".to_string()),
+        base_url,
+        endpoint_path: "/chat/completions".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        timeout_seconds: 45,
+        max_tokens: 4096,
+    };
+
+    let output = provider
+        .generate(GenerationRequest {
+            job_type: "storybook_plan",
+            input: &json!({"theme": "排队喝水"}),
+        })
+        .await
+        .expect("provider should parse JSON from bytes even when charset header is wrong");
+
+    assert_eq!(output["provider"], "deepseek");
+    assert_eq!(output["mode"], "storybook_plan");
+    assert_eq!(output["plan"]["title"], "排队喝水");
+}
+
+#[tokio::test]
 async fn seedream_provider_parses_real_http_image_response() {
     let body = format!(
         r#"{{"data":[{{"b64_json":"{}"}}]}}"#,
@@ -1365,7 +1392,7 @@ fn deepseek_pages_payload_uses_lower_temperature() {
         .expect("pages payload should be built");
     assert_eq!(pages_payload["temperature"], json!(0.35));
     assert!(
-        pages_payload["max_tokens"].as_u64().unwrap_or_default() >= 32768,
+        pages_payload["max_tokens"].as_u64().unwrap_or_default() >= 16384,
         "storybook_pages should reserve enough output budget for complete page JSON"
     );
 
@@ -1508,6 +1535,30 @@ fn spawn_http_server(body: &str) -> String {
                 body
             );
             let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+
+    format!("http://{}", addr)
+}
+
+fn spawn_http_server_with_content_type(body: &[u8], content_type: &str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind local test server");
+    let addr = listener.local_addr().expect("local addr");
+    let body = body.to_vec();
+    let content_type = content_type.to_string();
+
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = [0u8; 4096];
+            let _ = stream.read(&mut buffer);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                content_type,
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body);
             let _ = stream.flush();
         }
     });

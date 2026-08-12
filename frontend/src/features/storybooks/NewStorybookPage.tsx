@@ -250,6 +250,11 @@ export function NewStorybookPage() {
           const latestSucceededJob = latestByType.get(job.jobType);
           return !latestSucceededJob || Date.parse(job.createdAt) > Date.parse(latestSucceededJob.createdAt);
         });
+        const failedJob = wizardJobs.find((job) => {
+          if (job.status !== "failed") return false;
+          const latestSucceededJob = latestByType.get(job.jobType);
+          return !latestSucceededJob || Date.parse(job.createdAt) > Date.parse(latestSucceededJob.createdAt);
+        });
         // 需求表单以最近一次方案任务的 input 为准（含画风、故事风格、故事框架、页数），
         // 绘本记录兜底，保证刷新后需求页恢复原填内容而不是默认值。
         const planInput = ((planJob?.input || {}) as Record<string, unknown>);
@@ -307,6 +312,16 @@ export function NewStorybookPage() {
                 ? "已载入上次确认的绘本方案，可继续生成角色与道具。"
                 : "这本绘本还没有生成记录，请从需求开始。",
         });
+        if (failedJob) {
+          const failedStep = failedJob.jobType === "storybook_pages" ? 2 : failedJob.jobType === "storybook_roles" ? 1 : 0;
+          goToStep(Math.max(restoredStep, failedStep));
+          setRetryJob(failedJob);
+          setNotice({
+            title: `${generationJobTypeLabel[failedJob.jobType] || "生成"}失败`,
+            copy: `${generationErrorMessage(failedJob)}。任务编号：${failedJob.id.slice(0, 8)}。`,
+          });
+          return;
+        }
         if (activeJob) {
           const activeInput = (activeJob.input || {}) as Record<string, unknown>;
           setForm((current) => ({
@@ -822,9 +837,9 @@ export function NewStorybookPage() {
               onToggleStyleCards={() => setStyleCardsExpanded((value) => !value)}
             />
           )}
-          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} reviewContent={<PlanReviewSummary form={form} plan={planDraft} />} editor={<><PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
-          {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} editor={<><RoleEditor workspaceId={workspace.id} storybookId={createdBookId || resumeBookId || undefined} roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} onGenerateReference={generateRoleReference} onRolesRefresh={setEditableRoles} roleReferenceBusyId={roleReferenceBusyId} variantRefreshKey={roleVariantRefreshKey} /><p className="form-hint">修改会先保存到绘本；需要跨页一致的角色可在本页生成参考图。</p></>} />}
-          {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} editor={<><PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} /><p className="form-hint">修改在重新生成时生效；离开页面前请点「重新生成」。</p></>} />}
+          {step === 1 && <GenerationReviewBlock showMeta title="绘本方案" output={generationOutputs.storybook_plan} items={storybookPlanItems(generationOutputs.storybook_plan, form, planDraft)} regenerating={generatingStep === "storybook_plan"} onRegenerate={() => void regeneratePlanWithCascade()} onEdit={() => setEditingReview(editingReview === "plan" ? null : "plan")} editing={editingReview === "plan"} regenerateLabel="重新生成方案" editLabel="展开编辑" collapseLabel="收起编辑" reviewContent={<PlanReviewSummary form={form} plan={planDraft} />} editor={<><PlanEditor form={form} plan={planDraft} onFormChange={setForm} onPlanChange={setPlanDraft} /><p className="form-hint">修改在重新生成方案后生效；确认方向没问题，再继续下一步。</p></>} />}
+          {step === 2 && <GenerationReviewBlock showMeta title="角色与关键道具" output={generationOutputs.storybook_roles} items={storybookRoleItems(generationOutputs.storybook_roles, currentRoles, planDraft, form)} regenerating={generatingStep === "storybook_roles"} onRegenerate={() => runGeneration("storybook_roles", "已重新生成角色")} onEdit={() => setEditingReview(editingReview === "roles" ? null : "roles")} editing={editingReview === "roles"} regenerateLabel="重新生成角色" editLabel="展开编辑" collapseLabel="收起编辑" editor={<><RoleEditor workspaceId={workspace.id} storybookId={createdBookId || resumeBookId || undefined} roles={currentRoles.length ? currentRoles : roleDraftsFromPlan(planDraft, form)} onChange={setEditableRoles} onGenerateReference={generateRoleReference} onRolesRefresh={setEditableRoles} roleReferenceBusyId={roleReferenceBusyId} variantRefreshKey={roleVariantRefreshKey} /><p className="form-hint">修改会先保存到绘本；需要跨页一致的角色可在这里生成参考图。</p></>} />}
+          {step === 3 && <GenerationReviewBlock showMeta title="分页图文" output={generationOutputs.storybook_pages} items={storybookPageItems(generationOutputs.storybook_pages, currentPages, planDraft, form)} regenerating={generatingStep === "storybook_pages"} onRegenerate={() => runGeneration("storybook_pages", "已重新生成分页")} onEdit={() => setEditingReview(editingReview === "pages" ? null : "pages")} editing={editingReview === "pages"} regenerateLabel="重新生成分页" editLabel="展开编辑" collapseLabel="收起编辑" editor={<><PageEditor pages={currentPages.length ? currentPages : pageDraftsFromPlan(planDraft, form)} onChange={setEditablePages} roles={currentRoles} /><p className="form-hint">修改会先保存为当前草稿；如需让系统按新内容重写，请点击上方“重新生成分页”。</p></>} />}
           {step === 4 && (
             <div className="preview-complete">
               <Badge tone="info">编辑中</Badge>

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 use serde_json::{Value as JsonValue, json};
 
@@ -41,7 +41,7 @@ impl DeepSeekTextProvider {
             base_url: first_non_empty_env(&["DEEPSEEK_BASE_URL"], "https://api.deepseek.com"),
             endpoint_path: first_non_empty_env(&["DEEPSEEK_ENDPOINT_PATH"], "/chat/completions"),
             model: first_non_empty_env(&["DEEPSEEK_MODEL"], "deepseek-v4-flash"),
-            timeout_seconds: env_u64("DEEPSEEK_TIMEOUT_SECONDS", 180),
+            timeout_seconds: env_u64("DEEPSEEK_TIMEOUT_SECONDS", 300),
             max_tokens: env_u64("DEEPSEEK_MAX_TOKENS", 16384),
         }
     }
@@ -133,7 +133,7 @@ impl DeepSeekTextProvider {
 
     fn max_tokens_for_job(&self, job_type: &str) -> u64 {
         if matches!(job_type, "storybook_pages") {
-            env_u64("DEEPSEEK_PAGES_MAX_TOKENS", self.max_tokens.max(32768))
+            env_u64("DEEPSEEK_PAGES_MAX_TOKENS", self.max_tokens.max(16384))
         } else if matches!(job_type, "storybook_page_prompt") {
             env_u64(
                 "DEEPSEEK_PAGE_PROMPT_MAX_TOKENS",
@@ -166,7 +166,7 @@ impl DeepSeekTextProvider {
             })?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|err| {
+        let body = response.bytes().await.map_err(|err| {
             GenerationProviderError::retryable(format!(
                 "读取 DeepSeek 响应失败（可能响应超时或连接中断）：{err}"
             ))
@@ -175,12 +175,16 @@ impl DeepSeekTextProvider {
         if !status.is_success() {
             return Err(GenerationProviderError::retryable(format!(
                 "DeepSeek 请求返回 {status}：{}",
-                truncate(&body, 240)
+                truncate(&lossy_body(&body), 240)
             )));
         }
 
-        let response_json: JsonValue = serde_json::from_str(&body).map_err(|err| {
-            GenerationProviderError::new(format!("DeepSeek 响应不是合法 JSON：{err}"))
+        let response_json: JsonValue = serde_json::from_slice(&body).map_err(|err| {
+            GenerationProviderError::new(format!(
+                "DeepSeek 响应不是合法 JSON：{}；body={}",
+                err,
+                truncate(&lossy_body(&body), 240)
+            ))
         })?;
         let content = response_json["choices"]
             .as_array()
@@ -226,6 +230,10 @@ impl DeepSeekTextProvider {
             },
         }
     }
+}
+
+fn lossy_body(body: &[u8]) -> Cow<'_, str> {
+    String::from_utf8_lossy(body)
 }
 
 impl AiGenerationProvider for DeepSeekTextProvider {
@@ -488,6 +496,21 @@ pub(crate) fn format_deepseek_endpoint(base_url: &str, endpoint_path: &str) -> S
 }
 
 /// 分页图文与单页重写的插图槽位写法指引，保持同一套标准。
+const COMPACT_ILLUSTRATION_SLOT_GUIDE: &str = r#"每页 illustration 必须输出 7 个短槽位：camera、scene_state、contact_chain、crowd、action、expression、prop_detail。
+
+输出长度：title 不超过 14 个中文字符；body 不超过 90 个中文字符；每个插图槽位不超过 45 个中文字符，避免长句和重复点名。
+
+镜头规则：camera 必须以景别开头（远景、全景、中景、中近景、近景、特写、局部特写、俯视、跟随视角）。远景/全景必须写“角色全身较小、环境占主画面”，不能同时要求看清微小细节；发现小虫、叶片纹理、表情、手部动作或两人交流时，优先近景、中近景、特写或局部特写。整本要有主体大小、视角、前后景层次变化，禁止连续多页实际都是中景。
+
+角色规则：只使用 input.confirmed_roles.name 中的完整名称，不要简称、改名或创造昵称。每页有名角色最多 3 个；同一个有名角色在 illustration 全部槽位合计最多点名 2 次，把动作和表情集中写。背景群体只写数量和位置，不逐一命名。
+
+动作规则：尊重角色外观结构。有手、前爪、脚或翅膀才写对应动作；无手脚、蛇形、球形或道具形态角色，只写头部朝向、身体弯曲、尾部、整体移动、光泽或位置变化，不得新增手脚、手臂、腿、鞋子或手指。
+
+连续性：同一事件内地点、时间、群体规模不能突变；相邻页出现的人群可以换位置或退后，但不能无原因消失。
+
+禁止写法：不要写“背景虚化”“背景模糊”“柔焦”“略显”“并排站”“面无表情”“证件照”；不要写风格词，风格由系统统一拼接；画面中不要出现文字。"#;
+
+#[allow(dead_code)]
 const ILLUSTRATION_SLOT_GUIDE: &str = "每页的插图设定必须输出为 illustration 对象，按以下 7 个槽位分别填写，槽位之间不要重复内容：\n- camera：镜头与构图，一句话以景别开头（远景、全景、中景、中近景、近景、特写、局部特写、俯视或跟随视角），再写构图重点和主体大小关系（例如远景=角色全身较小、环境占主画面，不能要求看清微小物件细节；近景或特写=适合发现小虫、叶片纹理、表情和手部动作；俯视=从上方看清空间关系）；根据本页剧情功能选择镜头，尽量让整本有自然变化，禁止连续几页实际都写成中景。\n- scene_state：场景此刻正在发生什么，必须写状态而不是场景名词；有群体时必须写出密度（身体紧紧挨着、你推我搡、卡成一团）。\n- contact_chain：主角与周围角色之间的接触和遮挡关系，例如“身后的小熊被人群推着贴上小猫的背”；主角必须被写进关系里，不能孤立在人群之外。\n- crowd：在场群体交代，必须写明画面里除主要角色外还有哪些人、在画面什么位置（例如“后排还有五六只小动物踮脚张望，门口小路上仍有人赶来”）；如果故事此刻处于人群场景中（拥挤、排队、一群），本页人群必须仍在场，可以退到后排或让出画面中心，但不能凭空消失；确实只剩少量角色时，必须写明原因（例如“其他小动物已经进教室了，门口只剩小猫和小兔”）；背景群体只用数量词和位置概括（例如“后排还有几只小动物”），不要给背景角色逐一分配动作、表情或外观细节。\n- action：主要角色的动作，必须写成身体语言，且必须尊重 input.confirmed_roles 中的外观结构；有手、前爪、脚或翅膀的角色可以写扒着、挥动、扶着、抱住、捂住、指向等具体动作；如果角色外观写明无手、无脚、蛇形、球形或道具形态，禁止硬写手脚动作，改用头部朝向、身体弯曲、尾部、整体移动、光芒变化或位置变化表达动作。\n- expression：主要角色的表情，必须写成具体五官细节（眉头紧皱、眼睛瞪圆、嘴巴张成 O 形）；如果角色没有五官，只写可见材质、光泽、姿态或位置变化；禁止只写“慌张”“着急”“开心”这类总结词。\n- prop_detail：一个增强现场感的小道具细节，例如“地上有一只被挤掉的小书包”；没有合适的就填空字符串。\n\n跨页连续性：同一事件内，地点、时间和在场群体规模不得突变；前一页出现的人群在后一页必须仍在场（可以换位置、退到后排），次要角色可以换位但不能整群蒸发。\n\n镜头节奏建议：按故事需要安排景别，不要为了凑规则牺牲画面表达。开篇只有在需要建立大地点或群体关系时才用远景或全景，并必须写出环境占比和角色较小；如果本页核心是发现小虫、观察叶片、看清表情、手部动作或两个角色交流，优先使用近景、中近景、特写或局部特写，不要硬写远景；中段必须让主体大小、视角或前后景层次有明显差异；收尾可以用远景、全景、中景或其他能表达结果与情绪的视角。拥挤、排队、争抢、密集互动场面可优先中近景；安静交流、发现线索、俯看地图等场景可以使用更贴切的镜头。\n\n分镜节奏参考：可以参考“开篇建立场景、中段推进动作与情绪、结尾收束结果”的节奏，但不强制套用固定模板；如果连续几页确实是同一类互动，可以保持相近景别，只要每页构图重点清楚。\n\n角色预算：每页有名角色（input.confirmed_roles 里的角色）最多 3 个，主角加 1~2 个互动对象，其余角色退为背景群体；同一个有名角色在全部槽位合计最多出现 2 次，把它的动作、表情集中写进同一组描述，不要在多个槽位反复点名，文生图模型会把反复点名的角色画成多个。\n\n情绪翻译词库（必须先把情绪翻译成身体语言再写）：着急=身体前倾+眉头紧锁；慌张=眼睛瞪圆+后仰失衡；开心=眯起笑眼+嘴角上扬；拥挤=身体紧挨+相互遮挡+你推我搡。对于无手脚、蛇形或道具角色，只能使用符合其结构的身体语言，不得新增手、脚、手臂、腿或鞋子。\n\n禁止写法（出现即视为不合格）：“背景虚化”“背景模糊”“柔焦”“略显”“并排站”“面无表情”“人群最前面”“证件照”；禁止只写场景名词而不写场景状态；禁止给无手脚角色写手、脚、胳膊、腿、鞋子或手指。风格不用你写，由系统统一拼接，不要在任何槽位里写风格描述或“绘本风格”字样。\n\n合格示例（仅作写法示范，实际输出必须使用 input.confirmed_roles 里的角色）：\ncamera：全景，画面从幼儿园门口和小路展开，一群小动物挤在木门前相互遮挡\nscene_state：早晨送园高峰，小动物们身体紧紧挨着、你推我搡卡在门口，小路上还有人赶来\ncontact_chain：橘色条纹小猫被夹在人群中间，身后的小熊被推着贴上他的背；白色小兔紧挨着小猫，长耳朵被旁边的小动物压歪\ncrowd：门口还有五六只小动物踮脚张望排在后面，小路上仍有两三只小动物赶来\naction：小猫踮起脚尖、肩膀前倾、扒着门把手往门缝里挤；小兔被挤得踉跄前倾、前爪慌乱挥舞\nexpression：小猫眉头紧皱、胡须绷直；小兔眼睛瞪圆、嘴巴张成 O 形\nprop_detail：地上有一只被挤掉的粉色书包\n\n无手脚角色示例（仅作写法示范）：\ncamera：近景，画面聚焦蛇形角色抬头和前方发光果实\nscene_state：蛇形角色停在草地边缘，身体微微盘起，前方有一颗发光果实\ncontact_chain：蛇形角色靠近果实，尾部留在草叶旁作为支撑\ncrowd：周围没有其他角色\naction：蛇形角色抬起头，身体弯成柔和 S 形，尾端轻轻贴着草地向前滑动\nexpression：蛇形角色眼睛睁圆、嘴角微微上扬\nprop_detail：果实旁有几片被光照亮的叶子\n\n安静场景对照示例（非拥挤剧情用这种简洁写法，有名角色少、构图单一焦点）：\ncamera：中景，画面聚焦窗边桌面和两个角色的安静互动\nscene_state：午后安静的活动室，小猫坐在窗边拼图，阳光落在桌面上\ncontact_chain：小兔侧身挨着小猫坐下，一只前爪轻轻搭在小猫背上\ncrowd：其他小动物已经去午睡区了，教室里只剩小猫和小兔\naction：小猫低头捏起一块拼图，指尖对准缺口轻轻放下\nexpression：小猫眯起笑眼、嘴角上扬；小兔耳朵放松垂下、眼睛弯成弧线\nprop_detail：桌角放着一杯冒着热气的温水";
 
 pub(crate) fn prompt_for(job_type: &str) -> String {
@@ -501,10 +524,10 @@ pub(crate) fn prompt_for(job_type: &str) -> String {
                 .to_string()
         }
         "storybook_pages" => {
-            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角。\n\n{ILLUSTRATION_SLOT_GUIDE}")
+            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
         }
         "storybook_page_prompt" => {
-            format!("根据 input.page 的标题（title）和正文（body），为这一页重新创作插图设定，替换现有插图描述。正文必须忠于 input.page.body，不要改动剧情。必须严格沿用 input.confirmed_roles 中的角色姓名、身份、外观和关键道具，不得把人类角色改成动物或新增替代主角。\n\ninput.neighbor_pages 包含前后相邻页的插图描述（可能为空）：本页必须与相邻页保持场景连续，相邻页出现的人群在本页必须仍在场（可以退到后排或让出画面中心，但不能消失）；如果剧情确实让人群散去了，必须在 crowd 槽位写明人群去了哪里。\n\n{ILLUSTRATION_SLOT_GUIDE}")
+            format!("根据 input.page 的标题（title）和正文（body），为这一页重新创作插图设定，替换现有插图描述。正文必须忠于 input.page.body，不要改动剧情。必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。\n\ninput.neighbor_pages 包含前后相邻页的插图描述（可能为空）：本页必须与相邻页保持场景连续，相邻页出现的人群在本页必须仍在场（可以退到后排或让出画面中心，但不能消失）；如果剧情确实让人群散去了，必须在 crowd 槽位写明人群去了哪里。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
         }
         "customization_plan" => {
             "基于普通绘本和儿童档案生成定制方案，只输出可审核的改写点和风险检查。"

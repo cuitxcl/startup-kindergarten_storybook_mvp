@@ -903,11 +903,6 @@ export function StorybookDetailPage() {
       await refreshPageImageVariants(sourceBook.id, persistedPage.id);
       await refreshStorybook(sourceBook.id);
       await refreshGenerationJobs(sourceBook.id);
-      setNotice({
-        title: "真实插图生成已开始",
-        copy: `当前页已加入生图队列，完成后这里会自动刷新。任务编号：${job.id.slice(0, 8)}。`,
-        tone: "info",
-      });
     } catch (err) {
       setNotice({ title: "插图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
