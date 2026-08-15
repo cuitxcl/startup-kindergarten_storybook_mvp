@@ -83,10 +83,19 @@ import {
   roleReferenceStatusLabel,
   shareExpiryLabel,
   shareExpiryToIso,
+  teacherReviewLabel,
   visibilityLabel,
 } from "./detail/helpers";
 
 const COVER_PAGE_ID = "__cover__";
+type BulkImageStep = {
+  id: string;
+  label: string;
+  kind: "cover" | "page";
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+  jobId?: string;
+  error?: string;
+};
 
 export function StorybookDetailPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
@@ -132,6 +141,8 @@ export function StorybookDetailPage() {
     pageAspectRatio: "portrait_4_5" as Storybook["pageAspectRatio"],
   });
   const [imageGenerating, setImageGenerating] = useState(false);
+  const [bulkImageGenerating, setBulkImageGenerating] = useState(false);
+  const [bulkImageSteps, setBulkImageSteps] = useState<BulkImageStep[]>([]);
   // 记录正在重写插图描述的页面 ID，避免切换绘本/分页后按钮状态残留。
   const [promptRewritingPageId, setPromptRewritingPageId] = useState<string | null>(null);
   const [currentImagePreviewUrl, setCurrentImagePreviewUrl] = useState("");
@@ -175,18 +186,18 @@ export function StorybookDetailPage() {
     ...(book.pages.length ? [] : ["至少需要一个分页"]),
     ...(book.roles.length ? [] : ["至少需要一个角色或道具设定"]),
     ...(book.pages.some((page) => page.status === "generating") ? ["仍有插图正在生成"] : []),
+    ...(book.pages.some((page) => page.status === "draft") ? ["仍有分页插图未生成"] : []),
     ...(book.pages.some((page) => page.status === "failed") ? ["存在插图生成失败的分页"] : []),
+    ...(book.pages.some((page) => page.status === "needs_regeneration") ? ["存在待重新生成插图的分页"] : []),
   ] : [];
-  const deliveryWarnings = book ? [
-    ...(book.pages.some((page) => page.status === "needs_regeneration") ? ["有页面需要重绘，可先交付文字版，也建议稍后补图"] : []),
-  ] : [];
+  const deliveryWarnings: string[] = [];
   const canDeliver =
     Boolean(book && book.id === storybookId && (book.status === "exportable" || book.status === "listed"));
   const canMarkDeliverable =
     Boolean(book && book.id === storybookId && (book.status === "editing" || book.status === "image_pending") && deliveryBlockers.length === 0);
   const quality = book ? book.quality || buildLocalStorybookQuality(book) : undefined;
   const reviewDeliveryReminder = book && book.teacherReviewStatus !== "confirmed"
-    ? "这本绘本还没有老师复核记录，建议先点击“老师已复核”后再交付；如需演示仍可继续导出或分享。"
+    ? "这本绘本还没有人工复核记录，建议先确认已复核后再导出或分享。"
     : "";
   const qualityDeliveryBlocker = quality?.status === "blocked"
     ? "生成质量检查存在阻断项，请先修正后再导出或创建分享链接。"
@@ -213,6 +224,8 @@ export function StorybookDetailPage() {
     : "";
   const routeResultNotice = resultNoticeFromSearch(location.search);
   const visibleNotice = notice || routeResultNotice;
+  const activePageImageJobs = book?.pages.filter((page) => activePageImageJob(generationJobs, page.id)).length || 0;
+  const shouldShowBulkImageAction = Boolean(book?.pages.length && (book.status === "editing" || book.status === "image_pending"));
 
   useEffect(() => {
     workspaceMainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
@@ -483,9 +496,35 @@ export function StorybookDetailPage() {
     }
     : fallbackPageImage;
   const currentPageImageJobId = selectedPageImageJobId || currentPageImageJob?.id;
-  const imageActionBusy = imageGenerating || Boolean(activeCurrentPageImageJob);
+  const imageActionBusy = imageGenerating || bulkImageGenerating || Boolean(activeCurrentPageImageJob);
   const shouldShowImageGenerationAction = Boolean(!selectedViewIsCover && selectedPage);
   const promptRewriting = promptRewritingPageId !== null && promptRewritingPageId === selectedPage?.id;
+  const missingCoverImage = !currentCoverImage && !activeCoverImageJob;
+  const missingPageImages = book?.pages.filter((page) => page.status !== "ready" && !activePageImageJob(generationJobs, page.id)) || [];
+  const bulkImageTotal = (missingCoverImage ? 1 : 0) + missingPageImages.length;
+  const activeAnyImageJob = Boolean(activeCoverImageJob || activePageImageJobs);
+  const readyPageCount = book?.pages.filter((page) => page.status === "ready").length || 0;
+  const issuePageCount = book?.pages.filter((page) => page.status === "failed" || page.status === "needs_regeneration").length || 0;
+  const reviewMaterialLabels = book ? [
+    book.useScene,
+    book.ageGroup,
+    book.teachingGoal,
+    ...book.roles.slice(0, 3).map((role) => role.name),
+  ].filter(Boolean) : [];
+  const reviewPanelStatus = canDeliver
+    ? "作品完成"
+    : shouldShowBulkImageAction && bulkImageTotal > 0
+      ? "待补插图"
+      : issuePageCount > 0
+        ? "需处理"
+        : "验收中";
+  const reviewPanelTone = canDeliver
+    ? "good"
+    : issuePageCount > 0
+      ? "warn"
+      : shouldShowBulkImageAction && bulkImageTotal > 0
+        ? "info"
+        : "neutral";
 
   useEffect(() => {
     if (!currentPageImage) {
@@ -584,7 +623,7 @@ export function StorybookDetailPage() {
         setSelectedPageId(COVER_PAGE_ID);
         if (job.status === "failed") {
           setRetryImageJob(job);
-          setNotice({ title: "封面图生成失败", copy: `${generationErrorMessage(job)}。任务编号：${job.id.slice(0, 8)}。`, tone: "info" });
+          setNotice({ title: "封面图生成失败", copy: `${generationErrorMessage(job)}。可以重新生成封面图。`, tone: "info" });
           return;
         }
         setRetryImageJob(null);
@@ -621,11 +660,11 @@ export function StorybookDetailPage() {
         setSelectedPageId(currentPageId);
         if (job.status === "failed") {
           setRetryImageJob(job);
-          setNotice({ title: "插图生成失败", copy: `${generationErrorMessage(job)}。任务编号：${job.id.slice(0, 8)}。`, tone: "info" });
+          setNotice({ title: "插图生成失败", copy: `${generationErrorMessage(job)}。可以重新生成这一页。`, tone: "info" });
           return;
         }
         setRetryImageJob(null);
-        setNotice({ title: "真实插图已生成", copy: `任务${generationStatusLabel(job.status)}，当前页结果已刷新。`, tone: "good" });
+        setNotice({ title: "真实插图已生成", copy: `当前页结果已刷新。`, tone: "good" });
       })
       .catch((err) => {
         if (active) {
@@ -646,7 +685,7 @@ export function StorybookDetailPage() {
     const referenceJobId = generationJobIdFromImageUrl(selectedRole.referenceImageUrl);
     if (!referenceJobId) {
       setRoleReferencePreviewUrl("");
-      setRoleReferencePreviewError("角色参考图地址缺少生成任务编号");
+      setRoleReferencePreviewError("角色参考图暂时无法读取");
       return;
     }
     const cached = getCachedImagePreview(referenceJobId);
@@ -736,7 +775,7 @@ export function StorybookDetailPage() {
       });
       await refreshGenerationJobs(book.id);
       await refreshStorybook(book.id);
-      setNotice({ title: "角色设定已保存", copy: `${updated.name} 的外观设定已写入后端，参考图提示词会自动跟随外观更新。`, tone: "good" });
+      setNotice({ title: "角色设定已保存", copy: `${updated.name} 的外观设定已更新，后续画面会按新的设定生成。`, tone: "good" });
       setRetryImageJob(null);
     } catch (err) {
       setNotice({ title: "角色保存失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
@@ -783,7 +822,7 @@ export function StorybookDetailPage() {
       if (settledJob.status === "queued" || settledJob.status === "running") {
         setNotice({
           title: "参考图仍在生成",
-          copy: `任务${generationStatusLabel(settledJob.status)}，完成前会持续显示为生成中。任务编号：${settledJob.id.slice(0, 8)}。`,
+          copy: `当前${generationStatusLabel(settledJob.status)}，完成前会持续显示为生成中。`,
           tone: "info",
         });
         return;
@@ -795,7 +834,7 @@ export function StorybookDetailPage() {
       if (settledJob.status === "failed") {
         setNotice({
           title: "角色参考图生成失败",
-          copy: `${generationErrorMessage(settledJob)}。任务编号：${settledJob.id.slice(0, 8)}。`,
+          copy: `${generationErrorMessage(settledJob)}。可以稍后重新生成参考图。`,
           tone: "info",
         });
         return;
@@ -842,7 +881,7 @@ export function StorybookDetailPage() {
       if (settledJob.status === "queued" || settledJob.status === "running") {
         setNotice({
           title: "插图描述仍在重写",
-          copy: `任务${generationStatusLabel(settledJob.status)}，完成后可刷新查看。任务编号：${settledJob.id.slice(0, 8)}。`,
+          copy: `当前${generationStatusLabel(settledJob.status)}，完成后可刷新查看。`,
           tone: "info",
         });
         return;
@@ -850,7 +889,7 @@ export function StorybookDetailPage() {
       if (settledJob.status === "failed") {
         setNotice({
           title: "插图描述重写失败",
-          copy: `${generationErrorMessage(settledJob)}。任务编号：${settledJob.id.slice(0, 8)}。`,
+          copy: `${generationErrorMessage(settledJob)}。可以稍后重新调整这一页。`,
           tone: "info",
         });
         return;
@@ -921,13 +960,112 @@ export function StorybookDetailPage() {
       await refreshGenerationJobs(book.id);
       setNotice({
         title: "封面图生成已开始",
-        copy: `封面页已加入生图队列，完成后这里会自动刷新。任务编号：${job.id.slice(0, 8)}。`,
+        copy: "封面页已开始生成，完成后这里会自动刷新。",
         tone: "info",
       });
     } catch (err) {
       setNotice({ title: "封面图生成失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
       setImageGenerating(false);
+    }
+  }
+
+  async function generateAllImages() {
+    if (!book) return;
+    const coverNeeded = missingCoverImage;
+    const pagesToGenerate = missingPageImages;
+    const steps: BulkImageStep[] = [
+      ...(coverNeeded ? [{ id: COVER_PAGE_ID, label: "封面图", kind: "cover" as const, status: "pending" as const }] : []),
+      ...pagesToGenerate.map((page) => ({
+        id: page.id,
+        label: `第 ${page.pageNumber} 页`,
+        kind: "page" as const,
+        status: "pending" as const,
+      })),
+    ];
+    if (!steps.length) {
+      setNotice({ title: "整本插图已完成", copy: "封面和所有分页都有可用插图，可以继续浏览验收并完成作品。", tone: "good" });
+      return;
+    }
+
+    const updateStep = (id: string, patch: Partial<BulkImageStep>) => {
+      setBulkImageSteps((current) => current.map((step) => step.id === id ? { ...step, ...patch } : step));
+    };
+    const waitForImageJob = (job: GenerationJob) => pollGenerationJob(workspace.id, job, {
+      timeoutMs: 300_000,
+      onUpdate: (current) => setGenerationJobs((jobs) => [current, ...jobs.filter((item) => item.id !== current.id)]),
+    });
+
+    setBulkImageGenerating(true);
+    setRetryImageJob(null);
+    setBulkImageSteps(steps);
+    setNotice({
+      title: "开始生成整本插图",
+      copy: `将依次生成 ${steps.length} 张图片，完成后自动刷新绘本。`,
+      tone: "info",
+    });
+
+    let latestBook = book;
+    try {
+      if (coverNeeded) {
+        updateStep(COVER_PAGE_ID, { status: "running" });
+        const job = await createCoverImageTask(workspace.id, latestBook.id);
+        updateStep(COVER_PAGE_ID, { jobId: job.id });
+        setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+        const settled = await waitForImageJob(job);
+        if (settled.status === "failed") {
+          updateStep(COVER_PAGE_ID, { status: "failed", error: generationErrorMessage(settled) });
+          setRetryImageJob(settled);
+          throw new Error(`封面图生成失败：${generationErrorMessage(settled)}`);
+        }
+        updateStep(COVER_PAGE_ID, { status: "done" });
+        await refreshCoverImageVariants(latestBook.id);
+        latestBook = await refreshStorybook(latestBook.id) || latestBook;
+        await refreshGenerationJobs(latestBook.id);
+      }
+
+      for (const page of pagesToGenerate) {
+        const currentPage = latestBook.pages.find((item) => item.id === page.id) || page;
+        if (currentPage.status === "ready") {
+          updateStep(page.id, { status: "skipped" });
+          continue;
+        }
+        updateStep(page.id, { status: "running" });
+        const referenceRoles = latestBook.roles.filter((role) => role.needsConsistency && role.referenceImageUrl);
+        const job = await createPageImageTask(workspace.id, latestBook.id, currentPage.id, {
+          prompt: currentPage.illustrationPrompt,
+          referenceRoleIds: referenceRoles.map((role) => role.id),
+          imageMode: referenceRoles.length ? "reference_image" : "text_to_image",
+        });
+        updateStep(page.id, { jobId: job.id });
+        setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+        const settled = await waitForImageJob(job);
+        if (settled.status === "failed") {
+          updateStep(page.id, { status: "failed", error: generationErrorMessage(settled) });
+          setRetryImageJob(settled);
+          throw new Error(`第 ${currentPage.pageNumber} 页插图生成失败：${generationErrorMessage(settled)}`);
+        }
+        updateStep(page.id, { status: "done" });
+        latestBook = await refreshStorybook(latestBook.id) || latestBook;
+        await refreshGenerationJobs(latestBook.id);
+      }
+
+      await refreshCoverImageVariants(latestBook.id);
+      if (selectedPage?.id) await refreshPageImageVariants(latestBook.id, selectedPage.id);
+      setRetryImageJob(null);
+      setNotice({
+        title: "整本插图已生成",
+        copy: "封面和分页插图已刷新，可以逐页检查并完成作品。",
+        tone: "good",
+      });
+    } catch (err) {
+      setNotice({
+        title: "整本插图生成中断",
+        copy: err instanceof Error ? err.message : "请稍后重试。",
+        tone: "info",
+      });
+    } finally {
+      setBulkImageGenerating(false);
     }
   }
 
@@ -952,7 +1090,7 @@ export function StorybookDetailPage() {
     try {
       const canceled = await cancelGenerationJob(workspace.id, job.id);
       setGenerationJobs((jobs) => jobs.map((item) => item.id === canceled.id ? canceled : item));
-      setNotice({ title: "已取消生成任务", copy: "这条生成任务不会继续执行，可以按需重新发起生成。", tone: "good" });
+      setNotice({ title: "已取消生成", copy: "这次生成不会继续执行，可以按需重新发起生成。", tone: "good" });
     } catch (err) {
       setNotice({ title: "取消失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
@@ -1003,7 +1141,7 @@ export function StorybookDetailPage() {
   async function exportPdf() {
     if (!book) return;
     if (!canDeliver) {
-      setNotice({ title: "还不能导出", copy: "请先完成编辑并将绘本标记为可交付，再创建 PDF 导出。", tone: "info" });
+      setNotice({ title: "还不能导出", copy: "请先完成编辑和整本验收，再创建 PDF 导出。", tone: "info" });
       return;
     }
     if (qualityDeliveryBlocker) {
@@ -1063,14 +1201,14 @@ export function StorybookDetailPage() {
   async function markDeliverable() {
     if (!book) return;
     if (deliveryBlockers.length) {
-      setNotice({ title: "暂不能标记可交付", copy: deliveryBlockers.join("；"), tone: "info" });
+      setNotice({ title: "暂不能完成作品", copy: deliveryBlockers.join("；"), tone: "info" });
       return;
     }
     setDeliverySaving(true);
     try {
       const updated = await updateStorybook(workspace.id, book.id, { status: "exportable" });
       setRemoteBook(updated);
-      setNotice({ title: "绘本已标记可交付", copy: `《${updated.title}》现在可导出 PDF，也可作为定制绘本母本。`, tone: "good" });
+      setNotice({ title: "作品已完成", copy: `《${updated.title}》现在可以导出 PDF、分享给家庭，也可作为定制绘本母本。`, tone: "good" });
     } catch (err) {
       setNotice({ title: "状态更新失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
     } finally {
@@ -1151,7 +1289,7 @@ export function StorybookDetailPage() {
   async function createShare() {
     if (!book) return;
     if (!canDeliver) {
-      setNotice({ title: "还不能分享", copy: "请先完成编辑并将绘本标记为可交付，再创建家庭分享链接。", tone: "info" });
+      setNotice({ title: "还不能分享", copy: "请先完成编辑和整本验收，再创建家庭分享链接。", tone: "info" });
       return;
     }
     if (qualityDeliveryBlocker) {
@@ -1240,26 +1378,30 @@ export function StorybookDetailPage() {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow={book.type === "plain" ? "普通绘本详情" : "定制绘本详情"}
+        eyebrow={book.type === "plain" ? "专属故事验收" : "定制故事验收"}
         title={book.title}
-        copy={`${book.teachingGoal}。${storybookSourceLabel(book)}。归属：${workspace.name}`}
+        copy={`浏览整本作品，只编辑或重画不满意的页面。${storybookSourceLabel(book)}。归属：${workspace.name}`}
         actionClassName="storybook-detail-actions"
         className="storybook-detail-header"
         actions={
           <>
             {/* 主操作：按状态只保留一个 */}
-            {canDeliver ? (
+            {shouldShowBulkImageAction && bulkImageTotal > 0 ? (
+              <ActionButton className="button primary" disabled={bulkImageGenerating || imageGenerating || activeAnyImageJob} disabledHint={activeAnyImageJob ? "已有插图正在生成，请稍候" : undefined} onClick={generateAllImages}>
+                {bulkImageGenerating ? "生成插图中..." : `一键生成插图${bulkImageTotal ? `（${bulkImageTotal} 张）` : ""}`}
+              </ActionButton>
+            ) : canDeliver ? (
               <ActionButton className="button primary" disabled={exporting || !canStartDelivery} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || (exporting ? "导出进行中" : undefined)} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</ActionButton>
             ) : (book.status === "editing" || book.status === "image_pending") ? (
-              <ActionButton className="button primary" disabled={deliverySaving || !canMarkDeliverable} disabledHint={deliveryBlockers.join("；") || "请等待当前绘本加载完成"} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "标记可交付"}</ActionButton>
+              <ActionButton className="button primary" disabled={deliverySaving || !canMarkDeliverable} disabledHint={deliveryBlockers.join("；") || "请等待当前绘本加载完成"} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "全部看过，完成作品"}</ActionButton>
             ) : (
-              <button className="button primary" type="button" onClick={scrollToWorkspace}>继续处理分页</button>
+              <button className="button primary" type="button" onClick={scrollToWorkspace}>继续验收</button>
             )}
             {/* 次操作 */}
             {canDeliver ? (
-              <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享</ActionButton>
+              <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享链接</ActionButton>
             ) : (book.status === "editing" || book.status === "image_pending") ? (
-              <button className="button secondary" type="button" onClick={scrollToWorkspace}>继续处理分页</button>
+              <button className="button secondary" type="button" onClick={scrollToWorkspace}>逐页检查</button>
             ) : null}
             {/* 其余操作收敛进更多菜单 */}
             <div className="more-menu">
@@ -1392,33 +1534,36 @@ export function StorybookDetailPage() {
                   <p>{selectedRoleReferenceGenerating ? "参考图任务还在生成，完成后会写回角色并用于后续分页插图。" : selectedRoleNeedsReference ? "先确认角色参考图，再生成分页插图，可以显著提高跨页形象一致性。" : selectedRole.referenceImageUrl ? "这个角色或道具当前没有跨页重复出现，已有历史参考图不会用于分页插图。" : "这个角色或道具当前没有跨页重复出现，不需要单独生成参考图。"}</p>
                 </div>
               </div>
-              <ImageVariantStrip
-                workspaceId={workspace.id}
-                variants={roleImageVariants}
-                selectingVariantId={selectingVariantId}
-                emptyText="还没有历史参考图"
-                onSelect={selectImageVariant}
-                onZoom={(src) => setZoomedImage({ src, alt: `${selectedRole.name} 的候选参考图` })}
-              />
-              {selectedRoleNeedsReference ? (
-                <div className="reference-prompt-preview">
-                  <div>
-                    <strong>参考图生成依据</strong>
-                    <span>由角色名称、视觉类型和外观设定自动生成；故事作用不参与参考图，避免把剧情动作画进角色标准照。</span>
+              <details className="section-tools">
+                <summary>历史候选图和生成依据</summary>
+                <ImageVariantStrip
+                  workspaceId={workspace.id}
+                  variants={roleImageVariants}
+                  selectingVariantId={selectingVariantId}
+                  emptyText="还没有历史参考图"
+                  onSelect={selectImageVariant}
+                  onZoom={(src) => setZoomedImage({ src, alt: `${selectedRole.name} 的候选参考图` })}
+                />
+                {selectedRoleNeedsReference ? (
+                  <div className="reference-prompt-preview">
+                    <div>
+                      <strong>参考图生成依据</strong>
+                      <span>由角色名称、视觉类型和外观设定自动生成；故事作用不参与参考图，避免把剧情动作画进角色标准照。</span>
+                    </div>
+                    <details className="prompt-details">
+                      <summary>查看生成依据</summary>
+                      <p>{roleReferencePromptPreview}</p>
+                    </details>
                   </div>
-                  <details className="prompt-details">
-                    <summary>查看完整生成提示词</summary>
-                    <p>{roleReferencePromptPreview}</p>
-                  </details>
-                </div>
-              ) : (
-                <div className="reference-prompt-preview muted">
-                  <div>
-                    <strong>无需生成参考图</strong>
-                    <span>当前只按分页里的插图描述生成画面；如果后续这个角色跨页重复出现，再开启参考图。</span>
+                ) : (
+                  <div className="reference-prompt-preview muted">
+                    <div>
+                      <strong>无需生成参考图</strong>
+                      <span>当前只按分页里的插图描述生成画面；如果后续这个角色跨页重复出现，再开启参考图。</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </details>
               </section>
               <section className="share-section">
                 <div className="inline-actions editor-actions modal-editor-actions share-actions">
@@ -1433,10 +1578,75 @@ export function StorybookDetailPage() {
         </Modal>
       )}
 
+      <Card className="completion-review-panel">
+        <div className="completion-review-head">
+          <div>
+            <Badge tone={reviewPanelTone}>{reviewPanelStatus}</Badge>
+            <h2>{canDeliver ? "作品已准备好预览、导出或分享" : "浏览整本作品，只处理不满意的页面"}</h2>
+            <p>建议至少预览封面和第 1 页，再完成作品、导出或分享。</p>
+          </div>
+        </div>
+        <div className="completion-review-stats">
+          <div>
+            <span>插图完成</span>
+            <strong>{readyPageCount} / {book.pages.length} 页</strong>
+          </div>
+          <div>
+            <span>待处理</span>
+            <strong>{bulkImageTotal + issuePageCount} 项</strong>
+          </div>
+          <div>
+            <span>人工复核</span>
+            <strong>{teacherReviewLabel(book.teacherReviewStatus)}</strong>
+          </div>
+        </div>
+        <div className="completion-review-footer">
+          <div className="completion-review-materials" aria-label="故事素材">
+            <span>这本故事使用了</span>
+            {reviewMaterialLabels.slice(0, 6).map((label) => (
+              <Badge key={label} tone="neutral">{label}</Badge>
+            ))}
+          </div>
+          {book.teacherReviewStatus !== "confirmed" && (
+            <ActionButton className="button secondary" disabled={reviewSaving || quality?.status === "blocked"} disabledHint={quality?.status === "blocked" ? "质量检查仍有阻断项，请先修正" : undefined} onClick={() => saveTeacherReview("confirmed")}>
+              <CheckCircle2 size={16} />{reviewSaving ? "记录中..." : "确认已人工复核"}
+            </ActionButton>
+          )}
+        </div>
+      </Card>
+
       <div className="workspace-section-head">
-        <p className="eyebrow">本页工作台</p>
-        <h2>逐页检查内容与插图</h2>
+        <p className="eyebrow">验收工作台</p>
+        <h2>逐页检查与调整</h2>
       </div>
+      {(bulkImageSteps.length > 0 || (shouldShowBulkImageAction && bulkImageTotal > 0)) && (
+        <Card className="bulk-image-progress-card">
+          <div className="bulk-image-progress-head">
+            <div>
+              <Badge tone={bulkImageGenerating ? "info" : bulkImageSteps.some((step) => step.status === "failed") ? "danger" : bulkImageTotal > 0 ? "neutral" : "good"}>
+                {bulkImageGenerating ? "生成中" : bulkImageSteps.some((step) => step.status === "failed") ? "需要处理" : bulkImageTotal > 0 ? "待生成" : "已完成"}
+              </Badge>
+              <h2>{bulkImageTotal > 0 ? "一键生成整本插图" : "整本插图已准备好"}</h2>
+              <p>{bulkImageTotal > 0 ? "会依次生成封面和缺少插图的分页，生成后可继续逐页检查。" : "封面和分页都有插图，可以继续验收、导出或分享。"}</p>
+            </div>
+          </div>
+          {bulkImageSteps.length > 0 ? (
+            <ol>
+              {bulkImageSteps.map((step) => (
+                <li key={step.id} className={step.status}>
+                  <span>{bulkImageStepIcon(step.status)}</span>
+                  <div>
+                    <strong>{step.label}</strong>
+                    <small>{bulkImageStepCopy(step)}</small>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="task-summary">待生成：{missingCoverImage ? "封面图" : ""}{missingCoverImage && missingPageImages.length ? "、" : ""}{missingPageImages.length ? `${missingPageImages.length} 页分页插图` : ""}。</p>
+          )}
+        </Card>
+      )}
       <section className="detail-layout" id="page-workspace">
         <aside className="page-strip">
           <h2>页面</h2>
@@ -1499,7 +1709,7 @@ export function StorybookDetailPage() {
               </div>
               {currentCoverImage?.prompt && (
                 <details className="prompt-details">
-                  <summary>查看完整封面生成提示词</summary>
+                  <summary>查看封面生成依据</summary>
                   <p>{currentCoverImage.prompt}</p>
                 </details>
               )}
@@ -1544,7 +1754,7 @@ export function StorybookDetailPage() {
               </div>
               {!pageEditorOpen && (
                 <button className="button secondary" type="button" onClick={() => setPageEditorOpen(true)}>
-                  编辑本页
+                  编辑文字
                 </button>
               )}
             </div>
@@ -1577,11 +1787,11 @@ export function StorybookDetailPage() {
             )}
             {activeCurrentPageImageJob ? (
               <div className="preview-image-block">
-                <Badge tone="info">当前页插图任务</Badge>
+                <Badge tone="info">当前页插图生成中</Badge>
                 <div className="image-placeholder-note">
                   <strong>正在生成真实插图</strong>
                   <span>
-                    任务{generationStatusLabel(activeCurrentPageImageJob.status)}，请稍等。任务编号：{activeCurrentPageImageJob.id.slice(0, 8)}。
+                    当前{generationStatusLabel(activeCurrentPageImageJob.status)}，请稍等。
                   </span>
                 </div>
                 <details className="prompt-details prompt-details-compact">
@@ -1607,7 +1817,7 @@ export function StorybookDetailPage() {
                   <p>正在读取当前登录态下的插图文件。</p>
                 )}
                 <details className="prompt-details">
-                  <summary>查看完整生成提示词</summary>
+                  <summary>查看生成依据</summary>
                   <p>{currentPageImage.prompt}</p>
                 </details>
                 <small>{currentPageImage.styleNotes.join(" · ")}</small>
@@ -1636,6 +1846,9 @@ export function StorybookDetailPage() {
                   onClick={generateIllustration}
                 >
                   {pageImageActionLabel(selectedPage.status, imageActionBusy)}
+                </button>
+                <button className="button secondary mobile-inline-page-edit" type="button" onClick={() => setPageEditorOpen(true)}>
+                  编辑文字
                 </button>
               </div>
             )}
@@ -1694,21 +1907,24 @@ export function StorybookDetailPage() {
               )}
             </div>
             {shouldShowImageGenerationAction && !pageEditorOpen && (
-              <div className="rewrite-prompt-action">
-                <div>
-                  <strong>想先优化画面描述？</strong>
-                  <span>让 AI 根据本页正文重新整理插图描述，确认后再去插图区域重绘。</span>
+              <details className="section-tools">
+                <summary>插图修正工具</summary>
+                <div className="rewrite-prompt-action">
+                  <div>
+                    <strong>想先优化画面描述？</strong>
+                    <span>让 AI 根据本页正文重新整理插图描述，确认后再去插图区域重绘。</span>
+                  </div>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={promptRewriting || imageActionBusy}
+                    title="让 AI 基于本页正文重新创作插图描述"
+                    onClick={rewritePagePrompt}
+                  >
+                    {promptRewriting ? "AI 重写中..." : "AI 重写插图描述"}
+                  </button>
                 </div>
-                <button
-                  className="button secondary"
-                  type="button"
-                  disabled={promptRewriting || imageActionBusy}
-                  title="让 AI 基于本页正文重新创作插图描述"
-                  onClick={rewritePagePrompt}
-                >
-                  {promptRewriting ? "AI 重写中..." : "AI 重写插图描述"}
-                </button>
-              </div>
+              </details>
             )}
           </Card>
           </aside>
@@ -1754,4 +1970,19 @@ export function StorybookDetailPage() {
       )}
     </div>
   );
+}
+
+function bulkImageStepIcon(status: BulkImageStep["status"]) {
+  if (status === "done" || status === "skipped") return "✓";
+  if (status === "failed") return "!";
+  if (status === "running") return "...";
+  return "·";
+}
+
+function bulkImageStepCopy(step: BulkImageStep) {
+  if (step.status === "done") return "已生成";
+  if (step.status === "failed") return step.error || "生成失败，可重试";
+  if (step.status === "skipped") return "已有插图，已跳过";
+  if (step.status === "running") return "正在生成";
+  return "等待生成";
 }

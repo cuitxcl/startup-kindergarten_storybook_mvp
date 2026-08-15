@@ -85,14 +85,12 @@ export function ChildrenPage() {
     let mounted = true;
     setLoading(true);
     if (offset === 0) {
-        setRemoteRows([]);
-        setIntakeLinks([]);
-        setPageMeta(null);
-        setIntakeLinkMeta(null);
-        if (canManageParentIntakes) setClassroomOptions([]);
-        if (intakeOffset === 0) {
-          setIntakes([]);
-          setIntakeMeta(null);
+      setRemoteRows([]);
+      setPageMeta(null);
+      if (canManageParentIntakes) setClassroomOptions([]);
+      if (intakeOffset === 0) {
+        setIntakes([]);
+        setIntakeMeta(null);
       }
     }
     setError("");
@@ -101,19 +99,11 @@ export function ChildrenPage() {
       canManageParentIntakes
         ? listParentIntakesPage(workspace.id, { classroom: classroomFilter || undefined, limit: PAGE_SIZE, offset: intakeOffset })
         : Promise.resolve({ data: intakes, meta: intakeMeta }),
-      offset === 0 && canManageParentIntakes && intakeLinkOffset === 0
-        ? listParentIntakeLinksPage(workspace.id, {
-            status: intakeLinkStatus || undefined,
-            classroom: classroomFilter || undefined,
-            limit: PAGE_SIZE,
-            offset: 0,
-          })
-        : Promise.resolve(null),
       offset === 0 && canManageParentIntakes
         ? listClassroomsPage(workspace.id, { limit: 100, offset: 0 })
         : Promise.resolve(null),
     ])
-      .then(([page, intakePage, intakeLinkPage, classroomPage]) => {
+      .then(([page, intakePage, classroomPage]) => {
         if (!mounted) return;
         setRemoteRows((current) => (
           offset === 0
@@ -127,10 +117,6 @@ export function ChildrenPage() {
             : [...current, ...intakePage.data.filter((intake) => !current.some((item) => item.id === intake.id))]
         ));
         setIntakeMeta(intakePage.meta);
-        if (intakeLinkPage) {
-          setIntakeLinks(intakeLinkPage.data);
-          setIntakeLinkMeta(intakeLinkPage.meta);
-        }
         if (classroomPage) {
           setClassroomOptions(classroomPage.data.filter((item) => item.status === "active"));
         }
@@ -141,10 +127,8 @@ export function ChildrenPage() {
         if (offset === 0) {
           setRemoteRows([]);
           setIntakes([]);
-          setIntakeLinks([]);
           setPageMeta(null);
           setIntakeMeta(null);
-          setIntakeLinkMeta(null);
         }
         setError(err instanceof Error ? err.message : "无法读取儿童档案");
       })
@@ -154,7 +138,46 @@ export function ChildrenPage() {
     return () => {
       mounted = false;
     };
-  }, [canManageParentIntakes, classroomFilter, intakeLinkStatus, intakeOffset, offset, workspace.id]);
+  }, [canManageParentIntakes, classroomFilter, intakeOffset, offset, workspace.id]);
+
+  useEffect(() => {
+    if (!canManageParentIntakes) return;
+    let mounted = true;
+    setIntakeLinkLoading(true);
+    if (intakeLinkOffset === 0) {
+      setIntakeLinks([]);
+      setIntakeLinkMeta(null);
+    }
+    listParentIntakeLinksPage(workspace.id, {
+      status: intakeLinkStatus || undefined,
+      classroom: classroomFilter || undefined,
+      limit: PAGE_SIZE,
+      offset: intakeLinkOffset,
+    })
+      .then((page) => {
+        if (!mounted) return;
+        setIntakeLinks((current) => (
+          intakeLinkOffset === 0
+            ? page.data
+            : [...current, ...page.data.filter((link) => !current.some((item) => item.id === link.id))]
+        ));
+        setIntakeLinkMeta(page.meta);
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        if (intakeLinkOffset === 0) {
+          setIntakeLinks([]);
+          setIntakeLinkMeta(null);
+        }
+        showNotice(err instanceof Error ? err.message : "资料链接加载失败，请稍后重试。", "danger");
+      })
+      .finally(() => {
+        if (mounted) setIntakeLinkLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [canManageParentIntakes, classroomFilter, intakeLinkOffset, intakeLinkStatus, workspace.id]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -238,17 +261,6 @@ export function ChildrenPage() {
     setNotice(null);
     try {
       const nextOffset = intakeLinkMeta.offset + intakeLinkMeta.limit;
-      const page = await listParentIntakeLinksPage(workspace.id, {
-        status: intakeLinkStatus || undefined,
-        classroom: classroomFilter || undefined,
-        limit: PAGE_SIZE,
-        offset: nextOffset,
-      });
-      setIntakeLinks((current) => [
-        ...current,
-        ...page.data.filter((link) => !current.some((item) => item.id === link.id)),
-      ]);
-      setIntakeLinkMeta(page.meta);
       setIntakeLinkOffset(nextOffset);
     } catch (err) {
       showNotice(err instanceof Error ? err.message : "资料链接加载失败，请稍后重试。", "danger");
@@ -319,7 +331,6 @@ export function ChildrenPage() {
           <h2>资料越完整，定制绘本越稳定</h2>
           <p>优先补齐兴趣、特质和关注点，生成时会用于角色、道具和情节改写。</p>
         </div>
-        {addButton}
       </section>
       <section className="metric-grid">
         {summaryItems.map((item) => (
@@ -341,7 +352,13 @@ export function ChildrenPage() {
                 {intakeLinkMeta ? ` 已显示 ${intakeLinks.length} / 共 ${intakeLinkMeta.total} 条链接。` : ""}
               </p>
             </div>
-            <div className="inline-actions">
+            <button className="button primary" type="button" disabled={creatingLink} onClick={createIntakeLink}>
+              {creatingLink ? "生成中..." : "生成资料链接"}
+            </button>
+          </div>
+          <details className="section-tools">
+            <summary>筛选设置</summary>
+            <div className="filter-tools-grid">
               <label>
                 班级范围
                 <select value={classroomFilter} onChange={(event) => setClassroomFilter(event.target.value)}>
@@ -361,25 +378,28 @@ export function ChildrenPage() {
                 </select>
               </label>
               <label>
-                有效期
+                新链接有效期
                 <select value={linkExpiry} onChange={(event) => setLinkExpiry(event.target.value as "none" | "7d")}>
                   <option value="7d">7 天</option>
                   <option value="none">不过期</option>
                 </select>
               </label>
-              <button className="button primary" type="button" disabled={creatingLink} onClick={createIntakeLink}>
-                {creatingLink ? "生成中..." : "生成资料链接"}
-              </button>
-              <button
-                className="button secondary"
-                type="button"
-                disabled={revokingActiveLinks}
-                onClick={revokeAllActiveIntakeLinks}
-              >
-                {revokingActiveLinks ? "停用中..." : classroomFilter ? `停用${classroomFilter}可填写链接` : "停用全部可填写链接"}
-              </button>
             </div>
-          </div>
+            <details className="compact-disclosure">
+              <summary>批量停用链接</summary>
+              <div className="admin-bulk-action">
+                <p>{classroomFilter ? `只会停用 ${classroomFilter} 当前可填写的家长资料链接。` : "会停用当前空间内全部可填写的家长资料链接。"}</p>
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={revokingActiveLinks}
+                  onClick={revokeAllActiveIntakeLinks}
+                >
+                  {revokingActiveLinks ? "停用中..." : "确认停用"}
+                </button>
+              </div>
+            </details>
+          </details>
           {intakeLinks.length === 0 ? (
             <EmptyState title="还没有资料链接" copy="生成一条链接后，就可以让家长提交孩子称呼、年龄段和兴趣信息。" />
           ) : (
@@ -393,13 +413,16 @@ export function ChildrenPage() {
                   </div>
                   <Badge tone={link.status === "active" ? "good" : "neutral"}>{link.status === "active" ? "可填写" : link.status === "revoked" ? "已撤回" : link.status === "expired" ? "已过期" : link.status}</Badge>
                   {link.status === "active" ? (
-                    <div className="inline-actions">
-                      <Link className="button secondary" to={link.url}>打开链接</Link>
-                      <button className="button secondary" type="button" onClick={() => copyIntakeLink(link)}>复制链接</button>
-                      <button className="button secondary" type="button" disabled={revokingLinkId === link.id} onClick={() => revokeIntakeLink(link)}>
-                        {revokingLinkId === link.id ? "撤回中..." : "撤回链接"}
-                      </button>
-                    </div>
+                    <details className="row-actions">
+                      <summary>链接操作</summary>
+                      <div className="inline-actions">
+                        <Link className="button secondary" to={link.url}>打开链接</Link>
+                        <button className="button secondary" type="button" onClick={() => copyIntakeLink(link)}>复制链接</button>
+                        <button className="button secondary" type="button" disabled={revokingLinkId === link.id} onClick={() => revokeIntakeLink(link)}>
+                          {revokingLinkId === link.id ? "撤回中..." : "撤回链接"}
+                        </button>
+                      </div>
+                    </details>
                   ) : (
                     <span>已停止收集</span>
                   )}
@@ -515,4 +538,3 @@ export function ChildrenPage() {
     </div>
   );
 }
-

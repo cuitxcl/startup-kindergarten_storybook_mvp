@@ -19,7 +19,7 @@ use crate::models::ShareLink;
 use crate::{
     domains::common,
     error::ApiError,
-    models::{ExportJob, Storybook, StorybookQualityStatus, StorybookStatus},
+    models::{ExportJob, Storybook, StorybookStatus},
 };
 
 pub(crate) fn read_export_job_file(job: &ExportJob) -> Result<(String, Vec<u8>), ApiError> {
@@ -74,11 +74,8 @@ pub(crate) fn ensure_storybook_deliverable(book: &Storybook) -> Result<(), ApiEr
         book.status,
         StorybookStatus::Exportable | StorybookStatus::Listed
     ) {
-        if book.quality.status == StorybookQualityStatus::Blocked {
-            return Err(ApiError::state_conflict(
-                "生成质量检查存在阻断项，请先修正后再导出或创建分享链接",
-            ));
-        }
+        crate::repositories::storybook_rules::ensure_delivery_access_ready(book)
+            .map_err(common::db_error)?;
         return Ok(());
     }
     Err(ApiError::state_conflict(

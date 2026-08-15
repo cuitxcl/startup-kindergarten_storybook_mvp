@@ -92,7 +92,7 @@ export function buildLocalStorybookQuality(book: Storybook): StorybookQualityRep
     label: "分页一致性",
     status: blockedPages ? "blocked" : reviewPages ? "needs_review" : pages.length ? "passed" : "blocked",
     message: blockedPages
-      ? `${blockedPages} 个分页存在阻断问题，需要先修正提示词或重新生成。`
+      ? `${blockedPages} 个分页存在阻断问题，需要先修正插图描述或重新生成。`
       : reviewPages
         ? `${reviewPages} 个分页需要老师复核或补充描述。`
         : pages.length
@@ -110,7 +110,7 @@ export function buildLocalStorybookQuality(book: Storybook): StorybookQualityRep
     summary: status === "passed"
       ? "系统检查通过，建议老师做最终阅读确认。"
       : status === "blocked"
-        ? "系统发现阻断问题，请先修正角色、提示词或重新生成。"
+        ? "系统发现阻断问题，请先修正角色、插图描述或重新生成。"
         : "系统发现需要复核的项目，建议老师确认后再导出或分享。",
     checks,
     pages,
@@ -118,7 +118,7 @@ export function buildLocalStorybookQuality(book: Storybook): StorybookQualityRep
 }
 
 export function customizationBlockerFor(book: Storybook, quality?: StorybookQualityReport) {
-  if (book.type !== "plain") return "只有普通绘本可以继续生成儿童定制版";
+  if (book.type !== "plain") return "只有基础故事可以继续生成儿童定制版";
   if (!book.pages.length) return "请先生成绘本分页";
   if (!book.roles.length) return "请先确认角色与道具";
   const generatingPages = book.pages.filter((page) => page.status === "generating");
@@ -126,11 +126,11 @@ export function customizationBlockerFor(book: Storybook, quality?: StorybookQual
   const failedPages = book.pages.filter((page) => page.status === "failed");
   if (failedPages.length) return "仍有分页插图生成失败，请修复后再生成定制版";
   const redrawPages = book.pages.filter((page) => page.status === "needs_regeneration");
-  if (redrawPages.length) return `仍有 ${redrawPages.length} 页需要重绘，请先完成普通绘本`;
+  if (redrawPages.length) return `仍有 ${redrawPages.length} 页需要重绘，请先完成基础故事`;
   const missingReferences = book.roles.filter((role) => roleNeedsReference(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl));
   if (missingReferences.length) return `跨页角色参考图未完成：${missingReferences.map((role) => role.name).join("、")}`;
   if (quality?.status === "blocked") return "质量检查存在阻断项，请先修正";
-  if (book.status !== "exportable" && book.status !== "listed") return "请先将普通绘本标记为可交付";
+  if (book.status !== "exportable" && book.status !== "listed") return "请先完成基础故事的整本验收";
   return "";
 }
 
@@ -205,9 +205,9 @@ export function shareAccessLabel(link: ShareLink) {
 
 export function pageImageActionLabel(pageStatus: string, generating = false) {
   if (generating) return "生成中...";
-  if (pageStatus === "needs_regeneration" || pageStatus === "failed") return "按当前描述重绘插图";
-  if (pageStatus === "ready") return "不满意，重新生成插图";
-  return "按当前描述生成插图";
+  if (pageStatus === "needs_regeneration" || pageStatus === "failed") return "重新生成这一页";
+  if (pageStatus === "ready") return "重画这一页";
+  return "生成这一页";
 }
 
 export function roleReferenceStatusLabel(status?: string) {
@@ -369,11 +369,20 @@ export function generationJobTime(job: GenerationJob) {
 }
 
 export function resultNoticeFromSearch(search: string): { title: string; copy: string; tone: "good"; action?: ReactNode } | null {
-  const result = new URLSearchParams(search).get("result");
+  const params = new URLSearchParams(search);
+  const result = params.get("result");
+  const from = params.get("from");
   if (result === "plain") {
+    if (from === "new") {
+      return {
+        title: "图文草稿已生成",
+        copy: "可以开始检查插图、正文和角色一致性，细节还能在这里继续调整。",
+        tone: "good",
+      };
+    }
     return {
       title: "生成结果已展示",
-      copy: "普通绘本已经生成完成。请先检查故事、角色和分页插图，再导出 PDF 或派生定制版本。",
+      copy: "基础故事已经生成完成。请先检查故事、角色和分页插图，再导出 PDF 或派生定制版本。",
       tone: "good",
     };
   }

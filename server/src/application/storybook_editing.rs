@@ -6,7 +6,9 @@ use uuid::Uuid;
 use serde_json::json;
 
 use crate::{
-    application::storybook_inputs::{clean_optional, page_status_name},
+    application::storybook_inputs::{
+        clean_optional, clean_page_status, clean_reference_status, page_status_name,
+    },
     domains::common,
     error::ApiError,
     models::{StorybookPage, StorybookRole, UpdatePageRequest, UpdateRoleRequest},
@@ -30,7 +32,7 @@ pub async fn update_page(
                 payload.illustration_prompt,
                 "illustration_prompt",
             )?,
-            status: payload.status,
+            status: clean_page_status(payload.status)?,
         };
         let page = crate::repositories::storybooks::update_page(
             &ctx.db,
@@ -120,7 +122,7 @@ pub async fn update_role(
                 payload.reference_image_prompt,
                 "reference_image_prompt",
             )?,
-            reference_status: clean_optional(payload.reference_status, "reference_status")?,
+            reference_status: clean_reference_status(payload.reference_status)?,
         };
         let role = crate::repositories::storybooks::update_role(
             &ctx.db,

@@ -430,7 +430,7 @@ export function DashboardPage() {
       {showCreationLaunch && (
         <section className="creation-launch">
           <div className="creation-launch-head">
-            <p className="eyebrow">Create</p>
+            <p className="eyebrow">创建</p>
             <h2>绘本生产入口</h2>
             <p>普通绘本用于班级共读和主题活动；定制绘本基于普通绘本和儿童资料生成。</p>
           </div>
@@ -481,7 +481,7 @@ export function DashboardPage() {
       <section className="dashboard-main-grid">
         <Card className="task-panel">
           <div className="section-head">
-            <div><p className="eyebrow">Today</p><h2>待办队列</h2></div>
+            <div><p className="eyebrow">今日</p><h2>待办队列</h2></div>
             <Badge tone={tasks.length > 0 ? "warn" : "good"}>{tasks.length > 0 ? `${tasks.length} 项` : "已清空"}</Badge>
           </div>
           {tasks.length === 0 ? (
@@ -504,7 +504,7 @@ export function DashboardPage() {
 
         <Card className="quick-panel">
           <div className="section-head">
-            <div><p className="eyebrow">Actions</p><h2>常用操作</h2></div>
+            <div><p className="eyebrow">操作</p><h2>常用操作</h2></div>
           </div>
           <div className="action-grid compact-actions">
             {quickActions.map((action) => (
@@ -521,7 +521,7 @@ export function DashboardPage() {
       {isPersonal && isEmptyAccount ? (
         <Card>
           <div className="section-head">
-            <div><p className="eyebrow">Start</p><h2>三步开始</h2></div>
+            <div><p className="eyebrow">开始</p><h2>三步开始</h2></div>
           </div>
           <div className="action-grid compact-actions">
             <Link className="action-card" to="../children">
@@ -545,7 +545,7 @@ export function DashboardPage() {
         <>
           <Card>
             <div className="section-head">
-              <div><p className="eyebrow">Generation</p><h2>最近生成任务</h2></div>
+              <div><p className="eyebrow">生成</p><h2>最近生成任务</h2></div>
               <Badge tone={generationJobs.some((job) => job.status === "failed") ? "danger" : generationJobs.length ? "good" : "neutral"}>
                 {generationJobs.length ? `${generationJobs.length} 条` : "暂无任务"}
               </Badge>
@@ -582,7 +582,7 @@ export function DashboardPage() {
 
           <Card>
             <div className="section-head">
-              <div><p className="eyebrow">Recent</p><h2>最近更新</h2></div>
+              <div><p className="eyebrow">最近</p><h2>最近更新</h2></div>
               <Link className="button secondary" to="../storybooks">查看全部</Link>
             </div>
             {books.length === 0 ? (

@@ -84,9 +84,11 @@ pub async fn create(
         let age_group = common::required(payload.age_group, "age_group")?;
         let use_scene = common::required(payload.use_scene, "use_scene")?;
         let teaching_goal = common::required(payload.teaching_goal, "teaching_goal")?;
+        let actor_id = common::actor_user_id(headers)?;
         let book = crate::repositories::storybooks::create_plain(
             &ctx.db,
             workspace_id,
+            actor_id,
             CreateStorybookRequest {
                 title,
                 age_group,
@@ -103,7 +105,7 @@ pub async fn create(
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "storybook.created",
             "storybook",
             Some(book.id),
@@ -293,10 +295,12 @@ pub async fn duplicate(
     {
         common::require_editor_db(ctx, headers, workspace_id).await?;
         let requested_title = clean_optional(payload.title, "title")?;
+        let actor_id = common::actor_user_id(headers)?;
         let book = crate::repositories::storybooks::duplicate(
             &ctx.db,
             workspace_id,
             storybook_id,
+            actor_id,
             requested_title,
         )
         .await
@@ -304,7 +308,7 @@ pub async fn duplicate(
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "storybook.duplicated",
             "storybook",
             Some(book.id),

@@ -8,6 +8,7 @@ pub mod operator;
 pub mod organization;
 pub mod parent_intakes;
 pub mod routes;
+pub mod storybook_creation;
 pub mod storybooks;
 pub mod submissions;
 pub mod workspaces;

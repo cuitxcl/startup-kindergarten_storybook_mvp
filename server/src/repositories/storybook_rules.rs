@@ -64,6 +64,26 @@ pub fn visibility_name(value: &Visibility) -> &'static str {
     }
 }
 
+pub fn normalize_page_status(value: &str) -> &'static str {
+    match value.trim() {
+        "ready" => "ready",
+        "generating" => "generating",
+        "failed" => "failed",
+        "needs_regeneration" => "needs_regeneration",
+        _ => "draft",
+    }
+}
+
+pub fn normalize_reference_status(value: &str) -> &'static str {
+    match value.trim() {
+        "generating" => "generating",
+        "ready" => "ready",
+        "failed" => "failed",
+        "needs_regeneration" => "needs_regeneration",
+        _ => "not_started",
+    }
+}
+
 pub fn ensure_status_transition(from: &StorybookStatus, to: &StorybookStatus) -> Result<(), DbErr> {
     if is_allowed_status_transition(from, to) {
         Ok(())
@@ -92,12 +112,62 @@ pub fn ensure_deliverable_ready(book: &Storybook) -> Result<(), DbErr> {
             "仍有插图正在生成，完成后才能标记可交付".to_string(),
         ));
     }
+    if book.pages.iter().any(|page| page.status == "draft") {
+        return Err(DbErr::Custom(
+            "仍有分页插图未生成，完成后才能标记可交付".to_string(),
+        ));
+    }
     if book.pages.iter().any(|page| page.status == "failed") {
         return Err(DbErr::Custom(
             "存在插图生成失败的分页，重新生成后才能标记可交付".to_string(),
         ));
     }
+    if book
+        .pages
+        .iter()
+        .any(|page| page.status == "needs_regeneration")
+    {
+        return Err(DbErr::Custom(
+            "存在待重新生成插图的分页，完成后才能标记可交付".to_string(),
+        ));
+    }
+    if book.teacher_review_status != "confirmed" {
+        return Err(DbErr::Custom("老师复核确认后才能标记可交付".to_string()));
+    }
     Ok(())
+}
+
+pub fn ensure_delivery_access_ready(book: &Storybook) -> Result<(), DbErr> {
+    ensure_deliverable_ready(book)?;
+    let quality = storybook_quality_report(book);
+    if quality.status == StorybookQualityStatus::Blocked {
+        return Err(DbErr::Custom(
+            "生成质量检查存在阻断项，请先修正后再导出或创建分享链接".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn ensure_visibility_matches_status(
+    status: &StorybookStatus,
+    visibility: &Visibility,
+) -> Result<(), DbErr> {
+    match visibility {
+        Visibility::MarketSubmission if status != &StorybookStatus::Submitted => Err(
+            DbErr::Custom("market_submission 可见性只能由投稿流程设置".to_string()),
+        ),
+        Visibility::MarketListed if status != &StorybookStatus::Listed => Err(DbErr::Custom(
+            "market_listed 可见性只能由上架流程设置".to_string(),
+        )),
+        Visibility::Private | Visibility::Workspace
+            if matches!(status, StorybookStatus::Submitted | StorybookStatus::Listed) =>
+        {
+            Err(DbErr::Custom(
+                "已投稿或已上架绘本不能通过普通更新修改可见性".to_string(),
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 pub fn ensure_teacher_review_ready(book: &Storybook) -> Result<(), DbErr> {
@@ -523,12 +593,16 @@ mod tests {
     #[test]
     fn deliverable_check_requires_content_and_no_running_pages() {
         let mut book = test_storybook();
+        align_quality_fixture(&mut book);
+        book.teacher_review_status = "confirmed".to_string();
         assert!(ensure_deliverable_ready(&book).is_ok());
 
         book.pages[0].status = "generating".to_string();
         assert!(ensure_deliverable_ready(&book).is_err());
 
         book = test_storybook();
+        align_quality_fixture(&mut book);
+        book.teacher_review_status = "confirmed".to_string();
         book.pages[0].status = "failed".to_string();
         assert!(ensure_deliverable_ready(&book).is_err());
 
@@ -536,8 +610,56 @@ mod tests {
         assert!(ensure_deliverable_ready(&book).is_err());
 
         book = test_storybook();
+        align_quality_fixture(&mut book);
+        book.teacher_review_status = "confirmed".to_string();
         book.roles.clear();
         assert!(ensure_deliverable_ready(&book).is_err());
+    }
+
+    #[test]
+    fn deliverable_check_requires_review_and_current_images() {
+        let mut book = test_storybook();
+        align_quality_fixture(&mut book);
+
+        assert!(ensure_deliverable_ready(&book).is_err());
+
+        book.teacher_review_status = "confirmed".to_string();
+        book.pages[0].status = "needs_regeneration".to_string();
+        assert!(ensure_deliverable_ready(&book).is_err());
+    }
+
+    #[test]
+    fn status_normalizers_fallback_unknown_values() {
+        assert_eq!(normalize_page_status("ready"), "ready");
+        assert_eq!(normalize_page_status("complete"), "draft");
+        assert_eq!(normalize_reference_status("failed"), "failed");
+        assert_eq!(normalize_reference_status("complete"), "not_started");
+    }
+
+    #[test]
+    fn visibility_must_match_marketplace_statuses() {
+        assert!(
+            ensure_visibility_matches_status(
+                &StorybookStatus::Submitted,
+                &Visibility::MarketSubmission
+            )
+            .is_ok()
+        );
+        assert!(
+            ensure_visibility_matches_status(&StorybookStatus::Listed, &Visibility::MarketListed)
+                .is_ok()
+        );
+        assert!(
+            ensure_visibility_matches_status(
+                &StorybookStatus::Editing,
+                &Visibility::MarketSubmission
+            )
+            .is_err()
+        );
+        assert!(
+            ensure_visibility_matches_status(&StorybookStatus::Submitted, &Visibility::Workspace)
+                .is_err()
+        );
     }
 
     #[test]

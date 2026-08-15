@@ -56,7 +56,7 @@ export function CustomizeStorybookPage() {
   const [provider, setProvider] = useState<GenerationProviderStatus | null>(null);
   const source = remoteSource;
   const childList = remoteChildren;
-  const selected = childList.find((child) => child.id === selectedChildId) || childList[0];
+  const selected = childList.find((child) => child.id === selectedChildId) || null;
   const selectedBatchChildren = childList.filter((child) => selectedBatchChildIds.includes(child.id));
   const generatedTarget = generatedBookId;
   const batchSelectionAtLimit = selectedBatchChildIds.length >= MAX_BATCH_CUSTOM_CHILDREN;
@@ -156,7 +156,12 @@ export function CustomizeStorybookPage() {
     setGeneratedBookId(null);
     setGenerationJobs([]);
     setCustomizationPlan(null);
+    setCustomMode("single");
     setSelectedChildId(null);
+    setSelectedBatchChildIds([]);
+    setIntensity("standard");
+    setRetryJob(null);
+    setNotice(null);
     setStep(0);
     setUnlockedStep(0);
     setError("");
@@ -175,8 +180,7 @@ export function CustomizeStorybookPage() {
         setRemoteSource(book);
         setRemoteChildren(childRows);
         setChildPageMeta(childPage.meta);
-        setSelectedChildId((value) => requestedChild?.id || value || childRows[0]?.id || null);
-        setSelectedBatchChildIds((value) => value.filter((id) => childRows.some((child) => child.id === id)));
+        setSelectedChildId(requestedChild?.id || null);
         let jobs: GenerationJob[] = [];
         try {
           jobs = await listStorybookGenerationJobs(workspace.id, book.id, { limit: 8 });
@@ -558,4 +562,3 @@ function batchCustomizationPlanItems(output: unknown, batchChildren: ChildProfil
     customization.risk_checks?.length ? `隐私检查：${customization.risk_checks.join("、")}` : null,
   ].filter(Boolean) as string[];
 }
-

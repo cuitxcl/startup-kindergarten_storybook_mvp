@@ -227,17 +227,17 @@ export function OperatorMarketplacePage() {
         copy="平台模板和园所投稿内容的上架、下架和审核入口。"
         actions={<button className="button secondary" type="button" disabled={loading} onClick={refreshTemplates}>{loading ? "刷新中..." : "刷新模板"}</button>}
       />
-      <Card>
-        <div className="section-head">
+      <details className="card disclosure-card">
+        <summary>
           <div>
             <p className="eyebrow">试点就绪</p>
             <h2>部署前总检查</h2>
-            <p>聚合数据库、真实生成、文件存储和预算上限，判断当前环境是否适合对外试点。</p>
           </div>
           <Badge tone={readiness?.ready ? "good" : readinessLoading ? "neutral" : "warn"}>
             {readinessLoading ? "检查中..." : readiness?.ready ? "已就绪" : "需处理"}
           </Badge>
-        </div>
+        </summary>
+        <p>聚合数据库、真实生成、文件存储和预算上限，判断当前环境是否适合对外试点。</p>
         {readinessError ? (
           <Notice title="试点就绪状态读取失败" copy={readinessError} tone="danger" />
         ) : readiness ? (
@@ -247,52 +247,74 @@ export function OperatorMarketplacePage() {
               copy={readiness.ready ? "核心运行依赖已就绪，可以继续做真实 Seedream/DeepSeek 验收。" : "请先处理下方未通过检查项，再进入外部试点。"}
               tone={readiness.ready ? "good" : "warn"}
             />
-            <div className="review-list">
-              {readiness.checks.map((check) => (
-                <div key={check.key}>
-                  <span>{check.label}</span>
-                  <strong>{check.ok ? "通过" : "需处理"}</strong>
-                  <small>{check.message}</small>
+            {readiness.checks.some((check) => !check.ok) ? (
+              <div className="review-list">
+                {readiness.checks.filter((check) => !check.ok).map((check) => (
+                  <div key={check.key}>
+                    <span>{check.label}</span>
+                    <strong>需处理</strong>
+                    <small>{check.message}</small>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <details className="compact-disclosure">
+                <summary>查看全部通过项</summary>
+                <div className="review-list">
+                  {readiness.checks.map((check) => (
+                    <div key={check.key}>
+                      <span>{check.label}</span>
+                      <strong>通过</strong>
+                      <small>{check.message}</small>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </details>
+            )}
           </>
         ) : (
           <p className="task-summary">正在检查试点就绪状态。</p>
         )}
-      </Card>
-      <Card>
-        <div className="section-head">
+      </details>
+      <details className="card disclosure-card">
+        <summary>
           <div>
             <p className="eyebrow">生成能力</p>
             <h2>当前生成 provider 状态</h2>
-            <p>这块展示当前后端可用的生成模式，方便判断真实生成能力是否已经接入。</p>
           </div>
           <Badge tone={provider?.productionReady ? "good" : "info"}>
             {provider?.provider || (providerLoading ? "读取中..." : "未知")}
           </Badge>
-        </div>
-        {provider ? (
-          <div className="review-list">
-            <div><span>模式</span><strong>{provider.mode}</strong></div>
-            <div><span>Schema</span><strong>{provider.schemaVersion}</strong></div>
-            <div><span>文本任务</span><strong>{formatGenerationJobTypes(provider.supportsText)}</strong></div>
-            <div><span>图片任务</span><strong>{formatGenerationJobTypes(provider.supportsImage)}</strong></div>
-            <div><span>需要密钥</span><strong>{provider.requiresApiKey ? "是" : "否"}</strong></div>
-            <div><span>文本真实可用</span><strong>{provider.realTextReady ? "是" : "否"}</strong></div>
-            <div><span>图片真实可用</span><strong>{provider.realImageReady ? "是" : "否"}</strong></div>
-            <div><span>生产就绪</span><strong>{provider.productionReady ? "是" : "否"}</strong></div>
-            <div><span>当前诊断</span><strong>{provider.diagnostic}</strong></div>
-            <div><span>缺失配置</span><strong>{provider.missingConfiguration.length ? provider.missingConfiguration.join(" · ") : "无"}</strong></div>
-            {provider.components.map((component) => (
-              <div key={`${component.kind}-${component.provider}`}>
-                <span>{componentKindLabel(component.kind)}组件</span>
-                <strong>{component.provider} · {component.ready ? "已就绪" : `缺少 ${component.requiredConfiguration.join(" · ")}`}</strong>
-                <small>支持任务：{formatGenerationJobTypes(component.supports)}</small>
-                <small>{component.model} · {component.endpoint}</small>
+        </summary>
+          <p>展示当前后端可用的生成模式，完整配置收进详情，默认只保留运营判断需要的摘要。</p>
+          {provider ? (
+          <>
+            <div className="operator-summary-grid">
+              <div><span>当前模式</span><strong>{provider.mode}</strong></div>
+              <div><span>文本生成</span><strong>{provider.realTextReady ? "真实可用" : "未就绪"}</strong></div>
+              <div><span>图片生成</span><strong>{provider.realImageReady ? "真实可用" : "未就绪"}</strong></div>
+            </div>
+            <details className="compact-disclosure">
+              <summary>查看完整 provider 配置</summary>
+              <div className="review-list">
+                <div><span>Schema</span><strong>{provider.schemaVersion}</strong></div>
+                <div><span>文本任务</span><strong>{formatGenerationJobTypes(provider.supportsText)}</strong></div>
+                <div><span>图片任务</span><strong>{formatGenerationJobTypes(provider.supportsImage)}</strong></div>
+                <div><span>需要密钥</span><strong>{provider.requiresApiKey ? "是" : "否"}</strong></div>
+                <div><span>生产就绪</span><strong>{provider.productionReady ? "是" : "否"}</strong></div>
+                <div><span>当前诊断</span><strong>{provider.diagnostic}</strong></div>
+                <div><span>缺失配置</span><strong>{provider.missingConfiguration.length ? provider.missingConfiguration.join(" · ") : "无"}</strong></div>
+                {provider.components.map((component) => (
+                  <div key={`${component.kind}-${component.provider}`}>
+                    <span>{componentKindLabel(component.kind)}组件</span>
+                    <strong>{component.provider} · {component.ready ? "已就绪" : `缺少 ${component.requiredConfiguration.join(" · ")}`}</strong>
+                    <small>支持任务：{formatGenerationJobTypes(component.supports)}</small>
+                    <small>{component.model} · {component.endpoint}</small>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </details>
+          </>
         ) : (
           <p className="task-summary">正在读取生成能力状态。</p>
         )}
@@ -303,36 +325,43 @@ export function OperatorMarketplacePage() {
             tone="info"
           />
         )}
-      </Card>
-      <Card>
-        <div className="section-head">
+      </details>
+      <details className="card disclosure-card">
+        <summary>
           <div>
             <p className="eyebrow">文件存储</p>
             <h2>PDF 与插图存储边界</h2>
-            <p>用于检查当前环境的导出文件目录、插图目录、大小上限和安全规则。</p>
           </div>
           <Badge tone={storage?.filenameValidation && storage?.sizeLimitEnabled ? "good" : "warn"}>
             {storageLoading ? "读取中..." : storage ? "已配置" : "未知"}
           </Badge>
-        </div>
-        {storageError ? (
+        </summary>
+          <p>用于检查当前环境的存储安全边界，路径和额度细节默认收起。</p>
+          {storageError ? (
           <Notice title="Storage 状态读取失败" copy={storageError} tone="danger" />
         ) : storage ? (
-          <div className="review-list">
-            <div><span>PDF 目录</span><strong>{storage.exportsDir}</strong></div>
-            <div><span>插图目录</span><strong>{storage.generatedImagesDir}</strong></div>
-            <div><span>存储后端</span><strong>{storageBackendLabel(storage.backend)}</strong></div>
-            <div><span>下载策略</span><strong>{downloadStrategyLabel(storage.downloadStrategy)}</strong></div>
-            <div><span>PDF 上限</span><strong>{formatBytes(storage.exportMaxBytes)}</strong></div>
-            <div><span>插图上限</span><strong>{formatBytes(storage.generatedImageMaxBytes)}</strong></div>
-            <div><span>用户个人限额</span><strong>{formatBytes(storage.userStorageQuotaBytes)}</strong></div>
-            <div><span>个人空间限额</span><strong>{formatBytes(storage.personalStorageQuotaBytes)}</strong></div>
-            <div><span>园所空间限额</span><strong>{formatBytes(storage.schoolStorageQuotaBytes)}</strong></div>
-            <div><span>容量预警线</span><strong>{formatBudgetPercent(storage.storageQuotaWarningPercent)}</strong></div>
-            <div><span>文件名校验</span><strong>{storage.filenameValidation ? "已启用" : "未启用"}</strong></div>
-            <div><span>大小限制</span><strong>{storage.sizeLimitEnabled ? "已启用" : "未启用"}</strong></div>
-            <div><span>公共直链</span><strong>{storage.publicDirectAccess ? "允许" : "已关闭"}</strong></div>
-          </div>
+          <>
+            <div className="operator-summary-grid">
+              <div><span>存储后端</span><strong>{storageBackendLabel(storage.backend)}</strong></div>
+              <div><span>文件名校验</span><strong>{storage.filenameValidation ? "已启用" : "未启用"}</strong></div>
+              <div><span>大小限制</span><strong>{storage.sizeLimitEnabled ? "已启用" : "未启用"}</strong></div>
+            </div>
+            <details className="compact-disclosure">
+              <summary>查看路径、额度和下载策略</summary>
+              <div className="review-list">
+                <div><span>PDF 目录</span><strong>{storage.exportsDir}</strong></div>
+                <div><span>插图目录</span><strong>{storage.generatedImagesDir}</strong></div>
+                <div><span>下载策略</span><strong>{downloadStrategyLabel(storage.downloadStrategy)}</strong></div>
+                <div><span>PDF 上限</span><strong>{formatBytes(storage.exportMaxBytes)}</strong></div>
+                <div><span>插图上限</span><strong>{formatBytes(storage.generatedImageMaxBytes)}</strong></div>
+                <div><span>用户个人限额</span><strong>{formatBytes(storage.userStorageQuotaBytes)}</strong></div>
+                <div><span>个人空间限额</span><strong>{formatBytes(storage.personalStorageQuotaBytes)}</strong></div>
+                <div><span>园所空间限额</span><strong>{formatBytes(storage.schoolStorageQuotaBytes)}</strong></div>
+                <div><span>容量预警线</span><strong>{formatBudgetPercent(storage.storageQuotaWarningPercent)}</strong></div>
+                <div><span>公共直链</span><strong>{storage.publicDirectAccess ? "允许" : "已关闭"}</strong></div>
+              </div>
+            </details>
+          </>
         ) : (
           <p className="task-summary">正在读取文件存储状态。</p>
         )}
@@ -343,18 +372,18 @@ export function OperatorMarketplacePage() {
             tone="warn"
           />
         )}
-      </Card>
-      <Card>
-        <div className="section-head">
+      </details>
+      <details className="card disclosure-card">
+        <summary>
           <div>
             <p className="eyebrow">生成成本</p>
             <h2>AI 生成成本账本</h2>
-            <p>按生成任务记录 provider、任务类型、估算 token/图片数量和成本，方便试点时控制预算。</p>
           </div>
           <Badge tone={costReport?.summary.totalJobs ? "info" : "neutral"}>
             {costLoading ? "读取中..." : `${costReport?.summary.totalJobs || 0} 个任务`}
           </Badge>
-        </div>
+        </summary>
+        <p>按生成任务记录 provider、任务类型、估算 token/图片数量和成本，方便试点时控制预算。</p>
         <div className="inline-actions">
           <label>
             Provider
@@ -459,7 +488,7 @@ export function OperatorMarketplacePage() {
         ) : (
           <p className="task-summary">正在读取生成成本。</p>
         )}
-      </Card>
+      </details>
       {notice && <Notice title={notice.includes("失败") || notice.includes("重试") ? "操作失败" : "操作成功"} copy={notice} tone={notice.includes("失败") || notice.includes("重试") ? "danger" : "good"} />}
       {initialLoading ? (
         <EmptyState title="正在加载市场模板" copy="正在读取已上架模板。" />

@@ -228,8 +228,11 @@ export function SubmissionsPage() {
           </div>
         ) : null}
       </Card>
-      <Card>
-        <h2>投稿隐私检查</h2>
+      <details className="card disclosure-card muted-disclosure">
+        <summary>
+          <h2>投稿隐私检查</h2>
+          <Badge tone={nextPrivacySubmission ? "warn" : "good"}>{nextPrivacySubmission ? "有待处理" : "暂无待处理"}</Badge>
+        </summary>
         <div className="check-list">
           <label><input type="checkbox" defaultChecked />不是定制绘本</label>
           <label><input type="checkbox" defaultChecked />不含儿童照片</label>
@@ -249,7 +252,7 @@ export function SubmissionsPage() {
         >
           {nextPrivacySubmission ? "处理下一条隐私确认" : "暂无待确认投稿"}
         </button>
-      </Card>
+      </details>
       {open === "new" && (
         <Modal title="新建市场投稿" onClose={() => setOpen(null)}>
           {selectableBooks.length === 0 ? (

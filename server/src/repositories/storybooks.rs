@@ -4,12 +4,12 @@ use uuid::Uuid;
 use crate::models::{
     CreateStorybookRequest, DeriveCustomRequest, MarketplaceTemplate, PaginationMeta, Storybook,
     StorybookListQuery, StorybookPage, StorybookRole, StorybookStatus, UpdatePageRequest,
-    UpdateRoleRequest, UpdateStorybookRequest,
+    UpdateRoleRequest, UpdateStorybookRequest, Visibility,
 };
 use crate::page_aspect::normalize_page_aspect_ratio;
 use crate::repositories::storybook_rules::{
     ensure_deliverable_ready, ensure_status_transition, ensure_teacher_review_ready,
-    storybook_status_name, visibility_name,
+    ensure_visibility_matches_status, storybook_status_name, visibility_name,
 };
 
 pub async fn seed_demo_storybooks(db: &DatabaseConnection) -> Result<(), DbErr> {
@@ -104,19 +104,23 @@ pub async fn list_by_workspace(
 pub async fn create_plain(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    creator_id: Uuid,
     payload: CreateStorybookRequest,
 ) -> Result<Storybook, DbErr> {
-    crate::repositories::storybook_factory::create_plain(db, workspace_id, payload).await
+    crate::repositories::storybook_factory::create_plain(db, workspace_id, creator_id, payload)
+        .await
 }
 
 pub async fn create_from_marketplace_template(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    creator_id: Uuid,
     template: MarketplaceTemplate,
 ) -> Result<Storybook, DbErr> {
     crate::repositories::storybook_factory::create_from_marketplace_template(
         db,
         workspace_id,
+        creator_id,
         template,
     )
     .await
@@ -142,14 +146,13 @@ pub async fn update(
     actor_user_id: Uuid,
 ) -> Result<Storybook, DbErr> {
     let mut book = find(db, workspace_id, storybook_id).await?;
+    let mut content_changed = false;
     if let Some(value) = payload.title {
+        content_changed |= book.title != value;
         book.title = value;
     }
     if let Some(value) = payload.status {
         ensure_status_transition(&book.status, &value)?;
-        if value == StorybookStatus::Exportable {
-            ensure_deliverable_ready(&book)?;
-        }
         book.status = value;
     }
     if let Some(value) = payload.visibility {
@@ -168,20 +171,44 @@ pub async fn update(
         }
     }
     if let Some(value) = payload.age_group {
+        content_changed |= book.age_group != value;
         book.age_group = value;
     }
     if let Some(value) = payload.use_scene {
+        content_changed |= book.use_scene != value;
         book.use_scene = value;
     }
     if let Some(value) = payload.teaching_goal {
+        content_changed |= book.teaching_goal != value;
         book.teaching_goal = value;
     }
     if let Some(value) = payload.cover_tone {
+        content_changed |= book.cover_tone != value;
         book.cover_tone = value;
     }
     if let Some(value) = payload.page_aspect_ratio {
-        book.page_aspect_ratio = normalize_page_aspect_ratio(Some(&value));
+        let normalized = normalize_page_aspect_ratio(Some(&value));
+        content_changed |= book.page_aspect_ratio != normalized;
+        book.page_aspect_ratio = normalized;
     }
+    if content_changed {
+        if book.status == StorybookStatus::Listed {
+            book.visibility = Visibility::Workspace;
+        }
+        if matches!(
+            book.status,
+            StorybookStatus::Exportable | StorybookStatus::Listed
+        ) {
+            book.status = StorybookStatus::ImagePending;
+        }
+        book.teacher_review_status = "pending".to_string();
+        book.teacher_reviewed_by = None;
+        book.teacher_reviewed_at = None;
+    }
+    if book.status == StorybookStatus::Exportable {
+        ensure_deliverable_ready(&book)?;
+    }
+    ensure_visibility_matches_status(&book.status, &book.visibility)?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
@@ -224,12 +251,14 @@ pub async fn duplicate(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
+    creator_id: Uuid,
     requested_title: Option<String>,
 ) -> Result<Storybook, DbErr> {
     crate::repositories::storybook_factory::duplicate(
         db,
         workspace_id,
         storybook_id,
+        creator_id,
         requested_title,
     )
     .await
@@ -314,12 +343,14 @@ pub async fn derive_custom(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     source_storybook_id: Uuid,
+    creator_id: Uuid,
     payload: DeriveCustomRequest,
 ) -> Result<Storybook, DbErr> {
     crate::repositories::storybook_customization::derive_custom(
         db,
         workspace_id,
         source_storybook_id,
+        creator_id,
         payload,
     )
     .await

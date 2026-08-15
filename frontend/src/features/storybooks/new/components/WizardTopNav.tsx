@@ -14,7 +14,7 @@ export function WizardTopNav({
   onSelect: (step: number) => void;
 }) {
   return (
-    <nav className="wizard-top-nav" aria-label="普通绘本流程">
+    <nav className="wizard-top-nav" aria-label="专属故事创建流程">
       <ol>
         {steps.map((step, index) => {
           const locked = index > maxUnlockedStep;

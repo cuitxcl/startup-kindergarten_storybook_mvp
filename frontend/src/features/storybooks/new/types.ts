@@ -37,4 +37,8 @@ export type StorybookRequestForm = {
   pageAspectRatio: PageAspectRatio;
   storyStyle: string;
   storyFramework: string;
+  quickIdea: string;
+  personalMaterials?: string[];
+  visualComplexity?: string;
+  characterConsistency?: string;
 };

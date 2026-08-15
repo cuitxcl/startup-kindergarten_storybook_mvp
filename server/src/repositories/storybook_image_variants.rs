@@ -1,8 +1,5 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, DbErr, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
@@ -13,7 +10,7 @@ pub const TARGET_PAGE_ILLUSTRATION: &str = "page_illustration";
 pub const TARGET_COVER_ILLUSTRATION: &str = "cover_illustration";
 
 pub async fn create_generating_variant_for_job(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job: &GenerationJob,
 ) -> Result<StorybookImageVariant, DbErr> {
     let Some(storybook_id) = job.storybook_id else {
@@ -54,7 +51,7 @@ pub async fn create_generating_variant_for_job(
 }
 
 pub async fn ensure_variant_for_job(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job: &GenerationJob,
 ) -> Result<StorybookImageVariant, DbErr> {
     if let Some(row) = db
@@ -78,7 +75,7 @@ pub async fn ensure_variant_for_job(
 }
 
 pub async fn mark_job_variant_ready(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job: &GenerationJob,
 ) -> Result<(), DbErr> {
     let output = job
@@ -139,7 +136,7 @@ pub async fn mark_job_variant_ready(
 }
 
 pub async fn mark_job_variant_failed(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job: &GenerationJob,
     failure_reason: &str,
 ) -> Result<(), DbErr> {
@@ -214,6 +211,7 @@ pub async fn select_variant(
     if variant.status != "ready" {
         return Err(DbErr::Custom("只能选择已生成成功的图片".to_string()));
     }
+    ensure_variant_target_is_current(db, &variant).await?;
 
     select_variant_by_id(db, &variant).await?;
     find_variant(db, workspace_id, storybook_id, variant_id).await
@@ -304,7 +302,7 @@ fn input_uuid(input: &JsonValue, key: &str, message: &str) -> Result<Uuid, DbErr
 }
 
 async fn target_has_selected_variant(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job: &GenerationJob,
 ) -> Result<bool, DbErr> {
     let Some(storybook_id) = job.storybook_id else {
@@ -336,7 +334,10 @@ async fn target_has_selected_variant(
     Ok(exists)
 }
 
-async fn select_variant_for_job(db: &DatabaseConnection, job: &GenerationJob) -> Result<(), DbErr> {
+async fn select_variant_for_job(
+    db: &impl ConnectionTrait,
+    job: &GenerationJob,
+) -> Result<(), DbErr> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -352,7 +353,105 @@ async fn select_variant_for_job(db: &DatabaseConnection, job: &GenerationJob) ->
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("storybook_image_variant".to_string()))?;
     let variant = variant_from_row(row)?;
-    select_variant_by_id(db, &variant).await
+    select_variant_by_id_on_conn(db, &variant).await
+}
+
+async fn ensure_variant_target_is_current(
+    db: &impl ConnectionTrait,
+    variant: &StorybookImageVariant,
+) -> Result<(), DbErr> {
+    if variant.target_type == TARGET_COVER_ILLUSTRATION {
+        return Ok(());
+    }
+    let Some(job_id) = variant.generation_job_id else {
+        return Err(DbErr::Custom(
+            "图片变体缺少生成任务，无法确认是否仍匹配当前内容".to_string(),
+        ));
+    };
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select input_json
+            from generation_jobs
+            where id = $1
+            limit 1
+            "#,
+            [job_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("generation_job".to_string()))?;
+    let input_json: JsonValue = row.try_get("", "input_json")?;
+    let Some(snapshot) = input_json.get("target_snapshot") else {
+        return Err(DbErr::Custom(
+            "图片变体缺少目标快照，无法安全选择；请重新生成图片".to_string(),
+        ));
+    };
+
+    if variant.target_type == TARGET_PAGE_ILLUSTRATION {
+        let current = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r#"
+                select title, body, illustration_prompt
+                from storybook_pages
+                where storybook_id = $1 and id = $2
+                limit 1
+                "#,
+                [variant.storybook_id.into(), variant.target_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound("page".to_string()))?;
+        if snapshot.get("title").and_then(JsonValue::as_str)
+            != Some(current.try_get::<String>("", "title")?.as_str())
+            || snapshot.get("body").and_then(JsonValue::as_str)
+                != Some(current.try_get::<String>("", "body")?.as_str())
+            || snapshot
+                .get("illustration_prompt")
+                .and_then(JsonValue::as_str)
+                != Some(
+                    current
+                        .try_get::<String>("", "illustration_prompt")?
+                        .as_str(),
+                )
+        {
+            return Err(DbErr::Custom(
+                "图片变体对应的页面内容已变化，请重新生成插图".to_string(),
+            ));
+        }
+    } else if variant.target_type == TARGET_ROLE_REFERENCE {
+        let current = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r#"
+                select name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency
+                from storybook_roles
+                where storybook_id = $1 and id = $2
+                limit 1
+                "#,
+                [variant.storybook_id.into(), variant.target_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound("role".to_string()))?;
+        if snapshot.get("name").and_then(JsonValue::as_str)
+            != Some(current.try_get::<String>("", "name")?.as_str())
+            || snapshot.get("role_type").and_then(JsonValue::as_str)
+                != Some(current.try_get::<String>("", "role_type")?.as_str())
+            || snapshot.get("appearance").and_then(JsonValue::as_str)
+                != Some(current.try_get::<String>("", "appearance")?.as_str())
+            || snapshot.get("story_function").and_then(JsonValue::as_str)
+                != Some(current.try_get::<String>("", "story_function")?.as_str())
+            || snapshot
+                .get("needs_consistency")
+                .and_then(JsonValue::as_bool)
+                != Some(current.try_get::<bool>("", "needs_consistency")?)
+        {
+            return Err(DbErr::Custom(
+                "图片变体对应的角色设定已变化，请重新生成参考图".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 async fn select_variant_by_id(
@@ -360,13 +459,13 @@ async fn select_variant_by_id(
     variant: &StorybookImageVariant,
 ) -> Result<(), DbErr> {
     let txn = db.begin().await?;
-    select_variant_by_id_in_txn(&txn, variant).await?;
+    select_variant_by_id_on_conn(&txn, variant).await?;
     txn.commit().await?;
     Ok(())
 }
 
-async fn select_variant_by_id_in_txn(
-    txn: &DatabaseTransaction,
+async fn select_variant_by_id_on_conn(
+    txn: &impl ConnectionTrait,
     variant: &StorybookImageVariant,
 ) -> Result<(), DbErr> {
     txn.execute(Statement::from_sql_and_values(
@@ -440,18 +539,10 @@ async fn select_variant_by_id_in_txn(
         .await?;
     }
 
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r#"
-        update storybooks
-        set updated_at = now(),
-            teacher_review_status = 'pending',
-            teacher_reviewed_by = null,
-            teacher_reviewed_at = null
-        where id = $1
-        "#,
-        [variant.storybook_id.into()],
-    ))
+    crate::repositories::storybook_lifecycle::mark_storybook_content_changed(
+        txn,
+        variant.storybook_id,
+    )
     .await?;
     Ok(())
 }

@@ -190,17 +190,17 @@ export function AdminPage() {
         <Card><strong>{storybookCount}</strong><p>园所绘本</p></Card>
         <Card><strong>{submissionCount}</strong><p>市场投稿</p></Card>
       </section>
-      <Card>
-        <div className="section-head">
+      <details className="card disclosure-card">
+        <summary>
           <div>
             <p className="eyebrow">生成队列</p>
             <h2>最近生成任务</h2>
           </div>
-        </div>
-        <div className="inline-actions">
           <Badge tone={failedJobs.length ? "danger" : runningJobs.length ? "warn" : generationJobs.length ? "good" : "neutral"}>
             {jobMeta ? `${generationJobs.length}/${jobMeta.total} 条` : generationJobs.length ? `${generationJobs.length} 条` : "暂无任务"}
           </Badge>
+        </summary>
+        <div className="inline-actions admin-recovery-tools">
           <label>
             超时分钟
             <input type="number" min={1} max={120} value={recoverAgeMinutes} onChange={(event) => setRecoverAgeMinutes(Number(event.target.value) || 15)} />
@@ -276,11 +276,13 @@ export function AdminPage() {
             </Card>
           </div>
         )}
-      </Card>
-      <Card>
-        <h2>状态说明</h2>
+      </details>
+      <details className="card disclosure-card muted-disclosure">
+        <summary>
+          <h2>状态说明</h2>
+        </summary>
         <p className="task-summary">成员协作、班级资料和市场投稿是园所管理的三条主线；先处理隐私确认和授权，再推进内容复用。</p>
-      </Card>
+      </details>
     </div>
   );
 }

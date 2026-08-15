@@ -20,6 +20,7 @@ mod m20260724_000017_add_storage_owner_to_jobs;
 mod m20260726_000018_add_storybook_teacher_review;
 mod m20260727_000019_create_storybook_image_variants;
 mod m20260810_000020_add_storybook_page_aspect_ratio;
+mod m20260814_000021_create_storybook_creation_sessions;
 
 pub struct Migrator;
 
@@ -47,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260726_000018_add_storybook_teacher_review::Migration),
             Box::new(m20260727_000019_create_storybook_image_variants::Migration),
             Box::new(m20260810_000020_add_storybook_page_aspect_ratio::Migration),
+            Box::new(m20260814_000021_create_storybook_creation_sessions::Migration),
         ]
     }
 }

@@ -2,7 +2,8 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
-use crate::models::GenerationJob;
+use crate::models::{CreationGenerationSummary, GenerationJob};
+use crate::repositories::storybook_rules::{normalize_page_status, normalize_reference_status};
 
 pub async fn ensure_image_output_within_storage_quota(
     db: &DatabaseConnection,
@@ -34,7 +35,7 @@ pub async fn ensure_image_output_within_storage_quota(
 }
 
 pub async fn apply_completed_generation(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job: &GenerationJob,
 ) -> Result<(), DbErr> {
     if job.status != "succeeded" {
@@ -74,13 +75,103 @@ pub async fn apply_completed_generation(
         "storybook_role_reference_image" => {
             apply_role_reference_image(db, storybook_id, job, output).await
         }
+        "creation_storybook_generate" => {
+            apply_creation_storybook_generate(db, storybook_id, job, output).await
+        }
         _ => Ok(()),
+    }
+}
+
+async fn apply_creation_storybook_generate(
+    db: &impl ConnectionTrait,
+    storybook_id: Uuid,
+    job: &GenerationJob,
+    output: &JsonValue,
+) -> Result<(), DbErr> {
+    let session_id = job
+        .input_json
+        .get("creation_session_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| DbErr::Custom("共创绘本生成任务缺少 creation_session_id".to_string()))?;
+    if output
+        .get("pages")
+        .and_then(|value| value.as_array())
+        .is_some()
+    {
+        replace_pages_from_generation(db, storybook_id, output).await?;
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybook_pages
+        set status = 'needs_regeneration'
+        where storybook_id = $1 and status in ('draft', 'ready')
+        "#,
+        [storybook_id.into()],
+    ))
+    .await?;
+    crate::repositories::storybook_creation_sessions::mark_storybook_job_succeeded(
+        db,
+        job.workspace_id,
+        session_id,
+        storybook_id,
+        job.id,
+        &creation_generation_summary(output),
+    )
+    .await
+}
+
+fn creation_generation_summary(output: &JsonValue) -> CreationGenerationSummary {
+    let include_images = output
+        .get("include_images")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(true);
+    let flags = output
+        .get("quality_flags")
+        .and_then(JsonValue::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let explicit_notice = output
+        .get("quality_notice")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let quality_notice = if explicit_notice.is_some() {
+        explicit_notice
+    } else if output
+        .get("creation_generation_source")
+        .and_then(JsonValue::as_str)
+        == Some("fallback")
+    {
+        Some("已先生成可编辑草稿，建议你打开后确认文字是否足够贴合。".to_string())
+    } else if flags
+        .iter()
+        .any(|flag| flag.starts_with("locked_material_missing:"))
+    {
+        Some("草稿已生成，但有少量专属素材没有明显出现在成品里，建议进入验收页确认。".to_string())
+    } else {
+        None
+    };
+    let mut recoverable_actions = vec!["open_review_workspace".to_string()];
+    if quality_notice.is_some() {
+        recoverable_actions.push("edit_storybook_pages".to_string());
+    }
+    CreationGenerationSummary {
+        text_generation_status: "succeeded".to_string(),
+        image_generation_status: if include_images { "pending" } else { "skipped" }.to_string(),
+        quality_notice,
+        recoverable_actions,
     }
 }
 
 /// 单页插图描述重写：写回 illustration_prompt，并把已有插图的页面标记为待重新生成。
 async fn apply_page_prompt_rewrite(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     storybook_id: Uuid,
     job: &GenerationJob,
     output: &JsonValue,
@@ -118,25 +209,13 @@ async fn apply_page_prompt_rewrite(
     ))
     .await?;
 
-    // 内容发生变化，重置老师审核状态。
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r#"
-        update storybooks
-        set updated_at = now(),
-            teacher_review_status = 'pending',
-            teacher_reviewed_by = null,
-            teacher_reviewed_at = null
-        where id = $1
-        "#,
-        [storybook_id.into()],
-    ))
-    .await?;
+    crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id)
+        .await?;
     Ok(())
 }
 
 async fn apply_role_reference_image(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     storybook_id: Uuid,
     job: &GenerationJob,
     output: &JsonValue,
@@ -210,19 +289,21 @@ async fn apply_role_reference_image(
         ],
     ))
     .await?;
-    touch_storybook(db, storybook_id).await
+    crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id).await
 }
 
 async fn replace_roles_from_generation(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     storybook_id: Uuid,
     output: &JsonValue,
 ) -> Result<(), DbErr> {
     let Some(roles) = output.get("roles").and_then(|value| value.as_array()) else {
-        return Ok(());
+        return Err(DbErr::Custom(
+            "角色生成输出缺少 roles，无法写回".to_string(),
+        ));
     };
     if roles.is_empty() {
-        return Ok(());
+        return Err(DbErr::Custom("角色生成输出 roles 不能为空".to_string()));
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -256,25 +337,28 @@ async fn replace_roles_from_generation(
                     .into(),
                 json_optional_text(role, "reference_image_url").into(),
                 json_optional_text(role, "reference_image_prompt").into(),
-                json_text(role, "reference_status", "not_started").into(),
+                normalize_reference_status(&json_text(role, "reference_status", "not_started"))
+                    .into(),
             ],
         ))
         .await?;
     }
 
-    touch_storybook(db, storybook_id).await
+    crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id).await
 }
 
 async fn replace_pages_from_generation(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     storybook_id: Uuid,
     output: &JsonValue,
 ) -> Result<(), DbErr> {
     let Some(pages) = output.get("pages").and_then(|value| value.as_array()) else {
-        return Ok(());
+        return Err(DbErr::Custom(
+            "分页生成输出缺少 pages，无法写回".to_string(),
+        ));
     };
     if pages.is_empty() {
-        return Ok(());
+        return Err(DbErr::Custom("分页生成输出 pages 不能为空".to_string()));
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -305,16 +389,16 @@ async fn replace_pages_from_generation(
                 json_text(page, "title", "未命名分页").into(),
                 json_text(page, "body", "待补充分页正文。").into(),
                 json_text(page, "illustration_prompt", "待补充插图描述。").into(),
-                json_text(page, "status", "draft").into(),
+                normalize_page_status(&json_text(page, "status", "draft")).into(),
             ],
         ))
         .await?;
     }
 
-    touch_storybook(db, storybook_id).await
+    crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id).await
 }
 
-async fn touch_storybook(db: &DatabaseConnection, storybook_id: Uuid) -> Result<(), DbErr> {
+async fn touch_storybook(db: &impl ConnectionTrait, storybook_id: Uuid) -> Result<(), DbErr> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "update storybooks set updated_at = now() where id = $1",

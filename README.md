@@ -54,7 +54,7 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/kindleaf_development \
 
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/kindleaf_development \
 KINDLEAF_DEMO_SEED=1 \
-KINDLEAF_GENERATION_PROVIDER=mock \
+KINDLEAF_GENERATION_PROVIDER=composite \
 KINDLEAF_COST_BUDGET_WARNING_PERCENT=80 \
   cargo run --features db -- start -a
 ```
@@ -73,6 +73,12 @@ npm run dev
 
 - 邮箱：`lin@example.com`
 - 密码：`demo`
+
+本地真实联调建议：
+
+- 后端读取仓库根目录 `.env.local`，在其中配置 `DEEPSEEK_API_KEY`、`SEEDREAM_API_KEY` 或 `ARK_API_KEY`，并设置 `KINDLEAF_GENERATION_PROVIDER=composite`。
+- 前端读取 `frontend/.env.local`，默认使用 `VITE_API_BASE_URL=http://127.0.0.1:8080` 连接本地真实后端。
+- 如果只做 UI 验证且不希望消耗真实额度，可以临时把 `KINDLEAF_GENERATION_PROVIDER` 改回 `mock`。
 
 ## 验收命令
 

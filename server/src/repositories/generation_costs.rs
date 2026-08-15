@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -10,7 +10,7 @@ use crate::{
 };
 
 pub async fn record_generation_cost_log(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job: &GenerationJob,
 ) -> Result<(), DbErr> {
     let Some(output) = job.output_json.as_ref() else {

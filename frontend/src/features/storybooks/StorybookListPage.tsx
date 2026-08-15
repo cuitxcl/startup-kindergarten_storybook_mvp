@@ -71,8 +71,18 @@ export function StorybookListPage() {
     setError("");
     try {
       await deleteStorybook(workspace.id, book.id);
-      setRemoteBooks((current) => current.filter((item) => item.id !== book.id));
-      setPageMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current);
+      const type = filter === "plain" || filter === "custom" ? filter : undefined;
+      const status = filter === "exportable" ? "exportable" : undefined;
+      const refreshed = await listStorybooksPage(workspace.id, {
+        type,
+        status,
+        q: debouncedQuery,
+        limit: Math.max(PAGE_SIZE, remoteBooks.length),
+        offset: 0,
+      });
+      setRemoteBooks(refreshed.data);
+      setPageMeta(refreshed.meta);
+      setOffset(0);
       setNotice(`《${book.title}》已删除。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败，请稍后重试");
@@ -250,7 +260,10 @@ export function StorybookListPage() {
                       <p className="task-summary blocker">{customizationBlocker || exportBlocker}</p>
                     )}
                     {recentTaskCopy(book) && <p className="task-summary">{recentTaskCopy(book)}</p>}
-                    <div className="meta-line"><span>{storybookSourceLabel(book)}</span><span>{book.ageGroup}</span><span>{book.useScene}</span><span>{book.updatedAt}</span></div>
+                    <div className="meta-line compact-meta">
+                      <span>{storybookSourceLabel(book)}</span>
+                      <span>{book.updatedAt}</span>
+                    </div>
                     <div className="storybook-card-actions">
                       {book.type === "plain" ? (
                         <>

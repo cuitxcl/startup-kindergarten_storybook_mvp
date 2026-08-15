@@ -85,20 +85,19 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/kindleaf_development \
 KINDLEAF_DEMO_SEED=1
 ```
 
-生成服务当前默认使用结构化 mock provider，不需要真实 AI 密钥：
+生成服务本地真实联调推荐使用 DeepSeek + Seedream 组合 provider。后端会自动读取仓库根目录或 `server/` 下的 `.env.local`、`.env`，命令行里临时传入的环境变量优先级更高：
 
 ```sh
-KINDLEAF_GENERATION_PROVIDER=mock
+KINDLEAF_GENERATION_PROVIDER=composite
+DEEPSEEK_API_KEY=your-deepseek-api-key
+SEEDREAM_API_KEY=your-seedream-api-key
 KINDLEAF_COST_BUDGET_WARNING_PERCENT=80
 ```
 
-如果要验证真实文本生成，可以显式切到 DeepSeek。没有配置时默认仍使用 mock provider：
+如果只验证 UI 或不希望消耗真实额度，可以显式切回结构化 mock provider：
 
 ```sh
-KINDLEAF_GENERATION_PROVIDER=deepseek
-DEEPSEEK_API_KEY=your-api-key
-DEEPSEEK_ENDPOINT_PATH=/chat/completions
-DEEPSEEK_MODEL=deepseek-v4-flash
+KINDLEAF_GENERATION_PROVIDER=mock
 ```
 
 真实 provider smoke 和 readiness 脚本会自动读取仓库根目录或 `server/` 下的 `.env.local`、`.env`；命令行里临时传入的环境变量优先级更高。这些文件已被 `.gitignore` 忽略，适合放本地真实 key。

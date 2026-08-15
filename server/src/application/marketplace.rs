@@ -96,9 +96,11 @@ pub async fn copy_template(
             .map_err(common::db_error)?;
         let template_title = template.title.clone();
         let template_source_type = template.source_type.clone();
+        let actor_id = common::actor_user_id(headers)?;
         let book = crate::repositories::storybooks::create_from_marketplace_template(
             &ctx.db,
             workspace_id,
+            actor_id,
             template,
         )
         .await
@@ -106,7 +108,7 @@ pub async fn copy_template(
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "marketplace_template.copied",
             "storybook",
             Some(book.id),

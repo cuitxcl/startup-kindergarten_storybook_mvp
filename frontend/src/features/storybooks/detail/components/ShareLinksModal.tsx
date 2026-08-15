@@ -129,7 +129,7 @@ export function ShareLinksModal({
         <p className="share-meta privacy-note">分享前请确认不包含未授权儿童信息或家庭隐私。</p>
         {quality && (
           <details className="quality-details compact">
-            <summary>查看交付检查详情</summary>
+            <summary>查看作品检查详情</summary>
             <div className="quality-check-grid">
               {quality.checks.map((check) => (
                 <div className="quality-check-item" key={check.key}>

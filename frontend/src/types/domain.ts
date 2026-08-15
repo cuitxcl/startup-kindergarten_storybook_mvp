@@ -63,7 +63,7 @@ export interface StorybookPage {
   title: string;
   body: string;
   illustrationPrompt: string;
-  status: "ready" | "needs_regeneration" | "generating" | "failed";
+  status: "draft" | "ready" | "needs_regeneration" | "generating" | "failed";
   imageUrl?: string;
   selectedImageVariantId?: string;
 }

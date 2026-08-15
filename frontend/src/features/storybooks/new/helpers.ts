@@ -1,43 +1,72 @@
-import type { PageAspectRatio, StorybookPage, StorybookRole } from "../../../types/domain";
-import type { EditablePage, EditablePlan, EditableRole } from "./types";
+import type { StorybookPage, StorybookRole } from "../../../types/domain";
+import type { EditablePage, EditablePlan, EditableRole, StorybookRequestForm } from "./types";
 
 export function linesFromRows(value: string) {
   return value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
+}
+
+export function linesFromUnknown(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => linesFromUnknown(item));
+  }
+  if (typeof value === "string") {
+    return linesFromRows(value);
+  }
+  if (value && typeof value === "object") {
+    return [String(value)].filter(Boolean);
+  }
+  return [];
+}
+
+function outlineLinesFromUnknown(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => {
+      if (item && typeof item === "object") {
+        const outline = item as { page_range?: string; goal?: string; beat?: string };
+        return [`第 ${outline.page_range || index + 1} 页：${outline.goal || "情节推进"} - ${outline.beat || "待确认"}`];
+      }
+      return linesFromUnknown(item);
+    });
+  }
+  return linesFromUnknown(value);
 }
 
 export function planDraftFromOutput(output: unknown, form: { title: string; theme: string }): EditablePlan {
   const value = output as {
     plan?: {
       summary?: string;
-      outline?: { page_range?: string; goal?: string; beat?: string }[];
-      role_requirements?: string[];
-      review_points?: string[];
+      outline?: unknown;
+      role_requirements?: unknown;
+      review_points?: unknown;
     };
   } | undefined;
   const plan = value?.plan;
+  const outline = outlineLinesFromUnknown(plan?.outline);
+  const roleRequirements = linesFromUnknown(plan?.role_requirements);
+  const reviewPoints = linesFromUnknown(plan?.review_points);
   return {
     summary: plan?.summary || `围绕「${form.theme || "教学目标"}」组织一个适合班级共读的短绘本，先呈现冲突，再由老师引导孩子练习规则。`,
-    outlineText: plan?.outline?.length
-      ? plan.outline.map((item) => `第 ${item.page_range || "?"} 页：${item.goal || "情节推进"} - ${item.beat || "待确认"}`).join("\n")
+    outlineText: outline.length
+      ? outline.join("\n")
       : "第 1 页：进入熟悉场景，引出核心道具和规则需求\n第 2 页：孩子产生真实冲突或等待困难\n第 3 页：老师识别情绪并给出清楚办法\n第 4-5 页：孩子尝试规则，朋友给予回应\n第 6 页：规则被内化，故事温暖收束",
-    roleRequirementsText: plan?.role_requirements?.join("\n") || "主角：有明确外观、性格和转变\n同伴：与主角产生互动\n老师：温柔稳定，引导规则\n关键道具：推动情节，便于画面识别",
-    reviewPointsText: plan?.review_points?.join("\n") || "故事规则是否简单明确\n情绪是否安全、不恐吓\n画面是否适合幼儿园共读\n角色名称和形象能否跨页保持一致",
+    roleRequirementsText: roleRequirements.join("\n") || "主角：有明确外观、性格和转变\n同伴：与主角产生互动\n老师：温柔稳定，引导规则\n关键道具：推动情节，便于画面识别",
+    reviewPointsText: reviewPoints.join("\n") || "故事规则是否简单明确\n情绪是否安全、不恐吓\n画面是否适合幼儿园共读\n角色名称和形象能否跨页保持一致",
   };
 }
 
 export function generationInputFor(
   jobType: string,
-  form: { title: string; theme: string; ageGroup: string; pageCount: string; useScene: string; style: string; pageAspectRatio: PageAspectRatio; storyStyle?: string; storyFramework?: string },
+  form: StorybookRequestForm,
   plan: EditablePlan,
   roles: EditableRole[],
   pages: EditablePage[],
 ) {
   const base: Record<string, unknown> = {
-    title: form.title,
-    theme: form.theme,
+    title: optionalTrimmed(form.title),
+    theme: optionalTrimmed(form.theme),
     age_group: form.ageGroup,
     page_count: form.pageCount,
-    use_scene: form.useScene,
+    use_scene: optionalTrimmed(form.useScene),
     style: form.style,
     page_aspect_ratio: form.pageAspectRatio,
   };
@@ -46,6 +75,18 @@ export function generationInputFor(
   }
   if (form.storyFramework?.trim()) {
     base.story_framework = form.storyFramework.trim();
+  }
+  if (form.quickIdea?.trim()) {
+    base.quick_idea = form.quickIdea.trim();
+  }
+  if (form.personalMaterials?.length) {
+    base.personal_materials = form.personalMaterials;
+  }
+  if (form.visualComplexity?.trim()) {
+    base.visual_complexity = form.visualComplexity.trim();
+  }
+  if (form.characterConsistency?.trim()) {
+    base.character_consistency = form.characterConsistency.trim();
   }
 
   if (jobType === "storybook_plan") {
@@ -70,13 +111,18 @@ export function generationInputFor(
 
 function planPayload(plan: EditablePlan, form: { title: string; theme: string }) {
   return {
-    title: form.title,
-    theme: form.theme,
+    title: optionalTrimmed(form.title),
+    theme: optionalTrimmed(form.theme),
     summary: plan.summary,
     outline: linesFromRows(plan.outlineText),
     role_requirements: linesFromRows(plan.roleRequirementsText),
     review_points: linesFromRows(plan.reviewPointsText),
   };
+}
+
+function optionalTrimmed(value: string) {
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
 function roleReferenceStyle(style: string) {

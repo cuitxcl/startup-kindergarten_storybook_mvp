@@ -38,14 +38,56 @@ impl BackgroundWorker<GenerationJobArgs> for GenerationWorker {
     async fn perform(&self, args: GenerationJobArgs) -> loco_rs::Result<()> {
         #[cfg(feature = "db")]
         {
-            return generation::execute_generation_job(
-                &self.ctx.db,
-                args.workspace_id,
-                args.job_id,
-            )
-            .await
-            .map(|_| ())
-            .map_err(Into::into);
+            let completed =
+                generation::execute_generation_job(&self.ctx.db, args.workspace_id, args.job_id)
+                    .await
+                    .map_err(loco_rs::Error::from)?;
+            if completed.job_type == "creation_storybook_generate"
+                && completed.status == "succeeded"
+            {
+                match generation::create_creation_storybook_image_job_records(
+                    &self.ctx.db,
+                    &completed,
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        let mut enqueue_error = outcome.error;
+                        for image_job in &outcome.jobs {
+                            if let Err(err) = enqueue_generation_page_image_job(
+                                &self.ctx,
+                                image_job.workspace_id,
+                                image_job.id,
+                            )
+                            .await
+                            {
+                                enqueue_error = Some(err.to_string());
+                                break;
+                            }
+                        }
+                        generation::record_creation_image_enqueue_result(
+                            &self.ctx.db,
+                            &completed,
+                            &outcome.jobs,
+                            enqueue_error.as_deref(),
+                        )
+                        .await
+                        .map_err(loco_rs::Error::from)?;
+                    }
+                    Err(err) => {
+                        let error_message = err.to_string();
+                        generation::record_creation_image_enqueue_result(
+                            &self.ctx.db,
+                            &completed,
+                            &[],
+                            Some(error_message.as_str()),
+                        )
+                        .await
+                        .map_err(loco_rs::Error::from)?;
+                    }
+                }
+            }
+            return Ok(());
         }
 
         #[cfg(not(feature = "db"))]

@@ -1169,10 +1169,10 @@ export async function listStorybookImageVariants(
   if (payload.targetType) params.set("target_type", payload.targetType);
   if (payload.targetId) params.set("target_id", payload.targetId);
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  const response = await request<ApiStorybookImageVariant[]>(
+  const envelope = await requestEnvelope<ApiStorybookImageVariant[]>(
     `/api/workspaces/${workspaceId}/storybooks/${storybookId}/image-variants${suffix}`,
   );
-  return response.map(mapStorybookImageVariant);
+  return envelope.data.map(mapStorybookImageVariant);
 }
 
 export async function selectStorybookImageVariant(
@@ -1980,7 +1980,7 @@ function mapStorybookPage(page: ApiStorybookPage): StorybookPage {
     body: page.body,
     illustrationPrompt: page.illustration_prompt,
     status: page.status,
-    imageUrl: page.image_url || undefined,
+    imageUrl: apiResourceUrl(page.image_url),
     selectedImageVariantId: page.selected_image_variant_id || undefined,
   };
 }
@@ -1993,7 +1993,7 @@ function mapStorybookRole(role: ApiStorybookRole): StorybookRole {
     appearance: role.appearance,
     storyFunction: role.story_function,
     needsConsistency: role.needs_consistency,
-    referenceImageUrl: role.reference_image_url || undefined,
+    referenceImageUrl: apiResourceUrl(role.reference_image_url),
     referenceImagePrompt: role.reference_image_prompt || undefined,
     referenceStatus: role.reference_status || "not_started",
     selectedImageVariantId: role.selected_image_variant_id || undefined,
@@ -2008,7 +2008,7 @@ function mapStorybookImageVariant(variant: ApiStorybookImageVariant): StorybookI
     targetType: variant.target_type,
     targetId: variant.target_id,
     generationJobId: variant.generation_job_id || undefined,
-    imageUrl: variant.image_url || undefined,
+    imageUrl: apiResourceUrl(variant.image_url),
     prompt: variant.prompt || undefined,
     provider: variant.provider || undefined,
     status: variant.status,

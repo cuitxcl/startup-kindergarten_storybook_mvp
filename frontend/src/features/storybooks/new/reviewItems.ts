@@ -1,5 +1,5 @@
 import type { StorybookRole } from "../../../types/domain";
-import { linesFromRows } from "./helpers";
+import { linesFromRows, linesFromUnknown } from "./helpers";
 import type { EditablePage, EditablePlan, EditableRole } from "./types";
 
 export function storybookPlanItems(output: unknown, form: { title: string; theme: string }, draft?: EditablePlan) {
@@ -8,9 +8,9 @@ export function storybookPlanItems(output: unknown, form: { title: string; theme
       title?: string;
       theme?: string;
       summary?: string;
-      outline?: { page_range?: string; goal?: string; beat?: string }[];
-      role_requirements?: string[];
-      review_points?: string[];
+      outline?: unknown;
+      role_requirements?: unknown;
+      review_points?: unknown;
     };
   } | undefined;
   const plan = value?.plan;
@@ -26,20 +26,32 @@ export function storybookPlanItems(output: unknown, form: { title: string; theme
   }
   if (!plan) {
     return [
-      `标题：《${form.title || "一起玩小汽车"}》`,
-      `目标：${form.theme || "学习轮流、等待和表达感受"}`,
-      "结构：带来玩具 -> 朋友想玩 -> 老师引导 -> 沙漏轮流 -> 开心整理",
+      `标题：《${form.title || "未命名绘本"}》`,
+      `目标：${form.theme || "待确认"}`,
+      "故事走向：围绕用户的故事想法生成起因、冲突、引导、尝试和温暖收束",
       "角色需求：主角、朋友、老师、关键道具",
     ];
   }
+
+  const outline = Array.isArray(plan.outline)
+    ? plan.outline.flatMap((item, index) => {
+      if (item && typeof item === "object") {
+        const outlineItem = item as { page_range?: string; goal?: string; beat?: string };
+        return [`第 ${outlineItem.page_range || index + 1} 页：${outlineItem.goal || "情节"} - ${outlineItem.beat || "待确认"}`];
+      }
+      return linesFromUnknown(item);
+    })
+    : linesFromUnknown(plan.outline);
+  const roleRequirements = linesFromUnknown(plan.role_requirements);
+  const reviewPoints = linesFromUnknown(plan.review_points);
 
   return [
     `标题：《${plan.title || form.title || "未命名绘本"}》`,
     `目标：${plan.theme || form.theme || "待确认"}`,
     plan.summary ? `故事概述：${plan.summary}` : null,
-    ...(plan.outline || []).map((item) => `第 ${item.page_range || "?"} 页：${item.goal || "情节"} - ${item.beat || "待确认"}`),
-    plan.role_requirements?.length ? `角色需求：${plan.role_requirements.join("、")}` : null,
-    plan.review_points?.length ? `确认重点：${plan.review_points.join("、")}` : null,
+    ...outline,
+    roleRequirements.length ? `角色需求：${roleRequirements.join("、")}` : null,
+    reviewPoints.length ? `确认重点：${reviewPoints.join("、")}` : null,
   ].filter(Boolean) as string[];
 }
 
@@ -60,7 +72,7 @@ export function storybookRoleItems(output: unknown, editableRoles: EditableRole[
     return [
       `待生成：将根据第 2 步《${form?.title || "当前绘本"}》方案生成角色，不会使用固定示例角色。`,
       requirements.length ? `来自方案的角色需求：${requirements.join("、")}` : `角色会围绕「${form?.theme || "当前主题"}」和故事方案生成。`,
-      "操作：点击“生成角色道具”后，再审核或手动修改具体名称、稳定外观和故事作用。",
+      "操作：确认故事草稿后，系统会自动整理角色并继续生成图文。",
     ];
   }
 
@@ -81,9 +93,9 @@ export function storybookPageItems(output: unknown, editablePages: EditablePage[
   if (!value?.pages?.length) {
     const outline = linesFromRows(plan?.outlineText || "");
     return [
-      `待生成：将根据《${form?.title || "当前绘本"}》方案和第 3 步确认角色生成分页。`,
+      `待生成：将根据《${form?.title || "当前绘本"}》故事草稿和已确认角色生成分页。`,
       outline.length ? `来自方案的分页节奏：${outline.join("、")}` : `分页会围绕「${form?.theme || "当前主题"}」展开。`,
-      "操作：点击“生成分页图文”后，再逐页审核或手动修改标题、正文和插图描述。",
+      "操作：确认故事草稿后，系统会自动生成分页图文；完整文本之后还能编辑。",
     ];
   }
 

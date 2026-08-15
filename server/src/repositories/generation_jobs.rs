@@ -72,7 +72,7 @@ pub async fn move_to_running(
 }
 
 pub async fn complete_running_job(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     job_id: Uuid,
     output_json: JsonValue,
 ) -> Result<GenerationJob, DbErr> {
@@ -101,8 +101,32 @@ pub async fn complete_running_job(
     job_from_row(row)
 }
 
-pub async fn fail_running_job(
+pub async fn update_succeeded_job_output(
     db: &DatabaseConnection,
+    job_id: Uuid,
+    output_json: JsonValue,
+) -> Result<GenerationJob, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            update generation_jobs
+            set output_json = $2
+            where id = $1 and status = 'succeeded'
+            returning
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
+              attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
+            "#,
+            [job_id.into(), output_json.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("generation_job".to_string()))?;
+
+    job_from_row(row)
+}
+
+pub async fn fail_running_job(
+    db: &impl ConnectionTrait,
     job_id: Uuid,
     output_json: JsonValue,
     safe_message: String,
@@ -173,16 +197,16 @@ pub async fn cancel_job(
     job_from_row(row)
 }
 
-pub async fn requeue_stale_jobs_scoped(
+pub async fn stop_exhausted_stale_jobs_scoped(
     db: &DatabaseConnection,
     workspace_id: Option<Uuid>,
     age_minutes: i64,
     max_attempts: i32,
-) -> Result<u64, DbErr> {
+) -> Result<Vec<GenerationJob>, DbErr> {
     let age_minutes = age_minutes.max(1);
     let max_attempts = max_attempts.max(1);
-    let stopped = db
-        .execute(Statement::from_sql_and_values(
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
             update generation_jobs
@@ -211,6 +235,9 @@ pub async fn requeue_stale_jobs_scoped(
               and locked_at < now() - ($1::text)::interval
               and ($2::uuid is null or workspace_id = $2)
               and attempt_count >= $3
+            returning
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
+              attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
             "#,
             [
                 format!("{age_minutes} minutes").into(),
@@ -219,6 +246,17 @@ pub async fn requeue_stale_jobs_scoped(
             ],
         ))
         .await?;
+    rows.into_iter().map(job_from_row).collect()
+}
+
+pub async fn requeue_stale_jobs_scoped(
+    db: &DatabaseConnection,
+    workspace_id: Option<Uuid>,
+    age_minutes: i64,
+    max_attempts: i32,
+) -> Result<u64, DbErr> {
+    let age_minutes = age_minutes.max(1);
+    let max_attempts = max_attempts.max(1);
     let requeued = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -242,7 +280,7 @@ pub async fn requeue_stale_jobs_scoped(
             ],
         ))
         .await?;
-    Ok(stopped.rows_affected() + requeued.rows_affected())
+    Ok(requeued.rows_affected())
 }
 
 pub async fn claim_next_ready_job_scoped(
@@ -327,6 +365,52 @@ pub async fn find_active_storybook_job(
                 workspace_id.into(),
                 storybook_id.into(),
                 job_type.into(),
+                max_attempts.into(),
+            ],
+        ))
+        .await?;
+    row.map(job_from_row).transpose()
+}
+
+pub async fn find_active_image_target_job(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    job_type: &str,
+    target_key: &str,
+    target_id: Uuid,
+    max_attempts: i32,
+) -> Result<Option<GenerationJob>, DbErr> {
+    let max_attempts = max_attempts.max(1);
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select
+              id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
+              attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at
+            from generation_jobs
+            where workspace_id = $1
+              and storybook_id = $2
+              and job_type = $3
+              and input_json->>$4 = $5
+              and (
+                status in ('queued', 'running')
+                or (
+                  status = 'failed'
+                  and next_run_at is not null
+                  and attempt_count < $6
+                )
+              )
+            order by created_at desc
+            limit 1
+            "#,
+            [
+                workspace_id.into(),
+                storybook_id.into(),
+                job_type.into(),
+                target_key.into(),
+                target_id.to_string().into(),
                 max_attempts.into(),
             ],
         ))

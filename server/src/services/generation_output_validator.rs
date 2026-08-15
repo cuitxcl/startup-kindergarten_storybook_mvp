@@ -423,6 +423,117 @@ fn validate_provider_output_shape(
                 }
             }
         }
+        "creation_understanding" => {
+            let understanding = required_object(object, "understanding", job_type)?;
+            for field in [
+                "summary",
+                "target_user",
+                "goal",
+                "tone",
+                "scene",
+                "age_group",
+            ] {
+                required_text(understanding, field, job_type)?;
+            }
+            let materials = required_array(object, "materials", job_type)?;
+            if materials.is_empty() {
+                return Err(GenerationProviderError::new(
+                    "provider 输出 creation_understanding.materials 不能为空",
+                ));
+            }
+            for (index, material) in materials.iter().enumerate() {
+                let material = material.as_object().ok_or_else(|| {
+                    GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.materials[{index}] 必须是 object"
+                    ))
+                })?;
+                required_text_at(material, "id", job_type, &format!("materials[{index}]"))?;
+                required_text_at(material, "label", job_type, &format!("materials[{index}]"))?;
+                required_text_at(material, "type", job_type, &format!("materials[{index}]"))?;
+                required_text_at(material, "source", job_type, &format!("materials[{index}]"))?;
+            }
+        }
+        "creation_directions" => {
+            let directions = required_array(object, "directions", job_type)?;
+            if directions.len() < 3 {
+                return Err(GenerationProviderError::new(
+                    "provider 输出 creation_directions.directions 至少需要 3 个方向",
+                ));
+            }
+            for (index, direction) in directions.iter().enumerate() {
+                let direction = direction.as_object().ok_or_else(|| {
+                    GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.directions[{index}] 必须是 object"
+                    ))
+                })?;
+                for field in [
+                    "id",
+                    "title",
+                    "summary",
+                    "fit_reason",
+                    "personal_hook",
+                    "tone",
+                ] {
+                    required_text_at(direction, field, job_type, &format!("directions[{index}]"))?;
+                }
+                let material_ids = direction
+                    .get("material_ids")
+                    .and_then(|value| value.as_array())
+                    .ok_or_else(|| {
+                        GenerationProviderError::new(format!(
+                            "provider 输出 {job_type}.directions[{index}].material_ids 必须是 array"
+                        ))
+                    })?;
+                if material_ids.is_empty() {
+                    return Err(GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.directions[{index}].material_ids 不能为空"
+                    )));
+                }
+            }
+        }
+        "creation_outline" => {
+            let outline = required_object(object, "outline", job_type)?;
+            required_text(outline, "summary", job_type)?;
+            let pages = required_array(outline, "pages", job_type)?;
+            if pages.is_empty() {
+                return Err(GenerationProviderError::new(
+                    "provider 输出 creation_outline.outline.pages 不能为空",
+                ));
+            }
+            for (index, page) in pages.iter().enumerate() {
+                let page = page.as_object().ok_or_else(|| {
+                    GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.outline.pages[{index}] 必须是 object"
+                    ))
+                })?;
+                required_text_at(
+                    page,
+                    "summary",
+                    job_type,
+                    &format!("outline.pages[{index}]"),
+                )?;
+                let expected = (index + 1) as i64;
+                if page.get("page_number").and_then(|value| value.as_i64()) != Some(expected) {
+                    return Err(GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.outline.pages 页码必须从 1 连续递增"
+                    )));
+                }
+                let material_ids = page
+                    .get("material_ids")
+                    .and_then(|value| value.as_array())
+                    .ok_or_else(|| {
+                        GenerationProviderError::new(format!(
+                            "provider 输出 {job_type}.outline.pages[{index}].material_ids 必须是 array"
+                        ))
+                    })?;
+                if material_ids.is_empty() {
+                    return Err(GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.outline.pages[{index}].material_ids 不能为空"
+                    )));
+                }
+            }
+            required_array(outline, "review_points", job_type)?;
+        }
         _ => {}
     }
     Ok(())

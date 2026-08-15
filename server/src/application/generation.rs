@@ -459,6 +459,11 @@ pub async fn create_job(
     {
         let workspace = common::require_editor_db(ctx, headers, workspace_id).await?;
         let job_type = common::required(payload.job_type, "job_type")?;
+        if let Some(storybook_id) = payload.storybook_id {
+            crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
+                .await
+                .map_err(common::db_error)?;
+        }
         if job_type == "customization_plan" {
             if payload.storybook_id.is_none() {
                 return Err(ApiError::validation(

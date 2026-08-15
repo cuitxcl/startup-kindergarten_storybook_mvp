@@ -2,7 +2,7 @@ use loco_rs::controller::Routes;
 
 use super::{
     auth, children, delivery, generation, health, marketplace, operator, organization,
-    parent_intakes, storybooks, submissions, workspaces,
+    parent_intakes, storybook_creation, storybooks, submissions, workspaces,
 };
 
 pub fn routes() -> Vec<Routes> {
@@ -15,6 +15,7 @@ pub fn routes() -> Vec<Routes> {
         parent_intakes::routes(),
         marketplace::routes(),
         submissions::routes(),
+        storybook_creation::routes(),
         storybooks::routes(),
         generation::routes(),
         delivery::routes(),
@@ -43,6 +44,7 @@ mod tests {
         assert!(uris.contains(&"/api/marketplace/templates"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/submissions"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/storybooks"));
+        assert!(uris.contains(&"/api/workspaces/{workspace_id}/storybook-creation-sessions"));
         assert!(uris.contains(&"/api/workspaces/{workspace_id}/generation-jobs"));
         assert!(uris.contains(&"/api/share-links/{token}"));
         assert!(uris.contains(&"/api/operator/readiness"));

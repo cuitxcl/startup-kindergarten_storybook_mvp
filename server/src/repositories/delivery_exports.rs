@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use uuid::Uuid;
 
 use crate::{
-    models::{ExportJob, PaginationMeta},
+    models::{ExportJob, PaginationMeta, StorybookStatus},
     repositories::{
         delivery::{
             ensure_storybook_delivery_privacy_clear, ensure_storybook_in_workspace, export_from_row,
@@ -118,6 +118,8 @@ async fn write_export_file(
     storybook_id: Uuid,
 ) -> Result<String, DbErr> {
     let storybook = storybooks::find_any(db, storybook_id).await?;
+    ensure_storybook_deliverable_now(&storybook)?;
+    ensure_storybook_delivery_privacy_clear(db, storybook_id).await?;
     let page_images = latest_storybook_image_paths(db, storybook_id).await?;
     let file_name = export_file_name(export_id);
     let pdf = encode_storybook_pdf_with_images(&storybook, &page_images);
@@ -129,6 +131,18 @@ async fn write_export_file(
     )
     .await?;
     storage::save_export_file(&file_name, &pdf).map_err(DbErr::Custom)
+}
+
+fn ensure_storybook_deliverable_now(storybook: &crate::models::Storybook) -> Result<(), DbErr> {
+    if !matches!(
+        storybook.status,
+        StorybookStatus::Exportable | StorybookStatus::Listed
+    ) {
+        return Err(DbErr::Custom(
+            "绘本执行导出时已不再处于可交付状态".to_string(),
+        ));
+    }
+    crate::repositories::storybook_rules::ensure_delivery_access_ready(storybook)
 }
 
 async fn export_created_by(
@@ -401,6 +415,9 @@ async fn count_exports(db: &DatabaseConnection, storybook_id: Uuid) -> Result<us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{
+        Storybook, StorybookQualityReport, StorybookQualityStatus, StorybookType, Visibility,
+    };
     use uuid::Uuid;
 
     #[test]
@@ -419,5 +436,43 @@ mod tests {
         let truncated = truncate_export_error(&error);
         assert!(truncated.chars().count() <= 241);
         assert!(truncated.ends_with('…'));
+    }
+
+    #[test]
+    fn export_execution_rejects_non_deliverable_storybook() {
+        let mut storybook = test_storybook();
+        storybook.status = StorybookStatus::ImagePending;
+        let err = ensure_storybook_deliverable_now(&storybook).unwrap_err();
+        assert!(err.to_string().contains("不再处于可交付状态"));
+    }
+
+    fn test_storybook() -> Storybook {
+        Storybook {
+            id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            title: "测试绘本".to_string(),
+            storybook_type: StorybookType::Plain,
+            status: StorybookStatus::Exportable,
+            visibility: Visibility::Workspace,
+            source: "blank".to_string(),
+            source_title: None,
+            target_child_id: None,
+            creator_name: "老师".to_string(),
+            updated_at: "2026-08-12 10:00".to_string(),
+            age_group: "4-5 岁".to_string(),
+            use_scene: "规则引导".to_string(),
+            teaching_goal: "学习等待".to_string(),
+            cover_tone: "温暖".to_string(),
+            page_aspect_ratio: "portrait_4_5".to_string(),
+            teacher_review_status: "confirmed".to_string(),
+            teacher_reviewed_by: Some(Uuid::new_v4()),
+            teacher_reviewed_at: Some("2026-08-12 10:00".to_string()),
+            pages: Vec::new(),
+            roles: Vec::new(),
+            quality: StorybookQualityReport {
+                status: StorybookQualityStatus::Passed,
+                ..StorybookQualityReport::default()
+            },
+        }
     }
 }

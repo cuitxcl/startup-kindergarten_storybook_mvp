@@ -170,6 +170,7 @@ pub async fn page_image_job_input(
         "page_id": page_id,
         "prompt": prompt,
         "mode": "storybook_page_image",
+        "target_snapshot": page_content_snapshot(db, storybook_id, page_id).await?,
         "image_mode": image_mode.as_str(),
         "aspect_ratio": aspect.key,
         "size": aspect.image_size,
@@ -206,10 +207,63 @@ pub async fn role_reference_image_job_input(
         "role_id": role_id,
         "prompt": prompt,
         "mode": "storybook_role_reference_image",
+        "target_snapshot": role_content_snapshot(db, storybook_id, role_id).await?,
         "image_mode": image_mode.as_str(),
         "reference_images": reference_images,
         "edit_instruction": clean_optional_text(payload.edit_instruction),
         "strength": payload.strength.map(|value| value.clamp(0.0, 1.0))
+    }))
+}
+
+async fn page_content_snapshot(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    page_id: Uuid,
+) -> Result<JsonValue, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select title, body, illustration_prompt
+            from storybook_pages
+            where storybook_id = $1 and id = $2
+            limit 1
+            "#,
+            [storybook_id.into(), page_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("page".to_string()))?;
+    Ok(json!({
+        "title": row.try_get::<String>("", "title")?,
+        "body": row.try_get::<String>("", "body")?,
+        "illustration_prompt": row.try_get::<String>("", "illustration_prompt")?,
+    }))
+}
+
+async fn role_content_snapshot(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+    role_id: Uuid,
+) -> Result<JsonValue, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency
+            from storybook_roles
+            where storybook_id = $1 and id = $2
+            limit 1
+            "#,
+            [storybook_id.into(), role_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("role".to_string()))?;
+    Ok(json!({
+        "name": row.try_get::<String>("", "name")?,
+        "role_type": row.try_get::<String>("", "role_type")?,
+        "appearance": row.try_get::<String>("", "appearance")?,
+        "story_function": row.try_get::<String>("", "story_function")?,
+        "needs_consistency": row.try_get::<bool>("", "needs_consistency")?,
     }))
 }
 
@@ -937,12 +991,24 @@ async fn page_story_context(
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("page".to_string()))?;
 
-    let current_title = row.try_get::<String>("", "current_title").unwrap_or_default();
-    let current_body = row.try_get::<String>("", "current_body").unwrap_or_default();
-    let prev_title = row.try_get::<Option<String>>("", "prev_title")?.unwrap_or_default();
-    let prev_body = row.try_get::<Option<String>>("", "prev_body")?.unwrap_or_default();
-    let next_title = row.try_get::<Option<String>>("", "next_title")?.unwrap_or_default();
-    let next_body = row.try_get::<Option<String>>("", "next_body")?.unwrap_or_default();
+    let current_title = row
+        .try_get::<String>("", "current_title")
+        .unwrap_or_default();
+    let current_body = row
+        .try_get::<String>("", "current_body")
+        .unwrap_or_default();
+    let prev_title = row
+        .try_get::<Option<String>>("", "prev_title")?
+        .unwrap_or_default();
+    let prev_body = row
+        .try_get::<Option<String>>("", "prev_body")?
+        .unwrap_or_default();
+    let next_title = row
+        .try_get::<Option<String>>("", "next_title")?
+        .unwrap_or_default();
+    let next_body = row
+        .try_get::<Option<String>>("", "next_body")?
+        .unwrap_or_default();
 
     let mut parts = vec![format!(
         "本页标题《{}》，核心情节：{}",
@@ -991,7 +1057,13 @@ fn page_role_relation_clause(named_roles: &[PageNamedRole]) -> String {
 
     let mut parts: Vec<String> = named_roles
         .iter()
-        .map(|role| format!("{}：{}", role.name, clip_prompt_text(&role.story_function, 36)))
+        .map(|role| {
+            format!(
+                "{}：{}",
+                role.name,
+                clip_prompt_text(&role.story_function, 36)
+            )
+        })
         .collect();
 
     if let Some(name) = protagonist {
@@ -1018,7 +1090,9 @@ fn page_role_relation_clause(named_roles: &[PageNamedRole]) -> String {
             props.join("、")
         ));
     }
-    parts.push("角色之间要有远近、朝向和遮挡层次，明确谁靠前、谁靠后、谁在看谁、谁在回应谁".to_string());
+    parts.push(
+        "角色之间要有远近、朝向和遮挡层次，明确谁靠前、谁靠后、谁在看谁、谁在回应谁".to_string(),
+    );
     parts.join("；")
 }
 
@@ -1064,7 +1138,8 @@ mod tests {
 
     #[test]
     fn page_camera_priority_guard_keeps_wide_shots_above_local_details() {
-        let guard = page_camera_priority_guard("儿童绘本插图，全景，老师弯腰看着孩子，孩子眼睛亮晶晶。");
+        let guard =
+            page_camera_priority_guard("儿童绘本插图，全景，老师弯腰看着孩子，孩子眼睛亮晶晶。");
         assert!(guard.contains("镜头优先级最高"));
         assert!(guard.contains("也不能把镜头推近"));
     }

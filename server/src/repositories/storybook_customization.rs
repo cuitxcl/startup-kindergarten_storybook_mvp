@@ -8,6 +8,7 @@ pub async fn derive_custom(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     source_storybook_id: Uuid,
+    creator_id: Uuid,
     payload: DeriveCustomRequest,
 ) -> Result<Storybook, DbErr> {
     let source =
@@ -25,7 +26,7 @@ pub async fn derive_custom(
         r#"
         insert into storybooks
           (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, $11, '00000000-0000-0000-0000-000000000001', now(), now())
+        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
         "#,
         [
             new_id.into(),
@@ -39,6 +40,7 @@ pub async fn derive_custom(
             customization.teaching_goal.into(),
             customization.cover_tone.into(),
             source.page_aspect_ratio.into(),
+            creator_id.into(),
         ],
     ))
     .await?;

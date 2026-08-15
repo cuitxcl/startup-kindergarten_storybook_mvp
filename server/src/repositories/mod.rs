@@ -55,6 +55,8 @@ pub mod privacy;
 #[cfg(feature = "db")]
 pub mod storage_quota;
 #[cfg(feature = "db")]
+pub mod storybook_creation_sessions;
+#[cfg(feature = "db")]
 pub mod storybook_customization;
 #[cfg(feature = "db")]
 pub mod storybook_editing;
@@ -62,6 +64,8 @@ pub mod storybook_editing;
 pub mod storybook_factory;
 #[cfg(feature = "db")]
 pub mod storybook_image_variants;
+#[cfg(feature = "db")]
+pub mod storybook_lifecycle;
 #[cfg(feature = "db")]
 pub mod storybook_queries;
 #[cfg(feature = "db")]

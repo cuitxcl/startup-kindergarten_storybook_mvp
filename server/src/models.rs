@@ -385,6 +385,202 @@ pub struct GenerationJob {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationUnderstanding {
+    pub summary: String,
+    pub target_user: String,
+    pub goal: String,
+    pub tone: String,
+    pub scene: String,
+    pub age_group: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quality_flags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationMaterial {
+    pub id: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub material_type: String,
+    pub source: String,
+    pub confidence: Option<f64>,
+    pub locked: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoryDirection {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+    pub fit_reason: String,
+    pub personal_hook: String,
+    pub material_ids: Vec<String>,
+    pub tone: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quality_flags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationOutlinePage {
+    pub page_number: u32,
+    pub summary: String,
+    pub material_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationOutline {
+    pub summary: String,
+    pub pages: Vec<CreationOutlinePage>,
+    pub review_points: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quality_flags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VisualPreferences {
+    pub style: String,
+    pub page_aspect_ratio: String,
+    pub visual_complexity: String,
+    pub character_consistency: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationGenerationSummary {
+    pub text_generation_status: String,
+    pub image_generation_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_notice: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recoverable_actions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookCreationSession {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub created_by: Uuid,
+    pub status: String,
+    pub quick_idea: String,
+    pub use_scene: String,
+    pub age_group: String,
+    pub page_count: u32,
+    pub understanding: CreationUnderstanding,
+    pub materials: Vec<CreationMaterial>,
+    pub directions: Vec<StoryDirection>,
+    pub selected_direction_id: Option<String>,
+    pub outline: Option<CreationOutline>,
+    pub visual_preferences: VisualPreferences,
+    pub storybook_id: Option<Uuid>,
+    pub last_job_id: Option<Uuid>,
+    pub idempotency_key: Option<String>,
+    pub generation_summary: CreationGenerationSummary,
+    pub requires_understanding_refresh: bool,
+    pub requires_direction_refresh: bool,
+    pub requires_outline_refresh: bool,
+    pub next_action: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookCreationSessionListItem {
+    pub id: Uuid,
+    pub status: String,
+    pub quick_idea: String,
+    pub understanding_summary: String,
+    pub selected_direction_title: Option<String>,
+    pub storybook_id: Option<Uuid>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationSessionUpdateResponse {
+    pub id: Uuid,
+    pub status: String,
+    pub requires_understanding_refresh: bool,
+    pub requires_direction_refresh: bool,
+    pub requires_outline_refresh: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationMaterialsResponse {
+    pub id: Uuid,
+    pub status: String,
+    pub materials: Vec<CreationMaterial>,
+    pub requires_direction_refresh: bool,
+    pub requires_outline_refresh: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationDirectionsResponse {
+    pub status: String,
+    pub directions: Vec<StoryDirection>,
+    pub next_action: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SelectDirectionResponse {
+    pub status: String,
+    pub selected_direction_id: String,
+    pub selected_direction: StoryDirection,
+    pub next_action: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationOutlineResponse {
+    pub status: String,
+    pub outline: CreationOutline,
+    pub next_action: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateOutlinePageResponse {
+    pub page: CreationOutlinePage,
+    pub requires_storybook_regeneration: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateOutlineResponse {
+    pub status: String,
+    pub outline: CreationOutline,
+    pub requires_storybook_regeneration: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VisualPreferencesResponse {
+    pub id: Uuid,
+    pub status: String,
+    pub visual_preferences: VisualPreferences,
+    pub requires_storybook_regeneration: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationGenerationStep {
+    pub key: String,
+    pub label: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreationStorybookGenerationResponse {
+    pub status: String,
+    pub storybook_id: Option<Uuid>,
+    pub job_id: Option<Uuid>,
+    pub generation_summary: CreationGenerationSummary,
+    pub steps: Vec<CreationGenerationStep>,
+    pub next_action: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuditLogEntry {
     pub id: Uuid,
     pub workspace_id: Option<Uuid>,
@@ -529,6 +725,100 @@ pub struct GenerationJobListQuery {
     pub limit: Option<usize>,
     #[serde(default)]
     pub offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StorybookCreationSessionListQuery {
+    pub status: Option<String>,
+    pub created_by: Option<Uuid>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateStorybookCreationSessionRequest {
+    pub quick_idea: String,
+    pub use_scene: Option<String>,
+    pub age_group: Option<String>,
+    pub page_count: Option<u32>,
+    pub style: Option<String>,
+    pub page_aspect_ratio: Option<String>,
+    pub visual_complexity: Option<String>,
+    pub character_consistency: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateStorybookCreationSessionRequest {
+    pub quick_idea: Option<String>,
+    pub use_scene: Option<String>,
+    pub age_group: Option<String>,
+    pub page_count: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RefreshUnderstandingRequest {
+    pub preserve_user_materials: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MaterialOperation {
+    pub op: String,
+    pub id: Option<String>,
+    pub label: Option<String>,
+    #[serde(rename = "type")]
+    pub material_type: Option<String>,
+    pub locked: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchCreationMaterialsRequest {
+    pub operations: Vec<MaterialOperation>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateDirectionsRequest {
+    pub direction_count: Option<u32>,
+    pub refresh_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SelectDirectionRequest {
+    pub direction_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateOutlineRequest {
+    pub page_count: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateOutlinePageRequest {
+    pub instruction: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateCreationOutlineRequest {
+    pub summary: String,
+    pub pages: Vec<CreationOutlinePage>,
+    #[serde(default)]
+    pub review_points: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateVisualPreferencesRequest {
+    pub style: Option<String>,
+    pub page_aspect_ratio: Option<String>,
+    pub visual_complexity: Option<String>,
+    pub character_consistency: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateCreationStorybookRequest {
+    pub generation_mode: String,
+    pub include_images: Option<bool>,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Deserialize)]

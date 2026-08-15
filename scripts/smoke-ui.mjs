@@ -308,39 +308,48 @@ async function main() {
 
   console.log("8. create plain storybook");
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/new`);
-  await waitForText("新建普通绘本");
-  await expectWizardStepDisabled("绘本方案");
-  await expectWizardStepDisabled("角色道具");
-  await expectWizardStepDisabled("分页编辑");
-  await fillInputAt(0, plainTitle);
-  await fillInputAt(1, "验证 UI smoke 普通绘本流程");
-  await clickByText("生成绘本方案");
-  await waitForText("绘本方案已生成");
-  await expectWizardStepEnabled("绘本方案");
-  await expectWizardStepDisabled("角色道具");
-  await waitForText("故事概述");
-  await clickByText("确认方案，继续角色");
-  await waitForText("角色与关键道具");
-  await expectWizardStepEnabled("角色道具");
-  await expectWizardStepDisabled("分页编辑");
-  await waitForText("生成角色道具");
-  await clickByText("生成角色道具");
-  await waitForText("角色与道具已生成并写入绘本");
+  await waitForText("想做一本什么故事");
+  await expectWizardStepDisabled("方向");
+  await expectWizardStepDisabled("大纲");
+  await expectWizardStepDisabled("生成");
+  await fillByLabel("绘本标题", plainTitle);
+  await fillByLabel("主题/目标", "冲突时先停下来表达");
+  await fillByLabel("故事想法", "想让孩子不打人");
+  await waitForEnabledButton("开始生成方向");
+  await clickByText("开始生成方向");
+  await waitForText("故事草稿已生成");
+  await waitForText("想从哪个角度讲这个故事");
+  await expectWizardStepEnabled("方向");
+  await expectWizardStepDisabled("大纲");
+  await clickByText("选这个");
+  await waitForEnabledButton("按这个方向继续");
+  await clickByText("调整想法");
+  await waitForText("故事想法");
+  await fillByLabel("故事想法", `${plainTitle}，帮助孩子在冲突时先停下来表达。`);
+  await waitForEnabledButton("开始生成方向");
+  await clickByText("开始生成方向");
+  await waitForText("故事草稿已生成");
+  await waitForText("想从哪个角度讲这个故事");
+  await expectButtonDisabled("选择一个方向");
+  await clickByText("选这个");
+  await waitForEnabledButton("按这个方向继续");
+  await clickByText("按这个方向继续");
+  await waitForText("故事会这样展开");
+  await expectWizardStepEnabled("大纲");
+  await expectWizardStepDisabled("生成");
+  await clickByText("就按这个生成");
+  await waitForText("准备生成这本专属绘本");
+  await expectWizardStepEnabled("生成");
+  await clickByText("开始生成整本绘本");
+  await waitForUrl("/storybooks/");
+  await waitForText("普通绘本详情");
+  await waitForText("生成结果已展示");
   const smokeBooks = (await apiGet(`/api/workspaces/${schoolWorkspaceId}/storybooks?limit=50&offset=0`))?.data || [];
   const smokeBookId = smokeBooks.find((item) => item.title === plainTitle)?.id;
   if (!smokeBookId) throw new Error("smoke storybook was not created");
   const generatedBook = (await apiGet(`/api/workspaces/${schoolWorkspaceId}/storybooks/${smokeBookId}`))?.data;
   const roleNames = (generatedBook?.roles || []).map((role) => role.name);
   if (!roleNames.length) throw new Error("roles were not generated");
-  await waitForText(roleNames[0]);
-  await clickByText("确认角色，生成分页");
-  await waitForText("分页图文");
-  await waitForText("分页图文已生成并写入绘本");
-  await expectWizardStepEnabled("分页编辑");
-  await clickByText("确认分页，进入预览");
-  await waitForUrl("/storybooks/");
-  await waitForText("普通绘本详情");
-  await waitForText("生成结果已展示");
   await waitForText(plainTitle);
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks`);
   await waitForText("园所绘本");
@@ -1009,8 +1018,8 @@ async function expectButtonDisabled(text) {
 async function expectWizardStepDisabled(text) {
   await waitUntil(
     () => evaluate(`(() => {
-      const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
-      return button ? Boolean(button.disabled) : false;
+      const button = [...document.querySelectorAll('.wizard-top-nav button, .wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
+      return button ? Boolean(button.disabled) || button.getAttribute('aria-disabled') === 'true' || button.classList.contains('locked') : false;
     })()`),
     `wizard step is not disabled: ${text}`,
   );
@@ -1019,8 +1028,8 @@ async function expectWizardStepDisabled(text) {
 async function expectWizardStepEnabled(text) {
   await waitUntil(
     () => evaluate(`(() => {
-      const button = [...document.querySelectorAll('.wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
-      return button ? !button.disabled : false;
+      const button = [...document.querySelectorAll('.wizard-top-nav button, .wizard-side-nav button')].find((item) => item.innerText.includes(${JSON.stringify(text)}));
+      return button ? !button.disabled && button.getAttribute('aria-disabled') !== 'true' && !button.classList.contains('locked') : false;
     })()`),
     `wizard step is not enabled: ${text}`,
   );

@@ -213,6 +213,7 @@ pub async fn get_public_share(ctx: &AppContext, token: String) -> Result<Storybo
         let book = crate::repositories::delivery::storybook_by_share_token(&ctx.db, &token)
             .await
             .map_err(common::db_error)?;
+        ensure_storybook_deliverable(&book)?;
         crate::repositories::delivery::record_share_link_access(&ctx.db, &token)
             .await
             .map_err(common::db_error)?;

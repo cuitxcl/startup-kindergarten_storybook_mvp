@@ -19,6 +19,9 @@ const TEXT_JOB_TYPES: &[&str] = &[
     "storybook_pages",
     "storybook_page_prompt",
     "customization_plan",
+    "creation_understanding",
+    "creation_directions",
+    "creation_outline",
 ];
 
 pub const SUPPORTED_TEXT_JOB_TYPES: &[&str] = TEXT_JOB_TYPES;
@@ -516,7 +519,7 @@ const ILLUSTRATION_SLOT_GUIDE: &str = "每页的插图设定必须输出为 illu
 pub(crate) fn prompt_for(job_type: &str) -> String {
     match job_type {
         "storybook_plan" => {
-            "根据 input.title、input.theme、input.use_scene、input.style 生成普通绘本方案。input.style 是画面风格（插画视觉效果），input.story_style 是故事风格（情节基调与叙事类型，如温情治愈、冒险奇幻、幽默搞笑）；如果 input.story_style 非空，summary、outline 的情节走向、冲突设计和情绪基调必须符合该故事风格。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。如果 input.story_framework 非空，那是用户提供的故事框架：summary 和 outline 必须严格按框架的起因、经过、结果展开分页，不得另起主线或更换结局，只允许在框架内补充细节、对话和情绪描写；story_framework 为空时由你自由创作主线。先给故事主线，再给分页节奏和老师审核点。分页节奏（outline）必须一页一条，共 page_count 条：每条 page_range 只写单个页码数字（如 \"3\"），禁止写 \"1-2\"、\"3-4\" 这类跨页区间；每条的 goal 和 beat 只描述这一页的画面与剧情，不要把两页内容合并进一条。"
+            "根据 input.title、input.theme、input.use_scene、input.style 生成普通儿童绘本方案。input.style 是画面风格（插画视觉效果），input.story_style 是故事风格（情节基调与叙事类型，如温情治愈、冒险奇幻、幽默搞笑）；如果 input.story_style 非空，summary、outline 的情节走向、冲突设计和情绪基调必须符合该故事风格。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。如果 input.story_framework 非空，那是用户提供的故事框架：summary 和 outline 必须严格按框架的起因、经过、结果展开分页，不得另起主线或更换结局，只允许在框架内补充细节、对话和情绪描写；story_framework 为空时由你自由创作主线。先给故事主线，再给分页节奏和创作者确认点。分页节奏（outline）必须一页一条，共 page_count 条：每条 page_range 只写单个页码数字（如 \"3\"），禁止写 \"1-2\"、\"3-4\" 这类跨页区间；每条的 goal 和 beat 只描述这一页的画面与剧情，不要把两页内容合并进一条。"
                 .to_string()
         }
         "storybook_roles" => {
@@ -524,7 +527,7 @@ pub(crate) fn prompt_for(job_type: &str) -> String {
                 .to_string()
         }
         "storybook_pages" => {
-            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
+            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。如果 input.creation_context 存在，说明这是“专属故事共创”的最终成品生成：必须优先服务用户的被理解、参与感和私人定制感；正文要承接 input.creation_context.quick_idea、understanding、selected_direction、materials、visual_preferences，不能只泛泛扩写 outline。input.creation_context.materials 中 locked=true 的素材，其 label 必须至少一次原样出现在某一页 title、body 或最终插图描述中；如果素材较难自然进入正文，也要用原 label 放入画面道具、场景细节或角色称呼里，避免只做语义暗示。\n\n必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。每页正文应像正式儿童绘本文案：简短、有画面、有情绪推进，避免说教，避免把大纲句原样复制成正文。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
         }
         "storybook_page_prompt" => {
             format!("根据 input.page 的标题（title）和正文（body），为这一页重新创作插图设定，替换现有插图描述。正文必须忠于 input.page.body，不要改动剧情。必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。\n\ninput.neighbor_pages 包含前后相邻页的插图描述（可能为空）：本页必须与相邻页保持场景连续，相邻页出现的人群在本页必须仍在场（可以退到后排或让出画面中心，但不能消失）；如果剧情确实让人群散去了，必须在 crowd 槽位写明人群去了哪里。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
@@ -532,6 +535,15 @@ pub(crate) fn prompt_for(job_type: &str) -> String {
         "customization_plan" => {
             "基于普通绘本和儿童档案生成定制方案，只输出可审核的改写点和风险检查。"
                 .to_string()
+        }
+        "creation_understanding" => {
+            "你是儿童故事共创助手，目标不是帮用户填表，而是让用户感觉“AI 真的听懂了我为什么要做这本绘本”。请基于 input.quick_idea、input.use_scene、input.age_group 和 input.preserved_user_materials 输出 understanding 与 materials。\n\n理解规则：summary 要用用户语言复述真实动机，必须包含对象、冲突/事件、想传达的目标；不要只摘关键词，不要写技术解释。target_user 根据语境判断为 parent、teacher、creator 或 organization，老师只是可能场景之一，不要默认锁定老师。goal 写成孩子或共读场景中的成长目标；tone 写成用户能理解的故事语气。\n\n素材规则：materials 必须提取能带来私人定制感的真实姓名、地点、物品、事件、主题、情绪、关系；input.preserved_user_materials 必须保留，不得改名、删掉或降低 locked。用户明确提到的人名、地点、物品、真实事件默认 locked=true；泛泛主题可以 locked=false。材料 type 只能是 character/object/place/event/theme/emotion/custom，source 只能是 ai_extracted/user_added/system。\n\n输出只包含 schema 要求字段；除 schema 固定字段外，不要输出额外技术解释；message、summary、quality_flags 等用户可见或业务字段中不要提 provider、job、prompt、model、队列。".to_string()
+        }
+        "creation_directions" => {
+            "你正在把用户的一句话想法变成 3 个可选择的故事方向。方向选择是用户参与感的来源，所以 3 个方向必须是真正不同的叙事策略，而不是替换形容词或换标题。\n\n输入包含 input.quick_idea、input.understanding、input.materials。请优先使用 locked=true 的素材；每个方向的 material_ids 至少包含一个真实素材，能自然使用多个时优先多用。每个方向必须包含：title、summary、fit_reason、personal_hook、material_ids、tone。\n\n差异规则：3 个方向应分别体现不同创作角度，例如成长练习、趣味任务、特别回忆、关系修复、课堂导入、礼物纪念等，但不要机械套模板，要根据用户动机选择。summary 写一句用户看得懂的剧情走向；fit_reason 说明适合什么共读/使用场景；personal_hook 必须明确说私人素材会在故事哪个关键时刻发挥作用。\n\n输出只包含 schema 要求字段；除 schema 固定字段外，不要输出额外技术解释；message、summary、fit_reason、personal_hook、quality_flags 等用户可见或业务字段中不要提 provider、job、prompt、model。".to_string()
+        }
+        "creation_outline" => {
+            "你正在生成正式绘本前的大纲。大纲不是正文编辑器，而是帮助用户放心点击生成的心理缓冲。请基于 input.quick_idea、input.understanding、input.selected_direction、input.materials、input.visual_preferences 和 input.page_count 输出 outline。\n\n大纲规则：pages 数量必须等于 page_count，page_number 从 1 连续递增；每页只写一句 summary，短而具体，不要写成完整正文；每页 material_ids 至少引用一个素材。locked=true 的素材必须尽量进入不同页面的具体情节，而不是只出现在标题或 review_points。summary 要让用户看见“我的名字/地点/物品/真实事件如何被用到”。\n\n节奏规则：开头建立真实场景，中段让冲突或任务推进，结尾给孩子可理解的温柔结果；不要说教，不要把所有问题一页解决。visual_preferences 只影响画面复杂度和画面想象，不要暴露模型参数。\n\nreview_points 用用户语言列出 2-4 个确认点，例如“是否保留某个真实素材”“语气是否足够温柔”“结尾是否适合实际共读”。输出只包含 schema 要求字段；除 schema 固定字段外，不要输出额外技术解释；message、summary、review_points、quality_flags 等用户可见或业务字段中不要提 provider、job、prompt、model。".to_string()
         }
         _ => "生成结构化绘本内容。".to_string(),
     }
@@ -575,6 +587,7 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
             "provider": "string",
             "mode": "storybook_pages",
             "message": "string",
+            "quality_notice": "string（可选；仅当专属素材无法自然进入成品或需要用户确认时，用用户能理解的话说明，不要写技术原因）",
             "pages": [{
                 "page_number": "number",
                 "title": "string",
@@ -590,7 +603,7 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
                 },
                 "status": "draft"
             }],
-            "editor_notes": ["string"]
+            "editor_notes": ["string（给创作者的用户语言检查点，不要写技术细节）"]
         }),
         "customization_plan" => json!({
             "schema_version": "generation.provider.v1",
@@ -622,6 +635,61 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
                     "prop_detail": "string（一个氛围道具细节，可为空字符串）"
                 }
             }
+        }),
+        "creation_understanding" => json!({
+            "schema_version": "creation.provider.v1",
+            "provider": "string",
+            "mode": "creation_understanding",
+            "message": "string",
+            "understanding": {
+                "summary": "string",
+                "target_user": "parent | teacher | creator | organization",
+                "goal": "string",
+                "tone": "string",
+                "scene": "string",
+                "age_group": "string"
+            },
+            "materials": [{
+                "id": "mat_1",
+                "label": "string",
+                "type": "character | object | place | event | theme | emotion | custom",
+                "source": "ai_extracted | user_added | system",
+                "confidence": "number or null",
+                "locked": "boolean"
+            }],
+            "quality_flags": ["string"]
+        }),
+        "creation_directions" => json!({
+            "schema_version": "creation.provider.v1",
+            "provider": "string",
+            "mode": "creation_directions",
+            "message": "string",
+            "directions": [{
+                "id": "dir_1",
+                "title": "string",
+                "summary": "string",
+                "fit_reason": "string",
+                "personal_hook": "string",
+                "material_ids": ["mat_1"],
+                "tone": "gentle | playful | warm | clear | encouraging | custom"
+            }],
+            "quality_flags": ["string"]
+        }),
+        "creation_outline" => json!({
+            "schema_version": "creation.provider.v1",
+            "provider": "string",
+            "mode": "creation_outline",
+            "message": "string",
+            "outline": {
+                "summary": "string",
+                "pages": [{
+                    "page_number": "number",
+                    "summary": "string",
+                    "material_ids": ["mat_1"]
+                }],
+                "review_points": ["string"]
+            },
+            "quality_flags": ["string"]
         }),
         _ => json!({}),
     }

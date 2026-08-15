@@ -12,6 +12,7 @@ export const storybookStatusLabel: Record<Storybook["status"], string> = {
 };
 
 export const pageStatusLabel: Record<StorybookPage["status"], string> = {
+  draft: "待生成",
   ready: "插图已完成",
   needs_regeneration: "需要重绘",
   generating: "生成中",

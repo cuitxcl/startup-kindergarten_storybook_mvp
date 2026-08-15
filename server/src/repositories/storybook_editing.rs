@@ -117,7 +117,7 @@ pub async fn update_role(
                 reference_status = $10
             where storybook_id = $1 and id = $2
             returning id, name, role_type, appearance, coalesce(story_function, '') as story_function, needs_consistency,
-                      reference_image_url, reference_image_prompt, reference_status
+                      reference_image_url, reference_image_prompt, reference_status, selected_image_variant_id
             "#,
             [
                 storybook_id.into(),
@@ -149,7 +149,7 @@ pub async fn update_role(
         reference_image_url: row.try_get("", "reference_image_url")?,
         reference_image_prompt: row.try_get("", "reference_image_prompt")?,
         reference_status: row.try_get("", "reference_status")?,
-        selected_image_variant_id: None,
+        selected_image_variant_id: row.try_get("", "selected_image_variant_id")?,
     })
 }
 
@@ -176,20 +176,18 @@ async fn touch_storybook(
     workspace_id: Uuid,
     storybook_id: Uuid,
 ) -> Result<(), DbErr> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r#"
-        update storybooks
-        set updated_at = now(),
-            teacher_review_status = 'pending',
-            teacher_reviewed_by = null,
-            teacher_reviewed_at = null
-        where workspace_id = $1 and id = $2
-        "#,
-        [workspace_id.into(), storybook_id.into()],
-    ))
-    .await?;
-    Ok(())
+    let exists = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "select id from storybooks where workspace_id = $1 and id = $2 limit 1",
+            [workspace_id.into(), storybook_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !exists {
+        return Err(DbErr::RecordNotFound("storybook".to_string()));
+    }
+    crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id).await
 }
 
 fn clean_optional_text(value: Option<String>) -> Option<String> {

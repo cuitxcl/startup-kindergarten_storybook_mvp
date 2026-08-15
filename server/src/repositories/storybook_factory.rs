@@ -8,6 +8,7 @@ use crate::repositories::storybook_rules::storybook_type_name;
 pub async fn create_plain(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    creator_id: Uuid,
     payload: CreateStorybookRequest,
 ) -> Result<Storybook, DbErr> {
     let storybook_id = Uuid::new_v4();
@@ -17,7 +18,7 @@ pub async fn create_plain(
         r#"
         insert into storybooks
           (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, $7, $8, '00000000-0000-0000-0000-000000000001', now(), now())
+        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, $7, $8, $9, now(), now())
         "#,
         [
             storybook_id.into(),
@@ -33,6 +34,7 @@ pub async fn create_plain(
                 .unwrap_or_else(|| "温暖、清楚".to_string())
                 .into(),
             page_aspect_ratio.into(),
+            creator_id.into(),
         ],
     ))
     .await?;
@@ -42,6 +44,7 @@ pub async fn create_plain(
 pub async fn create_from_marketplace_template(
     db: &DatabaseConnection,
     workspace_id: Uuid,
+    creator_id: Uuid,
     template: MarketplaceTemplate,
 ) -> Result<Storybook, DbErr> {
     let storybook_id = Uuid::new_v4();
@@ -50,7 +53,7 @@ pub async fn create_from_marketplace_template(
         r#"
         insert into storybooks
           (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, source_storybook_id, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'draft', 'private', 'marketplace', $3, $4, $5, $6, '柔和、安静', 'portrait_4_5', $7, '00000000-0000-0000-0000-000000000001', now(), now())
+        values ($1, $2, 'plain', 'draft', 'private', 'marketplace', $3, $4, $5, $6, '柔和、安静', 'portrait_4_5', $7, $8, now(), now())
         "#,
         [
             storybook_id.into(),
@@ -60,6 +63,7 @@ pub async fn create_from_marketplace_template(
             template.use_scene.clone().into(),
             template.summary.clone().into(),
             template.source_storybook_id.into(),
+            creator_id.into(),
         ],
     ))
     .await?;
@@ -75,6 +79,7 @@ pub async fn duplicate(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
+    creator_id: Uuid,
     requested_title: Option<String>,
 ) -> Result<Storybook, DbErr> {
     let source =
@@ -86,7 +91,7 @@ pub async fn duplicate(
         r#"
         insert into storybooks
           (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, $3, 'draft', 'private', 'duplicate', $4, $5, $6, $7, $8, $9, $10, $11, '00000000-0000-0000-0000-000000000001', now(), now())
+        values ($1, $2, $3, 'draft', 'private', 'duplicate', $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
         "#,
         [
             new_id.into(),
@@ -100,6 +105,7 @@ pub async fn duplicate(
             source.teaching_goal.into(),
             source.cover_tone.into(),
             source.page_aspect_ratio.into(),
+            creator_id.into(),
         ],
     ))
     .await?;
@@ -207,7 +213,8 @@ pub(crate) async fn clone_pages_and_roles(
         DbBackend::Postgres,
         r#"
         insert into storybook_pages (id, storybook_id, page_number, title, body, illustration_prompt, status)
-        select gen_random_uuid(), $2, page_number, title, body, illustration_prompt, status
+        select gen_random_uuid(), $2, page_number, title, body, illustration_prompt,
+               case when status in ('generating', 'ready') then 'needs_regeneration' else status end
         from storybook_pages
         where storybook_id = $1
         "#,
@@ -221,7 +228,8 @@ pub(crate) async fn clone_pages_and_roles(
           (id, storybook_id, name, role_type, appearance, story_function, needs_consistency,
            reference_image_url, reference_image_prompt, reference_status)
         select gen_random_uuid(), $2, name, role_type, appearance, story_function, needs_consistency,
-               reference_image_url, reference_image_prompt, reference_status
+               null, null,
+               case when reference_status in ('generating', 'ready') then 'not_started' else reference_status end
         from storybook_roles
         where storybook_id = $1
         "#,

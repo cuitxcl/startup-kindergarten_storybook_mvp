@@ -193,12 +193,15 @@ export function MembersPage() {
               <div className="inline-actions">
                 <Badge tone={member.status === "active" ? "good" : "warn"}>{memberStatusLabel[member.status] || member.status}</Badge>
                 {member.status === "invited" && (member.invitationUrl || member.invitationToken) && (
-                  <>
-                    <button className="button secondary" type="button" onClick={() => copyMemberInviteUrl(member)}>复制成员邀请链接</button>
-                    <button className="button secondary" type="button" disabled={revokingMemberId === member.id} onClick={() => revokeInvitation(member)}>
-                      {revokingMemberId === member.id ? "撤回中..." : "撤回邀请"}
-                    </button>
-                  </>
+                  <details className="row-actions">
+                    <summary>邀请操作</summary>
+                    <div className="inline-actions">
+                      <button className="button secondary" type="button" onClick={() => copyMemberInviteUrl(member)}>复制链接</button>
+                      <button className="button secondary" type="button" disabled={revokingMemberId === member.id} onClick={() => revokeInvitation(member)}>
+                        {revokingMemberId === member.id ? "撤回中..." : "撤回邀请"}
+                      </button>
+                    </div>
+                  </details>
                 )}
               </div>
             </div>
@@ -226,4 +229,3 @@ export function MembersPage() {
     </div>
   );
 }
-

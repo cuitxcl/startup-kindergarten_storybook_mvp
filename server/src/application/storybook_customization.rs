@@ -41,10 +41,12 @@ pub async fn derive_custom(
         }
         let child_id = payload.child_id;
         let intensity = payload.intensity.clone();
+        let actor_id = common::actor_user_id(headers)?;
         let book = crate::repositories::storybooks::derive_custom(
             &ctx.db,
             workspace_id,
             storybook_id,
+            actor_id,
             payload,
         )
         .await
@@ -52,7 +54,7 @@ pub async fn derive_custom(
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "storybook.custom_derived",
             "storybook",
             Some(book.id),
@@ -141,11 +143,13 @@ pub async fn derive_custom_batch(
         }
 
         let mut storybooks = Vec::with_capacity(payload.child_ids.len());
+        let actor_id = common::actor_user_id(headers)?;
         for child_id in &payload.child_ids {
             let book = crate::repositories::storybooks::derive_custom(
                 &ctx.db,
                 workspace_id,
                 storybook_id,
+                actor_id,
                 DeriveCustomRequest {
                     child_id: *child_id,
                     intensity: payload.intensity.clone(),
@@ -160,7 +164,7 @@ pub async fn derive_custom_batch(
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "storybook.custom_batch_derived",
             "storybook",
             Some(storybook_id),
