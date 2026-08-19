@@ -939,6 +939,35 @@ fn provider_output_validates_every_plan_outline_item() {
 }
 
 #[test]
+fn provider_output_fills_missing_plan_page_ranges_from_outline_order() {
+    let output = normalize_provider_output(
+        json!({
+            "plan": {
+                "title": "排队洗手",
+                "theme": "排队等待",
+                "summary": "孩子学习等待洗手。",
+                "page_count": 2,
+                "outline": [
+                    {"goal": "进入场景", "beat": "来到洗手区"},
+                    {"page_range": "2", "goal": "理解规则", "beat": "大家排队洗手"}
+                ],
+                "role_requirements": ["主角儿童", "老师"],
+                "review_points": ["教学目标准确"]
+            }
+        }),
+        "deepseek",
+        "storybook_plan",
+        None,
+        None,
+        None,
+    )
+    .expect("outline order should recover a missing page range");
+
+    assert_eq!(output["plan"]["outline"][0]["page_range"], json!("1"));
+    assert_eq!(output["plan"]["outline"][1]["page_range"], json!("2"));
+}
+
+#[test]
 fn provider_output_rejects_multi_page_outline_range() {
     let err = normalize_provider_output(
         json!({

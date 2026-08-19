@@ -146,7 +146,6 @@ export function NewStorybookPage() {
   const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null);
   const [imagePreferenceOpen, setImagePreferenceOpen] = useState(false);
   const [directionSupplement, setDirectionSupplement] = useState("");
-  const [customMaterialInput, setCustomMaterialInput] = useState("");
   const [customMaterials, setCustomMaterials] = useState<string[]>([]);
   const [outlineAdjustPage, setOutlineAdjustPage] = useState<number | null>(null);
   const [visualComplexity, setVisualComplexity] = useState("simple");
@@ -164,6 +163,14 @@ export function NewStorybookPage() {
   const resumedBookIdRef = useRef<string | null>(null);
   const creationSessionStorageKey = `kindleaf.creation-session.${workspace.id}`;
   const suppressAutoRecoverRef = useRef(false);
+  // A new generation must be isolated from every previous poll/recovery callback.
+  // React state alone cannot do this because an older async request can settle later.
+  const generationRunRef = useRef(0);
+  const beginGenerationRun = () => {
+    generationRunRef.current += 1;
+    return generationRunRef.current;
+  };
+  const isCurrentGenerationRun = (runId: number) => generationRunRef.current === runId;
   const generatedRoles = rolesFromOutput(generationOutputs.storybook_roles);
   const generatedPages = pagesFromOutput(generationOutputs.storybook_pages);
   const currentRoles = editableRoles.length ? editableRoles : generatedRoles;
@@ -320,6 +327,15 @@ export function NewStorybookPage() {
     workspace.id,
   ]);
 
+  // Repair drafts created before quick adjustments were made idempotent.
+  // Only known generated suffixes are normalized; user-authored prose is untouched.
+  useEffect(() => {
+    setPlanDraft((current) => {
+      const outlineText = normalizeOutlineQuickAdjustmentText(current.outlineText);
+      return outlineText === current.outlineText ? current : { ...current, outlineText };
+    });
+  }, [planDraft.outlineText]);
+
   useEffect(() => {
     getWorkspaceGenerationProvider(workspace.id).then(setProvider).catch(() => setProvider(null));
   }, [workspace.id]);
@@ -329,9 +345,10 @@ export function NewStorybookPage() {
     if (resumeBookId) return;
     if (suppressAutoRecoverRef.current) return;
     let mounted = true;
+    const recoveryRunId = generationRunRef.current;
     listGenerationJobsPage(workspace.id, { limit: 10 })
       .then((page) => {
-        if (!mounted) return;
+        if (!mounted || !isCurrentGenerationRun(recoveryRunId)) return;
         const active = page.data.find((job) => (
           ["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)
           && isActiveJobStatus(job.status)
@@ -368,16 +385,20 @@ export function NewStorybookPage() {
         });
         setGeneratingStep(active.jobType);
         waitForGenerationJob(active)
-          .then((settled) => { if (mounted) void handleGenerationJob(settled, "作品生成已完成"); })
+          .then((settled) => {
+            if (mounted && isCurrentGenerationRun(recoveryRunId)) {
+              void handleGenerationJob(settled, "作品生成已完成", recoveryRunId);
+            }
+          })
           .catch(() => {
-            if (mounted) {
+            if (mounted && isCurrentGenerationRun(recoveryRunId)) {
               setNotice({
                 title: "原作品生成已失效",
                 copy: "未完成的作品生成已不存在或无法读取，请直接重新生成。",
               });
             }
           })
-          .finally(() => { if (mounted) setGeneratingStep(null); });
+          .finally(() => { if (mounted && isCurrentGenerationRun(recoveryRunId)) setGeneratingStep(null); });
       })
       .catch(() => undefined);
     return () => {
@@ -392,17 +413,18 @@ export function NewStorybookPage() {
     if (!resumeBookId || resumedBookIdRef.current === resumeBookId) return;
     resumedBookIdRef.current = resumeBookId;
     let mounted = true;
+    const recoveryRunId = generationRunRef.current;
     void (async () => {
       try {
         const book = await getStorybook(workspace.id, resumeBookId);
-        if (!mounted) return;
+        if (!mounted || !isCurrentGenerationRun(recoveryRunId)) return;
         setCreatedBookId(book.id);
         setGenerationOutputs({});
         setEditableRoles([]);
         setEditablePages([]);
         setPlanDraft({ summary: "", outlineText: "", roleRequirementsText: "", reviewPointsText: "" });
         const jobsPage = await listGenerationJobsPage(workspace.id, { storybookId: book.id, limit: 50 });
-        if (!mounted) return;
+        if (!mounted || !isCurrentGenerationRun(recoveryRunId)) return;
         const wizardJobs = [...jobsPage.data]
           .filter((job) => (
             job.storybookId === book.id
@@ -519,21 +541,21 @@ export function NewStorybookPage() {
           setGeneratingStep(activeJob.jobType);
           waitForGenerationJob(activeJob)
             .then(async (settled) => {
-              if (!mounted) return;
-              const ok = await handleGenerationJob(settled, "作品生成已完成");
+              if (!mounted || !isCurrentGenerationRun(recoveryRunId)) return;
+              const ok = await handleGenerationJob(settled, "作品生成已完成", recoveryRunId);
               if (!ok) return;
               if (settled.jobType === "storybook_plan") goToStep(1);
               if (settled.jobType !== "storybook_plan") goToStep(2);
             })
             .catch(() => {
-              if (mounted) {
+              if (mounted && isCurrentGenerationRun(recoveryRunId)) {
                 setNotice({
                   title: "原作品生成已失效",
                   copy: "未完成的作品生成已不存在或无法读取，请直接重新生成。",
                 });
               }
             })
-            .finally(() => { if (mounted) setGeneratingStep(null); });
+            .finally(() => { if (mounted && isCurrentGenerationRun(recoveryRunId)) setGeneratingStep(null); });
         }
       } catch {
         if (mounted) {
@@ -560,6 +582,7 @@ export function NewStorybookPage() {
     setSearchParams({ bookId: createdBookId }, { replace: true });
   }, [createdBookId, requestDirtyAfterGeneration, resumeBookId, setSearchParams]);
   const clearGeneratedProgress = () => {
+    beginGenerationRun();
     setGenerationOutputs({});
     setPlanDraft({ summary: "", outlineText: "", roleRequirementsText: "", reviewPointsText: "" });
     setEditableRoles([]);
@@ -574,13 +597,21 @@ export function NewStorybookPage() {
     setRetryJob(null);
     setSelectedDirectionId(null);
     setDirectionSupplement("");
-    setCustomMaterialInput("");
     setOutlineAdjustPage(null);
     setImagePreferenceOpen(false);
     setDirectionBatch((value) => value + 1);
     resumedBookIdRef.current = null;
     suppressAutoRecoverRef.current = true;
     if (searchParams.get("bookId")) setSearchParams({}, { replace: true });
+  };
+  const clearGeneratedStoryContent = () => {
+    setGenerationOutputs((outputs) => {
+      const { storybook_roles: _roles, storybook_pages: _pages, ...remainingOutputs } = outputs;
+      return remainingOutputs;
+    });
+    setEditableRoles([]);
+    setEditablePages([]);
+    setRetryJob(null);
   };
   const ensureStorybookCreated = async (options: { forceNew?: boolean } = {}) => {
     if (createdBookId && !options.forceNew) {
@@ -616,9 +647,10 @@ export function NewStorybookPage() {
   const runGeneration = async (
     jobType: string,
     title: string,
-    overrides?: { plan?: EditablePlan; roles?: EditableRole[]; form?: StorybookRequestForm },
-    options: { forceNewStorybook?: boolean } = {},
+    overrides?: { plan?: EditablePlan; roles?: EditableRole[]; pages?: EditablePage[]; form?: StorybookRequestForm },
+    options: { forceNewStorybook?: boolean; runId?: number } = {},
   ): Promise<GenerationJob | null> => {
+    const runId = options.runId ?? beginGenerationRun();
     setGeneratingStep(jobType);
     setRetryJob(null);
     setNotice({
@@ -629,91 +661,101 @@ export function NewStorybookPage() {
       // 每个向导生成任务都必须绑定到绘本草稿。
       // 否则第一步方案生成只存在前端内存里，刷新页面后无法从后端恢复。
       const bookId = await ensureStorybookCreated({ forceNew: options.forceNewStorybook });
+      if (!isCurrentGenerationRun(runId)) return null;
       const job = await createGenerationJob(workspace.id, {
         jobType,
         storybookId: bookId || undefined,
-        input: generationInputFor(jobType, overrides?.form ?? effectiveForm, overrides?.plan ?? planDraft, overrides?.roles ?? currentRoles, currentPages),
+        input: generationInputFor(
+          jobType,
+          overrides?.form ?? effectiveForm,
+          overrides?.plan ?? planDraft,
+          overrides?.roles ?? currentRoles,
+          overrides?.pages ?? currentPages,
+        ),
       });
       const settledJob = await waitForGenerationJob(job);
-      const ok = await handleGenerationJob(settledJob, title);
+      if (!isCurrentGenerationRun(runId)) return null;
+      const ok = await handleGenerationJob(settledJob, title, runId);
       return ok ? settledJob : null;
     } catch (err) {
+      if (!isCurrentGenerationRun(runId)) return null;
       setRetryJob(null);
       setNotice({ title: "生成失败", copy: err instanceof Error ? err.message : "请稍后重试" });
       return null;
     } finally {
-      setGeneratingStep(null);
+      if (isCurrentGenerationRun(runId)) setGeneratingStep(null);
     }
   };
 
   const generateFullDraft = async () => {
+    const runId = beginGenerationRun();
     setRetryJob(null);
     setNotice(null);
+    // "重新生成整本绘本" means a new set of generated content. Keep the confirmed
+    // plan, but never treat the prior roles/pages as reusable completion.
+    clearGeneratedStoryContent();
     setFullDraftGenerating(true);
     setGenerationPhase("roles");
     try {
       const bookId = await ensureStorybookCreated();
+      if (!isCurrentGenerationRun(runId)) return;
       if (!bookId) throw new Error("需要先创建绘本草稿。");
       await persistStorybookMeta(bookId);
+      if (!isCurrentGenerationRun(runId)) return;
 
-      let rolesForPages = currentRoles;
-      if (rolesForPages.length) {
-        await persistRoles(bookId, rolesForPages);
-      } else {
-        const rolesJob = await runGeneration("storybook_roles", "角色和道具已整理");
-        if (!rolesJob?.output) {
-          setGenerationPhase("failed");
-          return;
-        }
-        rolesForPages = rolesFromOutput(rolesJob.output);
+      const rolesJob = await runGeneration("storybook_roles", "角色和道具已整理", undefined, { runId });
+      if (!isCurrentGenerationRun(runId)) return;
+      if (!rolesJob?.output) {
+        setGenerationPhase("failed");
+        return;
       }
-      if (rolesForPages.length) {
-        await persistRoles(bookId, rolesForPages);
-      }
+      const rolesForPages = rolesFromOutput(rolesJob.output);
 
       setGenerationPhase("pages");
-      if (currentPages.length) {
-        await persistPages(bookId, currentPages);
-      } else {
-        const pagesJob = await runGeneration("storybook_pages", "图文草稿已生成", {
-          plan: planDraft,
-          roles: rolesForPages,
-        });
-        if (!pagesJob?.output) {
-          setGenerationPhase("failed");
-          return;
-        }
-        const freshPages = pagesFromOutput(pagesJob.output);
-        if (freshPages.length) {
-          await persistPages(bookId, freshPages);
-        }
+      const pagesJob = await runGeneration("storybook_pages", "图文草稿已生成", {
+        plan: planDraft,
+        roles: rolesForPages,
+        pages: [],
+      }, { runId });
+      if (!isCurrentGenerationRun(runId)) return;
+      if (!pagesJob?.output) {
+        setGenerationPhase("failed");
+        return;
       }
 
       setGenerationPhase("references");
       await autoGenerateRoleReferences(bookId);
+      if (!isCurrentGenerationRun(runId)) return;
       await updateStorybook(workspace.id, bookId, { status: "editing" });
+      if (!isCurrentGenerationRun(runId)) return;
       setGenerationPhase("done");
       window.localStorage.removeItem(creationSessionStorageKey);
       navigate(`/app/${workspace.id}/storybooks/${bookId}?result=plain&from=new`);
     } catch (err) {
+      if (!isCurrentGenerationRun(runId)) return;
       setGenerationPhase("failed");
       setNotice({ title: "生成图文失败", copy: err instanceof Error ? err.message : "请稍后重试" });
     } finally {
-      setFullDraftGenerating(false);
-      setGeneratingStep(null);
+      if (isCurrentGenerationRun(runId)) {
+        setFullDraftGenerating(false);
+        setGeneratingStep(null);
+      }
     }
   };
 
   // 方案重新生成后，下游的角色和分页仍是旧方案的产物，必须按新方案联动重生；
   // 直接用新任务的输出作为下一步输入，避免闭包里旧的 planDraft/currentRoles。
   const regeneratePlanWithCascade = async (formOverride?: StorybookRequestForm) => {
+    const runId = beginGenerationRun();
     const hadRoles = Boolean(generationOutputs.storybook_roles) || currentRoles.length > 0;
     const hadPages = Boolean(generationOutputs.storybook_pages) || currentPages.length > 0;
+    clearGeneratedStoryContent();
     setSelectedDirectionId(null);
     setDirectionBatch((value) => value + 1);
     const sourceForm = formOverride ?? effectiveForm;
     setGenerationPhase("plan");
-    const planJob = await runGeneration("storybook_plan", "故事草稿已重新生成", { form: sourceForm });
+    const planJob = await runGeneration("storybook_plan", "故事草稿已重新生成", { form: sourceForm }, { runId });
+    if (!isCurrentGenerationRun(runId)) return;
     if (!planJob?.output) {
       setGenerationPhase("failed");
       return;
@@ -724,7 +766,8 @@ export function NewStorybookPage() {
     }
     const freshPlan = planDraftFromOutput(planJob.output, sourceForm);
     setGenerationPhase("roles");
-    const rolesJob = await runGeneration("storybook_roles", "角色和道具已按新草稿更新", { plan: freshPlan, form: sourceForm });
+    const rolesJob = await runGeneration("storybook_roles", "角色和道具已按新草稿更新", { plan: freshPlan, form: sourceForm }, { runId });
+    if (!isCurrentGenerationRun(runId)) return;
     if (!rolesJob?.output) {
       setGenerationPhase("failed");
       return;
@@ -738,8 +781,10 @@ export function NewStorybookPage() {
     const pagesJob = await runGeneration("storybook_pages", "图文草稿已按新方向更新", {
       plan: freshPlan,
       roles: freshRoles.length ? freshRoles : currentRoles,
+      pages: [],
       form: sourceForm,
-    });
+    }, { runId });
+    if (!isCurrentGenerationRun(runId)) return;
     setGenerationPhase(pagesJob?.output ? "idle" : "failed");
   };
 
@@ -753,6 +798,7 @@ export function NewStorybookPage() {
   };
   const retryFailedGeneration = async () => {
     if (!retryJob) return;
+    const runId = beginGenerationRun();
     setGeneratingStep(retryJob.jobType);
     setGenerationPhase(generationPhaseForJobType(retryJob.jobType));
     setNotice(null);
@@ -760,19 +806,22 @@ export function NewStorybookPage() {
       const settledJob = retryJob.status === "failed"
         ? await retryGenerationJob(workspace.id, retryJob.id)
           .then(waitForGenerationJob)
-          .then(async (job) => (await handleGenerationJob(job, "已重新生成") ? job : null))
-        : await runGeneration(retryJob.jobType, "已重新生成");
+          .then(async (job) => (await handleGenerationJob(job, "已重新生成", runId) ? job : null))
+        : await runGeneration(retryJob.jobType, "已重新生成", undefined, { runId });
+      if (!isCurrentGenerationRun(runId)) return;
       if (settledJob?.jobType === "storybook_plan") goToStep(1);
       if (settledJob && settledJob.jobType !== "storybook_plan") goToStep(2);
       if (settledJob) setGenerationPhase("idle");
     } catch (err) {
+      if (!isCurrentGenerationRun(runId)) return;
       setGenerationPhase("failed");
       setNotice({ title: "重试失败", copy: err instanceof Error ? err.message : "请稍后重试" });
     } finally {
-      setGeneratingStep(null);
+      if (isCurrentGenerationRun(runId)) setGeneratingStep(null);
     }
   };
-  const handleGenerationJob = async (job: GenerationJob, title: string) => {
+  const handleGenerationJob = async (job: GenerationJob, title: string, runId?: number) => {
+    if (runId !== undefined && !isCurrentGenerationRun(runId)) return false;
     if (job.status === "failed") {
       setGenerationPhase("failed");
       setRetryJob(job);
@@ -793,24 +842,32 @@ export function NewStorybookPage() {
     }
     setRetryJob(null);
     if (job.output) {
+      let generatedRoles: EditableRole[] | null = null;
+      let generatedPages: EditablePage[] | null = null;
+      if (job.jobType === "storybook_roles") {
+        generatedRoles = job.storybookId
+          ? rolesFromStorybook((await getStorybook(workspace.id, job.storybookId)).roles)
+          : rolesFromOutput(job.output);
+      }
+      if (job.jobType === "storybook_pages") {
+        generatedPages = job.storybookId
+          ? pagesFromStorybook((await getStorybook(workspace.id, job.storybookId)).pages)
+          : pagesFromOutput(job.output);
+      }
+      if (runId !== undefined && !isCurrentGenerationRun(runId)) return false;
       setGenerationOutputs((outputs) => ({ ...outputs, [job.jobType]: job.output }));
       if (job.jobType === "storybook_plan") {
         setPlanDraft(planDraftFromOutput(job.output, form));
         setRequestDirtyAfterGeneration(false);
       }
-      if (job.jobType === "storybook_roles") {
-        const roles = job.storybookId
-          ? rolesFromStorybook((await getStorybook(workspace.id, job.storybookId)).roles)
-          : rolesFromOutput(job.output);
-        setEditableRoles(roles.length ? roles : rolesFromOutput(job.output));
+      if (job.jobType === "storybook_roles" && generatedRoles) {
+        setEditableRoles(generatedRoles.length ? generatedRoles : rolesFromOutput(job.output));
       }
-      if (job.jobType === "storybook_pages") {
-        const pages = job.storybookId
-          ? pagesFromStorybook((await getStorybook(workspace.id, job.storybookId)).pages)
-          : pagesFromOutput(job.output);
-        setEditablePages(pages.length ? pages : pagesFromOutput(job.output));
+      if (job.jobType === "storybook_pages" && generatedPages) {
+        setEditablePages(generatedPages.length ? generatedPages : pagesFromOutput(job.output));
       }
     }
+    if (runId !== undefined && !isCurrentGenerationRun(runId)) return false;
     setNotice({ title, copy: successNoticeCopy(job.jobType) });
     return true;
   };
@@ -1052,22 +1109,6 @@ export function NewStorybookPage() {
     setOutlineAdjustPage(null);
     showNotice("大纲已调整", `第 ${pageNumber} 页已按「${action}」更新，可以继续生成。`);
   };
-  const addCustomMaterial = () => {
-    const next = customMaterialInput.trim().replace(/[，,、；;]+$/, "");
-    if (!next) return;
-    setCustomMaterials((items) => Array.from(new Set([...items, next])).slice(0, 10));
-    if (hasPlan || currentRoles.length || currentPages.length || createdBookId) {
-      setRequestDirtyAfterGeneration(true);
-    }
-    setCustomMaterialInput("");
-  };
-  const removeCustomMaterial = (material: string) => {
-    setCustomMaterials((items) => items.filter((value) => value !== material));
-    if (hasPlan || currentRoles.length || currentPages.length || createdBookId) {
-      setRequestDirtyAfterGeneration(true);
-    }
-  };
-
   return (
     <div className="page-stack">
       <header className="wizard-header">
@@ -1179,8 +1220,6 @@ export function NewStorybookPage() {
                       <strong>{direction.title}</strong>
                       <span>{direction.summary}</span>
                       <i>{direction.personalHook}</i>
-                      <small>适合：{direction.fitReason}</small>
-                      <em>将使用：{direction.materialLabels.slice(0, 3).join("、") || "当前故事想法"}</em>
                     <b>{selectedDirectionId === direction.id ? "已选择" : "选这个"}</b>
                   </button>
                 ))}
@@ -1190,47 +1229,23 @@ export function NewStorybookPage() {
                 <button className="button ghost" type="button" onClick={() => setEditingReview(editingReview === "plan" ? null : "plan")}>补充细节</button>
               </div>
               {editingReview === "plan" && (
-                <div className="inline-editor-panel">
+                <div className="inline-editor-panel direction-refinement-panel">
                   <label>
-                    补充一个真实细节或素材
+                    添加一句希望保留的真实细节（可选）
                     <textarea
-                      rows={3}
+                      rows={1}
                       value={directionSupplement}
                       disabled={Boolean(generatingStep)}
                       placeholder="例如：发生在星星班午睡室，主角带着蓝色雨靴。"
                       onChange={(event) => setDirectionSupplement(event.target.value)}
                     />
                   </label>
-                  <label>
-                    单独加入素材
-                    <div className="material-refine-row">
-                      <input
-                        value={customMaterialInput}
-                        disabled={Boolean(generatingStep)}
-                        placeholder="例如：星星班、外婆家、蓝色雨靴"
-                        onChange={(event) => setCustomMaterialInput(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            addCustomMaterial();
-                          }
-                        }}
-                      />
-                      <button className="button secondary" type="button" disabled={!customMaterialInput.trim() || Boolean(generatingStep)} onClick={addCustomMaterial}>加入</button>
-                    </div>
-                  </label>
-                  {customMaterials.length > 0 && (
-                    <div className="custom-material-actions">
-                      {customMaterials.map((item) => (
-                        <button key={item} type="button" disabled={Boolean(generatingStep)} onClick={() => removeCustomMaterial(item)}>
-                          {item} x
-                        </button>
-                      ))}
-                    </div>
+                  {selectedDirectionId && (
+                    <p className="direction-refinement-note">更新后会生成新的方向，需要重新选择。</p>
                   )}
                   <div className="inline-actions">
                     <button className="button secondary" type="button" onClick={() => setEditingReview(null)}>取消</button>
-                    <button className="button primary" type="button" disabled={!directionSupplement.trim()} onClick={submitDirectionSupplement}>更新方向</button>
+                    <button className="button primary" type="button" disabled={!directionSupplement.trim() || Boolean(generatingStep)} onClick={submitDirectionSupplement}>更新并重新选择方向</button>
                   </div>
                 </div>
               )}
@@ -1615,12 +1630,34 @@ function truncateChip(label: string) {
 }
 
 function adjustedOutlineSummary(summary: string, action: string) {
-  const clean = summary.replace(/[。.!！?？]+$/, "");
+  // Quick actions are alternatives, not accumulative edits. Strip a previous
+  // generated suffix first so rapid/repeated clicks cannot duplicate it.
+  const clean = summary
+    .replace(/(?:，(?:用更温柔的方式被理解|加入一个轻松的小任务|换成一次新的尝试|补充一个真实细节))+$/, "")
+    .replace(/[。.!！?？]+$/, "");
   if (action === "更短一点") return clean.length > 22 ? `${clean.slice(0, 22)}...` : clean;
   if (action === "更温柔") return `${clean}，用更温柔的方式被理解`;
   if (action === "更有趣") return `${clean}，加入一个轻松的小任务`;
   if (action === "换个情节") return `${clean}，换成一次新的尝试`;
   return `${clean}，补充一个真实细节`;
+}
+
+const outlineQuickAdjustmentSuffix = "用更温柔的方式被理解|加入一个轻松的小任务|换成一次新的尝试|补充一个真实细节";
+
+function normalizeOutlineQuickAdjustmentText(outlineText: string) {
+  return outlineText
+    .split("\n")
+    .map((line) => normalizeOutlineQuickAdjustment(line))
+    .join("\n");
+}
+
+function normalizeOutlineQuickAdjustment(summary: string) {
+  const suffixPattern = new RegExp(`((?:，(?:${outlineQuickAdjustmentSuffix}))+)$`);
+  const match = summary.match(suffixPattern);
+  if (!match) return summary;
+  const suffixes = match[1].match(new RegExp(`，(?:${outlineQuickAdjustmentSuffix})`, "g")) || [];
+  if (suffixes.length <= 1) return summary;
+  return `${summary.slice(0, -match[1].length)}${suffixes[suffixes.length - 1]}`;
 }
 
 function ImagePreferenceDrawer({

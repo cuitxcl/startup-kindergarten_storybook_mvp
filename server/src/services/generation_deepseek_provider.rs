@@ -26,7 +26,7 @@ const TEXT_JOB_TYPES: &[&str] = &[
 
 pub const SUPPORTED_TEXT_JOB_TYPES: &[&str] = TEXT_JOB_TYPES;
 pub const DEFAULT_TEXT_SCHEMA_VERSION: &str = "generation.provider.v1";
-const DEFAULT_VALIDATION_MAX_ATTEMPTS: u64 = 1;
+const DEFAULT_VALIDATION_MAX_ATTEMPTS: u64 = 2;
 
 pub struct DeepSeekTextProvider {
     pub(crate) api_key: Option<String>,
@@ -262,8 +262,8 @@ impl AiGenerationProvider for DeepSeekTextProvider {
                 GenerationProviderError::new(format!("创建 DeepSeek 客户端失败：{err}"))
             })?;
 
-        // 默认不做 provider 内部二次请求，避免一次用户操作消耗多次 DeepSeek 调用。
-        // 如确需自动修复结构，可显式设置 DEEPSEEK_VALIDATION_MAX_ATTEMPTS=2。
+        // 结构校验失败通常是模型遗漏字段而非用户输入错误。默认追加一次带反馈的修复请求，
+        // 避免用户为可恢复的格式偏差手动重新发起整轮生成。
         let validation_max_attempts = env_u64(
             "DEEPSEEK_VALIDATION_MAX_ATTEMPTS",
             DEFAULT_VALIDATION_MAX_ATTEMPTS,
@@ -519,7 +519,7 @@ const ILLUSTRATION_SLOT_GUIDE: &str = "每页的插图设定必须输出为 illu
 pub(crate) fn prompt_for(job_type: &str) -> String {
     match job_type {
         "storybook_plan" => {
-            "根据 input.title、input.theme、input.use_scene、input.style 生成普通儿童绘本方案。input.style 是画面风格（插画视觉效果），input.story_style 是故事风格（情节基调与叙事类型，如温情治愈、冒险奇幻、幽默搞笑）；如果 input.story_style 非空，summary、outline 的情节走向、冲突设计和情绪基调必须符合该故事风格。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。如果 input.story_framework 非空，那是用户提供的故事框架：summary 和 outline 必须严格按框架的起因、经过、结果展开分页，不得另起主线或更换结局，只允许在框架内补充细节、对话和情绪描写；story_framework 为空时由你自由创作主线。先给故事主线，再给分页节奏和创作者确认点。分页节奏（outline）必须一页一条，共 page_count 条：每条 page_range 只写单个页码数字（如 \"3\"），禁止写 \"1-2\"、\"3-4\" 这类跨页区间；每条的 goal 和 beat 只描述这一页的画面与剧情，不要把两页内容合并进一条。"
+            "根据 input.title、input.theme、input.use_scene、input.style 生成普通儿童绘本方案。input.style 是画面风格（插画视觉效果），input.story_style 是故事风格（情节基调与叙事类型，如温情治愈、冒险奇幻、幽默搞笑）；如果 input.story_style 非空，summary、outline 的情节走向、冲突设计和情绪基调必须符合该故事风格。故事主线必须围绕输入标题和主题展开：如果标题或主题是具体场景，如丛林、海边、厨房、午睡、入园等，summary、outline、role_requirements 必须反复体现该场景和主题，不得沿用无关的玩具轮流、小火车分享等通用示例。如果 input.story_framework 非空，那是用户提供的故事框架：summary 和 outline 必须严格按框架的起因、经过、结果展开分页，不得另起主线或更换结局，只允许在框架内补充细节、对话和情绪描写；story_framework 为空时由你自由创作主线。先给故事主线，再给分页节奏和创作者确认点。分页节奏（outline）必须一页一条，共 page_count 条：每条都必须包含 page_range、goal、beat 三个非空字段。page_range 是必填字段，只写单个页码数字（如 \"3\"），禁止写 \"1-2\"、\"3-4\" 这类跨页区间；每条的 goal 和 beat 只描述这一页的画面与剧情，不要把两页内容合并进一条。"
                 .to_string()
         }
         "storybook_roles" => {

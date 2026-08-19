@@ -7,7 +7,14 @@ export function isActiveJobStatus(status: string) {
 
 export function generationErrorMessage(job: Pick<GenerationJob, "output" | "lastError">) {
   const output = job.output as { error?: { message?: string } } | undefined;
-  return output?.error?.message || job.lastError || "生成任务失败，可稍后重试";
+  const message = output?.error?.message || job.lastError || "";
+  if (/provider 输出 .*storybook_plan.*outline.*page_range/.test(message)) {
+    return "故事大纲格式不完整，系统未能自动修复";
+  }
+  if (/provider 输出 .*storybook_plan/.test(message)) {
+    return "故事大纲格式不完整，系统未能自动修复";
+  }
+  return message || "生成任务失败，可稍后重试";
 }
 
 export function generationStatusLabel(status: string) {

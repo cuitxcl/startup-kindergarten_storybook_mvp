@@ -91,7 +91,7 @@ const COVER_PAGE_ID = "__cover__";
 type BulkImageStep = {
   id: string;
   label: string;
-  kind: "cover" | "page";
+  kind: "reference" | "cover" | "page";
   status: "pending" | "running" | "done" | "failed" | "skipped";
   jobId?: string;
   error?: string;
@@ -501,8 +501,11 @@ export function StorybookDetailPage() {
   const promptRewriting = promptRewritingPageId !== null && promptRewritingPageId === selectedPage?.id;
   const missingCoverImage = !currentCoverImage && !activeCoverImageJob;
   const missingPageImages = book?.pages.filter((page) => page.status !== "ready" && !activePageImageJob(generationJobs, page.id)) || [];
-  const bulkImageTotal = (missingCoverImage ? 1 : 0) + missingPageImages.length;
-  const activeAnyImageJob = Boolean(activeCoverImageJob || activePageImageJobs);
+  const pendingRoleReferenceCount = book?.roles.filter(
+    (role) => roleNeedsReference(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl),
+  ).length ?? 0;
+  const bulkImageTotal = pendingRoleReferenceCount + (missingCoverImage ? 1 : 0) + missingPageImages.length;
+  const activeAnyImageJob = Boolean(activeCoverImageJob || activePageImageJobs > 0);
   const readyPageCount = book?.pages.filter((page) => page.status === "ready").length || 0;
   const issuePageCount = book?.pages.filter((page) => page.status === "failed" || page.status === "needs_regeneration").length || 0;
   const reviewMaterialLabels = book ? [
@@ -931,7 +934,9 @@ export function StorybookDetailPage() {
       const persisted = await persistCurrentPageForGeneration();
       const persistedPage = persisted?.updatedPage || selectedPage;
       const sourceBook = persisted?.updatedBook || book;
-      const referenceRoles = sourceBook.roles.filter((role) => role.needsConsistency && role.referenceImageUrl);
+      const referenceRoles = sourceBook.roles.filter(
+        (role) => role.needsConsistency && role.referenceStatus === "ready" && role.referenceImageUrl,
+      );
       const job = await createPageImageTask(workspace.id, sourceBook.id, persistedPage.id, {
         prompt: pageForm.illustrationPrompt,
         referenceRoleIds: referenceRoles.map((role) => role.id),
@@ -954,10 +959,16 @@ export function StorybookDetailPage() {
     setImageGenerating(true);
     setRetryImageJob(null);
     try {
-      const job = await createCoverImageTask(workspace.id, book.id);
+      setNotice({
+        title: "正在准备封面角色",
+        copy: "先确认跨页角色的参考图，再生成封面，保证人物和正文保持一致。",
+        tone: "info",
+      });
+      const sourceBook = await ensureCoverCharacterReferences(book);
+      const job = await createCoverImageTask(workspace.id, sourceBook.id);
       setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
-      await refreshCoverImageVariants(book.id);
-      await refreshGenerationJobs(book.id);
+      await refreshCoverImageVariants(sourceBook.id);
+      await refreshGenerationJobs(sourceBook.id);
       setNotice({
         title: "封面图生成已开始",
         copy: "封面页已开始生成，完成后这里会自动刷新。",
@@ -974,7 +985,16 @@ export function StorybookDetailPage() {
     if (!book) return;
     const coverNeeded = missingCoverImage;
     const pagesToGenerate = missingPageImages;
+    const rolesNeedingReferences = book.roles.filter((role) => (
+      roleNeedsReference(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl)
+    ));
     const steps: BulkImageStep[] = [
+      ...rolesNeedingReferences.map((role) => ({
+        id: role.id,
+        label: `${role.name} 角色参考图`,
+        kind: "reference" as const,
+        status: "pending" as const,
+      })),
       ...(coverNeeded ? [{ id: COVER_PAGE_ID, label: "封面图", kind: "cover" as const, status: "pending" as const }] : []),
       ...pagesToGenerate.map((page) => ({
         id: page.id,
@@ -1007,6 +1027,7 @@ export function StorybookDetailPage() {
 
     let latestBook = book;
     try {
+      latestBook = await ensureCoverCharacterReferences(latestBook, (roleId, patch) => updateStep(roleId, patch));
       if (coverNeeded) {
         updateStep(COVER_PAGE_ID, { status: "running" });
         const job = await createCoverImageTask(workspace.id, latestBook.id);
@@ -1031,7 +1052,7 @@ export function StorybookDetailPage() {
           continue;
         }
         updateStep(page.id, { status: "running" });
-        const referenceRoles = latestBook.roles.filter((role) => role.needsConsistency && role.referenceImageUrl);
+        const referenceRoles = latestBook.roles.filter((role) => role.needsConsistency && role.referenceStatus === "ready" && role.referenceImageUrl);
         const job = await createPageImageTask(workspace.id, latestBook.id, currentPage.id, {
           prompt: currentPage.illustrationPrompt,
           referenceRoleIds: referenceRoles.map((role) => role.id),
@@ -1067,6 +1088,51 @@ export function StorybookDetailPage() {
     } finally {
       setBulkImageGenerating(false);
     }
+  }
+
+  async function ensureCoverCharacterReferences(
+    sourceBook: Storybook,
+    onProgress?: (roleId: string, patch: Partial<BulkImageStep>) => void,
+  ): Promise<Storybook> {
+    let latestBook = sourceBook;
+    const roles = sourceBook.roles.filter((role) => (
+      roleNeedsReference(sourceBook, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl)
+    ));
+    for (const role of roles) {
+      const latestRole = latestBook.roles.find((item) => item.id === role.id) || role;
+      if (latestRole.referenceStatus === "ready" && latestRole.referenceImageUrl) {
+        onProgress?.(role.id, { status: "skipped" });
+        continue;
+      }
+      onProgress?.(role.id, { status: "running" });
+      const activeJob = activeRoleReferenceJob(generationJobs, latestRole.id);
+      const job = activeJob || await createRoleReferenceImageTask(workspace.id, latestBook.id, latestRole.id, {
+        referenceImageUrls: [],
+        imageMode: "text_to_image",
+      });
+      onProgress?.(role.id, { jobId: job.id });
+      setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
+      const settled = await pollGenerationJob(workspace.id, job, {
+        timeoutMs: 300_000,
+        onUpdate: (current) => setGenerationJobs((jobs) => [current, ...jobs.filter((item) => item.id !== current.id)]),
+      });
+      if (settled.status !== "succeeded") {
+        const error = generationErrorMessage(settled);
+        onProgress?.(role.id, { status: "failed", error });
+        setRetryImageJob(settled);
+        throw new Error(`${latestRole.name} 的角色参考图未完成：${error}`);
+      }
+      latestBook = await refreshStorybook(latestBook.id) || latestBook;
+      const refreshedRole = latestBook.roles.find((item) => item.id === latestRole.id);
+      if (!refreshedRole?.referenceImageUrl || refreshedRole.referenceStatus !== "ready") {
+        const error = `${latestRole.name} 的角色参考图没有成功写回`;
+        onProgress?.(role.id, { status: "failed", error });
+        throw new Error(error);
+      }
+      onProgress?.(role.id, { status: "done" });
+      await refreshGenerationJobs(latestBook.id);
+    }
+    return latestBook;
   }
 
   async function retryIllustration() {
@@ -1627,7 +1693,7 @@ export function StorybookDetailPage() {
                 {bulkImageGenerating ? "生成中" : bulkImageSteps.some((step) => step.status === "failed") ? "需要处理" : bulkImageTotal > 0 ? "待生成" : "已完成"}
               </Badge>
               <h2>{bulkImageTotal > 0 ? "一键生成整本插图" : "整本插图已准备好"}</h2>
-              <p>{bulkImageTotal > 0 ? "会依次生成封面和缺少插图的分页，生成后可继续逐页检查。" : "封面和分页都有插图，可以继续验收、导出或分享。"}</p>
+              <p>{bulkImageTotal > 0 ? "会先准备角色参考图，再依次生成封面和缺少插图的分页，保证人物形象一致。" : "封面和分页都有插图，可以继续验收、导出或分享。"}</p>
             </div>
           </div>
           {bulkImageSteps.length > 0 ? (
@@ -1980,7 +2046,7 @@ function bulkImageStepIcon(status: BulkImageStep["status"]) {
 }
 
 function bulkImageStepCopy(step: BulkImageStep) {
-  if (step.status === "done") return "已生成";
+  if (step.status === "done") return step.kind === "reference" ? "角色形象已锁定" : "已生成";
   if (step.status === "failed") return step.error || "生成失败，可重试";
   if (step.status === "skipped") return "已有插图，已跳过";
   if (step.status === "running") return "正在生成";

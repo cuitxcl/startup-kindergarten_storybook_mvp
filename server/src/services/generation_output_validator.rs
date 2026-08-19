@@ -46,12 +46,39 @@ fn normalize_provider_output_values(
     style: Option<&str>,
 ) -> Result<(), GenerationProviderError> {
     match job_type {
+        "storybook_plan" => normalize_storybook_plan_values(object),
         "storybook_roles" => normalize_storybook_roles_values(object),
         "storybook_pages" => normalize_storybook_pages_values(object, style)?,
         "storybook_page_prompt" => normalize_storybook_page_prompt_values(object, style)?,
         _ => {}
     }
     Ok(())
+}
+
+/// `page_range` 只标识大纲条目对应的单页页码；模型偶尔会遗漏该可推导字段。
+/// 在条目顺序明确时补齐，避免无意义的格式错误中断用户的创作流程。
+fn normalize_storybook_plan_values(object: &mut JsonMap<String, JsonValue>) {
+    let Some(outline) = object
+        .get_mut("plan")
+        .and_then(|value| value.as_object_mut())
+        .and_then(|plan| plan.get_mut("outline"))
+        .and_then(|value| value.as_array_mut())
+    else {
+        return;
+    };
+
+    for (index, item) in outline.iter_mut().enumerate() {
+        let Some(item) = item.as_object_mut() else {
+            continue;
+        };
+        let has_page_range = item
+            .get("page_range")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.trim().is_empty());
+        if !has_page_range {
+            item.insert("page_range".to_string(), json!((index + 1).to_string()));
+        }
+    }
 }
 
 /// storybook_page_prompt 的插图设定从结构化槽位拼装为 page.illustration_prompt。

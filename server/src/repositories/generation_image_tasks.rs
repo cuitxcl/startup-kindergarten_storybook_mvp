@@ -330,7 +330,7 @@ async fn cover_prompt(
     let style_guard = storybook_style_guard(&cover_tone);
     let aspect = page_aspect_spec(&page_aspect_ratio);
     Ok(format!(
-        "为幼儿园绘本《{title}》生成封面插图。年龄段：{age_group}；使用场景：{use_scene}；教学目标：{teaching_goal}。故事线索：{}。角色关系：{}。画面要求：{style_guard} {} 角色外观由参考图决定，文字提示词只负责镜头、场景、关系和情绪，不要重复设计角色外观。封面应像真实绘本封面，选择一个最能概括故事主题的完整故事瞬间，不要做成白底角色设定图、角色排排站或单纯人物合照。镜头采用中景或中远景，关键道具作为视觉焦点；角色之间要有明确关系，例如共同注视、靠近、守护、分享、发现或解决问题。背景要交代故事发生地点和情绪，有前景、中景、背景层次，光线自然温暖。画面上方或左上方使用自然简洁的低细节背景区域，便于后期排标题；不要绘制白色矩形、文本框、纸片、牌匾或任何人为留白块。不要出现任何文字、标题、logo、水印或页码，文字由系统排版叠加。",
+        "为幼儿园绘本《{title}》生成封面插图。年龄段：{age_group}；使用场景：{use_scene}；教学目标：{teaching_goal}。故事线索：{}。角色关系：{}。画面要求：{style_guard} {} 角色外观必须严格遵循角色关系中的外观描述，并与输入的角色参考图保持同一角色身份、毛色、体型、耳朵/鼻子等关键特征；只允许出现上述角色，不得替换、增添或重新设计角色。封面应像真实绘本封面，选择一个最能概括故事主题的完整故事瞬间，不要做成白底角色设定图、角色排排站或单纯人物合照。镜头采用中景或中远景，关键道具作为视觉焦点；角色之间要有明确关系，例如共同注视、靠近、守护、分享、发现或解决问题。背景要交代故事发生地点和情绪，有前景、中景、背景层次，光线自然温暖。画面上方或左上方使用自然简洁的低细节背景区域，便于后期排标题；不要绘制白色矩形、文本框、纸片、牌匾或任何人为留白块。不要出现任何文字、标题、logo、水印或页码，文字由系统排版叠加。",
         if story_beats.is_empty() {
             "围绕标题、教学目标和故事主题设计一个有情境的封面瞬间".to_string()
         } else {
@@ -396,7 +396,7 @@ async fn storybook_cover_roles_for_prompt(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select name, role_type, story_function
+            select name, role_type, appearance, story_function
             from storybook_roles
             where storybook_id = $1
             order by
@@ -412,10 +412,12 @@ async fn storybook_cover_roles_for_prompt(
         .filter_map(|row| {
             let name = row.try_get::<String>("", "name").ok()?;
             let role_type = row.try_get::<String>("", "role_type").ok()?;
+            let appearance = row.try_get::<String>("", "appearance").ok()?;
             let story_function = row.try_get::<String>("", "story_function").ok()?;
             Some(format!(
-                "{name}（{role_type}）：{}",
-                clip_prompt_text(&story_function, 40)
+                "{name}（{role_type}）：外观={}; 故事作用={}",
+                clip_prompt_text(&appearance, 80),
+                clip_prompt_text(&story_function, 40),
             ))
         })
         .collect::<Vec<_>>())
