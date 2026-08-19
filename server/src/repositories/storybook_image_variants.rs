@@ -129,10 +129,16 @@ pub async fn mark_job_variant_ready(
     ))
     .await?;
 
-    if !target_has_selected_variant(db, job).await? {
+    // 角色参考图是跨页一致性的当前基准。重新生成后必须立即切换到新图，
+    // 否则角色已更新为 ready 但封面和分页仍会继续引用旧图。
+    if should_select_completed_variant(&job.job_type, target_has_selected_variant(db, job).await?) {
         select_variant_for_job(db, job).await?;
     }
     Ok(())
+}
+
+fn should_select_completed_variant(job_type: &str, target_has_selected_variant: bool) -> bool {
+    job_type == "storybook_role_reference_image" || !target_has_selected_variant
 }
 
 pub async fn mark_job_variant_failed(
@@ -587,4 +593,25 @@ fn variant_from_row(row: sea_orm::QueryResult) -> Result<StorybookImageVariant, 
         created_at: row.try_get::<DateTime<Utc>>("", "created_at")?,
         updated_at: row.try_get::<DateTime<Utc>>("", "updated_at")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_select_completed_variant;
+
+    #[test]
+    fn regenerated_role_reference_becomes_current_variant() {
+        assert!(should_select_completed_variant(
+            "storybook_role_reference_image",
+            true
+        ));
+        assert!(should_select_completed_variant(
+            "storybook_role_reference_image",
+            false
+        ));
+        assert!(!should_select_completed_variant(
+            "storybook_page_image",
+            true
+        ));
+    }
 }

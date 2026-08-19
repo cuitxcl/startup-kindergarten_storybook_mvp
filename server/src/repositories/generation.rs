@@ -927,7 +927,12 @@ pub async fn cancel_generation_job(
         return Err(DbErr::Custom("generation_job_not_cancelable".to_string()));
     }
 
-    crate::repositories::generation_jobs::cancel_job(db, workspace_id, job_id).await
+    let canceled =
+        crate::repositories::generation_jobs::cancel_job(db, workspace_id, job_id).await?;
+    // 图片任务在入队时已经把分页/角色和图片变体标记为生成中。
+    // 取消也必须走同一套目标状态回写，否则界面会永久停留在“生成中”。
+    propagate_failed_generation_job_state_with_message(db, &canceled, "生成任务已取消").await?;
+    Ok(canceled)
 }
 
 /// 清理工作区内全部失败的生成任务记录，返回清理条数。

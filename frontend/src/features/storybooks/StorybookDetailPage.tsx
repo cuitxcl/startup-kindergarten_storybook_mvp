@@ -216,11 +216,13 @@ export function StorybookDetailPage() {
     ? `${pageForm.title || selectedPage.title} ${pageForm.body || selectedPage.body} ${pageForm.illustrationPrompt || selectedPage.illustrationPrompt}`
     : "";
   const selectedPageReferencedRoles = book?.roles.filter((role) => roleNeedsReference(book, role) && selectedPageReferenceText.includes(role.name)) || [];
-  const selectedPageUsableReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceImageUrl);
+  const selectedPageUsableReferenceRoles = selectedPageReferencedRoles.filter(
+    (role) => role.referenceStatus === "ready" && role.referenceImageUrl,
+  );
   const selectedPageMissingReferenceRoles = selectedPageReferencedRoles.filter((role) => !role.referenceImageUrl);
   const selectedPageStaleReferenceRoles = selectedPageReferencedRoles.filter((role) => role.referenceImageUrl && role.referenceStatus !== "ready");
-  const pageImageReferenceBlocker = selectedPageMissingReferenceRoles.length
-    ? `本页提到了 ${selectedPageMissingReferenceRoles.map((role) => role.name).join("、")}，请先生成角色参考图再生成插图。`
+  const pageImageReferenceBlocker = selectedPageMissingReferenceRoles.length || selectedPageStaleReferenceRoles.length
+    ? `本页提到了 ${[...selectedPageMissingReferenceRoles, ...selectedPageStaleReferenceRoles].map((role) => role.name).join("、")}，请先生成或更新角色参考图再生成插图。`
     : "";
   const routeResultNotice = resultNoticeFromSearch(location.search);
   const visibleNotice = notice || routeResultNotice;
@@ -624,9 +626,13 @@ export function StorybookDetailPage() {
         await refreshCoverImageVariants(book.id);
         await refreshStorybook(book.id);
         setSelectedPageId(COVER_PAGE_ID);
-        if (job.status === "failed") {
-          setRetryImageJob(job);
-          setNotice({ title: "封面图生成失败", copy: `${generationErrorMessage(job)}。可以重新生成封面图。`, tone: "info" });
+        if (job.status !== "succeeded") {
+          setRetryImageJob(job.status === "failed" ? job : null);
+          setNotice({
+            title: job.status === "canceled" ? "封面图生成已取消" : "封面图生成失败",
+            copy: job.status === "canceled" ? "封面图未生成，可以重新发起生成。" : `${generationErrorMessage(job)}。可以重新生成封面图。`,
+            tone: "info",
+          });
           return;
         }
         setRetryImageJob(null);
@@ -661,9 +667,13 @@ export function StorybookDetailPage() {
         await refreshStorybook(book.id);
         await refreshPageImageVariants(book.id, currentPageId);
         setSelectedPageId(currentPageId);
-        if (job.status === "failed") {
-          setRetryImageJob(job);
-          setNotice({ title: "插图生成失败", copy: `${generationErrorMessage(job)}。可以重新生成这一页。`, tone: "info" });
+        if (job.status !== "succeeded") {
+          setRetryImageJob(job.status === "failed" ? job : null);
+          setNotice({
+            title: job.status === "canceled" ? "插图生成已取消" : "插图生成失败",
+            copy: job.status === "canceled" ? "本页插图未生成，可以重新发起生成。" : `${generationErrorMessage(job)}。可以重新生成这一页。`,
+            tone: "info",
+          });
           return;
         }
         setRetryImageJob(null);
@@ -834,7 +844,7 @@ export function StorybookDetailPage() {
       setRemoteBook(updated);
       await refreshRoleImageVariants(book.id, persistedRole.id);
       const updatedRole = updated.roles.find((role) => role.id === persistedRole.id);
-      if (settledJob.status === "failed") {
+      if (settledJob.status !== "succeeded") {
         setNotice({
           title: "角色参考图生成失败",
           copy: `${generationErrorMessage(settledJob)}。可以稍后重新生成参考图。`,
@@ -889,10 +899,10 @@ export function StorybookDetailPage() {
         });
         return;
       }
-      if (settledJob.status === "failed") {
+      if (settledJob.status !== "succeeded") {
         setNotice({
-          title: "插图描述重写失败",
-          copy: `${generationErrorMessage(settledJob)}。可以稍后重新调整这一页。`,
+          title: settledJob.status === "canceled" ? "插图描述重写已取消" : "插图描述重写失败",
+          copy: settledJob.status === "canceled" ? "本页插图描述没有更新，可以重新发起重写。" : `${generationErrorMessage(settledJob)}。可以稍后重新调整这一页。`,
           tone: "info",
         });
         return;
@@ -925,7 +935,8 @@ export function StorybookDetailPage() {
     if (!book || !selectedPage) return;
     if (pageImageReferenceBlocker) {
       setNotice({ title: "先补齐角色参考图", copy: pageImageReferenceBlocker, tone: "info" });
-      if (selectedPageMissingReferenceRoles[0]) focusRoleReference(selectedPageMissingReferenceRoles[0]);
+      const firstIncompleteReference = selectedPageMissingReferenceRoles[0] || selectedPageStaleReferenceRoles[0];
+      if (firstIncompleteReference) focusRoleReference(firstIncompleteReference);
       return;
     }
     setImageGenerating(true);
@@ -934,9 +945,7 @@ export function StorybookDetailPage() {
       const persisted = await persistCurrentPageForGeneration();
       const persistedPage = persisted?.updatedPage || selectedPage;
       const sourceBook = persisted?.updatedBook || book;
-      const referenceRoles = sourceBook.roles.filter(
-        (role) => role.needsConsistency && role.referenceStatus === "ready" && role.referenceImageUrl,
-      );
+      const referenceRoles = pageReferenceRoles(sourceBook, persistedPage);
       const job = await createPageImageTask(workspace.id, sourceBook.id, persistedPage.id, {
         prompt: pageForm.illustrationPrompt,
         referenceRoleIds: referenceRoles.map((role) => role.id),
@@ -1034,7 +1043,7 @@ export function StorybookDetailPage() {
         updateStep(COVER_PAGE_ID, { jobId: job.id });
         setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
         const settled = await waitForImageJob(job);
-        if (settled.status === "failed") {
+        if (settled.status !== "succeeded") {
           updateStep(COVER_PAGE_ID, { status: "failed", error: generationErrorMessage(settled) });
           setRetryImageJob(settled);
           throw new Error(`封面图生成失败：${generationErrorMessage(settled)}`);
@@ -1052,7 +1061,7 @@ export function StorybookDetailPage() {
           continue;
         }
         updateStep(page.id, { status: "running" });
-        const referenceRoles = latestBook.roles.filter((role) => role.needsConsistency && role.referenceStatus === "ready" && role.referenceImageUrl);
+        const referenceRoles = pageReferenceRoles(latestBook, currentPage);
         const job = await createPageImageTask(workspace.id, latestBook.id, currentPage.id, {
           prompt: currentPage.illustrationPrompt,
           referenceRoleIds: referenceRoles.map((role) => role.id),
@@ -1061,7 +1070,7 @@ export function StorybookDetailPage() {
         updateStep(page.id, { jobId: job.id });
         setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
         const settled = await waitForImageJob(job);
-        if (settled.status === "failed") {
+        if (settled.status !== "succeeded") {
           updateStep(page.id, { status: "failed", error: generationErrorMessage(settled) });
           setRetryImageJob(settled);
           throw new Error(`第 ${currentPage.pageNumber} 页插图生成失败：${generationErrorMessage(settled)}`);
@@ -1960,14 +1969,14 @@ export function StorybookDetailPage() {
                   <span>缺少参考图：{selectedPageMissingReferenceRoles.map((role) => role.name).join("、")}。</span>
                 )}
                 {selectedPageStaleReferenceRoles.length > 0 && (
-                  <span>需更新参考图：{selectedPageStaleReferenceRoles.map((role) => role.name).join("、")}。当前已有图仍可用于生成，更新后跨页一致性更稳。</span>
+                  <span>需更新参考图：{selectedPageStaleReferenceRoles.map((role) => role.name).join("、")}。为避免新外观设定和旧图冲突，更新完成前不能生成本页插图。</span>
                 )}
                 {!selectedPageReferencedRoles.length && (
                   <span>如果本页出现固定主角、老师或关键道具，请在插图描述中写出名称，系统才会带入对应参考图。</span>
                 )}
               </div>
-              {selectedPageMissingReferenceRoles[0] && (
-                <button className="button secondary" type="button" onClick={() => focusRoleReference(selectedPageMissingReferenceRoles[0])}>
+              {(selectedPageMissingReferenceRoles[0] || selectedPageStaleReferenceRoles[0]) && (
+                <button className="button secondary" type="button" onClick={() => focusRoleReference(selectedPageMissingReferenceRoles[0] || selectedPageStaleReferenceRoles[0]!)}>
                   管理角色参考图
                 </button>
               )}
@@ -2051,4 +2060,14 @@ function bulkImageStepCopy(step: BulkImageStep) {
   if (step.status === "skipped") return "已有插图，已跳过";
   if (step.status === "running") return "正在生成";
   return "等待生成";
+}
+
+function pageReferenceRoles(book: Storybook, page: Storybook["pages"][number]) {
+  const pageText = `${page.title} ${page.body} ${page.illustrationPrompt}`;
+  return book.roles.filter((role) => (
+    roleNeedsReference(book, role)
+    && role.referenceStatus === "ready"
+    && Boolean(role.referenceImageUrl)
+    && pageText.includes(role.name)
+  ));
 }

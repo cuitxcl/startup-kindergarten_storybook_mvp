@@ -822,12 +822,14 @@ export function NewStorybookPage() {
   };
   const handleGenerationJob = async (job: GenerationJob, title: string, runId?: number) => {
     if (runId !== undefined && !isCurrentGenerationRun(runId)) return false;
-    if (job.status === "failed") {
+    if (job.status !== "succeeded") {
       setGenerationPhase("failed");
-      setRetryJob(job);
+      setRetryJob(job.status === "failed" ? job : null);
       setNotice({
-        title: "生成失败",
-        copy: `${generationErrorMessage(job)}。可以重试，或返回前一步调整后再生成。`,
+        title: job.status === "canceled" ? "生成已取消" : "生成失败",
+        copy: job.status === "canceled"
+          ? "本次生成没有写入内容，可以重新发起生成。"
+          : `${generationErrorMessage(job)}。可以重试，或返回前一步调整后再生成。`,
       });
       return false;
     }

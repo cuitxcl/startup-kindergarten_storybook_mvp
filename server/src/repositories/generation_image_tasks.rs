@@ -396,13 +396,20 @@ async fn storybook_cover_roles_for_prompt(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select name, role_type, appearance, story_function
-            from storybook_roles
-            where storybook_id = $1
+            select r.name, r.role_type, r.appearance, r.story_function
+            from storybook_roles r
+            left join storybook_image_variants v
+              on v.id = r.selected_image_variant_id
+             and v.status = 'ready'
+             and v.image_url is not null
+            where r.storybook_id = $1
+              and r.needs_consistency
+              and r.reference_status = 'ready'
+              and coalesce(v.image_url, r.reference_image_url) is not null
             order by
-              case role_type when 'protagonist' then 0 when 'teacher' then 1 else 2 end,
-              name asc
-            limit 6
+              case r.role_type when 'protagonist' then 0 when 'teacher' then 1 else 2 end,
+              r.name asc
+            limit 4
             "#,
             [storybook_id.into()],
         ))
@@ -449,6 +456,7 @@ async fn storybook_role_reference_images(
              and v.image_url is not null
             where r.storybook_id = $1
               and r.needs_consistency
+              and r.reference_status = 'ready'
               and coalesce(v.image_url, r.reference_image_url) is not null
             order by
               case r.role_type when 'protagonist' then 0 when 'teacher' then 1 else 2 end,
