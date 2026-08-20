@@ -21,13 +21,13 @@ const IMAGE_FRAME_HEIGHT: i32 = 338;
 const STORY_TEXT_TOP: i32 = 402;
 const STORY_TEXT_BOTTOM: i32 = 64;
 
-// 封面版式：边框 54,190 ~ 541,690。
-const COVER_FRAME_X: i32 = 54;
-const COVER_FRAME_Y: i32 = 190;
+// 封面版式：上部保留标题和必要元信息，下部交给主视觉。
+const COVER_FRAME_X: i32 = 48;
+const COVER_FRAME_Y: i32 = 56;
 const COVER_FRAME_WIDTH: i32 = PAGE_WIDTH - COVER_FRAME_X * 2;
-const COVER_FRAME_HEIGHT: i32 = 500;
-const COVER_TEXT_TOP: i32 = 648;
-const COVER_TEXT_BOTTOM: i32 = 220;
+const COVER_FRAME_HEIGHT: i32 = PAGE_HEIGHT - COVER_FRAME_Y * 2;
+const COVER_TEXT_TOP: i32 = 748;
+const COVER_TEXT_BOTTOM: i32 = 590;
 
 #[derive(Clone, Copy)]
 struct PdfLayout {
@@ -88,11 +88,11 @@ impl PdfLayout {
         let story_text_bottom = (left + 24).min(story_text_top.saturating_sub(80));
 
         let cover_frame_x = left;
-        let cover_frame_y = (page_height as f64 * 0.18).round() as i32;
+        let cover_frame_y = left;
         let cover_frame_width = content_width;
-        let cover_frame_height = (page_height as f64 * 0.64).round() as i32;
-        let cover_text_top = cover_frame_y + cover_frame_height - 40;
-        let cover_text_bottom = cover_frame_y + 28;
+        let cover_frame_height = page_height - left * 2;
+        let cover_text_top = cover_frame_y + cover_frame_height - 36;
+        let cover_text_bottom = (page_height as f64 * 0.7).round() as i32;
 
         Self {
             page_width,
@@ -196,17 +196,10 @@ fn storybook_pdf_pages(
 }
 
 fn cover_page(storybook: &Storybook, image: Option<usize>, layout: PdfLayout) -> PdfPage {
-    let role_names = storybook
-        .roles
-        .iter()
-        .map(|role| role.name.as_str())
-        .collect::<Vec<_>>()
-        .join("、");
-
     let mut lines = vec![PdfLine {
         text: "KINDLEAF 绘本".to_string(),
         size: 12,
-        gap: 18,
+        gap: 16,
         align: Align::Center,
     }];
     // 书名最长两行，居中大字。
@@ -218,32 +211,16 @@ fn cover_page(storybook: &Storybook, image: Option<usize>, layout: PdfLayout) ->
         lines.push(PdfLine {
             text: title_line,
             size: 30,
-            gap: if index == 0 { 34 } else { 36 },
+            gap: if index == 0 { 30 } else { 34 },
             align: Align::Center,
         });
     }
-    let meta = [
-        format!("年龄段：{}", storybook.age_group),
-        format!("使用场景：{}", storybook.use_scene),
-        format!("教学目标：{}", storybook.teaching_goal),
-        format!("主要角色：{}", empty_label(&role_names)),
-        format!("画面风格：{}", storybook.cover_tone),
-        format!("共 {} 页", storybook.pages.len()),
-    ];
-    for (index, item) in meta.iter().enumerate() {
-        for (wrapped_index, wrapped) in wrap_text(item, 30).into_iter().enumerate() {
-            lines.push(PdfLine {
-                text: wrapped,
-                size: 13,
-                gap: if index == 0 && wrapped_index == 0 {
-                    34
-                } else {
-                    20
-                },
-                align: Align::Center,
-            });
-        }
-    }
+    lines.push(PdfLine {
+        text: format!("{} · {}", storybook.age_group, storybook.use_scene),
+        size: 13,
+        gap: 30,
+        align: Align::Center,
+    });
 
     PdfPage {
         layout,
@@ -252,13 +229,13 @@ fn cover_page(storybook: &Storybook, image: Option<usize>, layout: PdfLayout) ->
         text_bottom: layout.cover_text_bottom,
         lines,
         image_placeholder: false,
-        footer: Some("Kindleaf 生成导出版".to_string()),
+        footer: None,
         image,
         image_box: Some((
-            layout.cover_frame_x as f64 + 28.0,
-            layout.cover_frame_y as f64 + 28.0,
-            layout.cover_frame_width as f64 - 56.0,
-            (layout.cover_frame_height as f64 * 0.48).max(120.0),
+            layout.cover_frame_x as f64 + 42.0,
+            layout.cover_frame_y as f64 + 44.0,
+            layout.cover_frame_width as f64 - 84.0,
+            ((layout.cover_text_bottom - layout.cover_frame_y - 72) as f64).max(180.0),
         )),
     }
 }
@@ -486,7 +463,7 @@ fn pdf_number(value: f64) -> String {
 
 fn cover_background(layout: PdfLayout) -> Vec<String> {
     vec![
-        // 暖纸底色 + 居中边框 + 标题分隔线。
+        // 暖纸底色和居中边框，文字与主视觉使用独立区域。
         format!(
             "0.98 0.96 0.91 rg\n0 0 {} {} re f\n",
             layout.page_width, layout.page_height
@@ -497,13 +474,6 @@ fn cover_background(layout: PdfLayout) -> Vec<String> {
             layout.cover_frame_y,
             layout.cover_frame_width,
             layout.cover_frame_height
-        ),
-        format!(
-            "0.72 0.33 0.28 RG\n0.8 w\n{} {} m {} {} l S\n",
-            layout.page_width / 2 - 78,
-            layout.cover_text_top - 32,
-            layout.page_width / 2 + 78,
-            layout.cover_text_top - 32
         ),
     ]
 }
@@ -835,6 +805,20 @@ mod tests {
         // “Smoke 测试绘本” 宽 ≈ (6*0.55 + 4) * 30 = 219 → x ≈ (595-219)/2 = 188
         assert!(content.contains("/F1 30 Tf\n1 0 0 1 188"));
         assert!(content.contains(&utf16be_hex("KINDLEAF 绘本")));
+    }
+
+    #[test]
+    fn cover_only_shows_concise_reader_facing_metadata() {
+        let storybook = test_storybook();
+        let layout = PdfLayout::for_aspect(page_aspect_spec(&storybook.page_aspect_ratio));
+        let (pages, _) = storybook_pdf_pages(&storybook, &HashMap::new(), layout);
+        let content = page_content(&pages[0], &[]);
+
+        assert!(content.contains(&utf16be_hex("4-5 岁 · 课堂共读")));
+        assert!(!content.contains(&utf16be_hex("教学目标：学习轮流")));
+        assert!(!content.contains(&utf16be_hex("主要角色：林老师")));
+        assert!(!content.contains(&utf16be_hex("画面风格：温暖纸感")));
+        assert!(pages[0].footer.is_none());
     }
 
     fn write_test_transparent_png(path: &std::path::Path) {
