@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
 use serde_json::{Value as JsonValue, json};
 use uuid::Uuid;
@@ -86,7 +88,9 @@ pub async fn page_image_job_input(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(page_prompt);
     let mut reference_images = page_image_reference_images(db, storybook_id, &payload).await?;
-    for reference in page_visual_reference_images(db, workspace_id, storybook_id, page_id).await? {
+    let (photo_reference_images, photo_reference_clause) =
+        page_visual_reference_images(db, workspace_id, storybook_id, page_id).await?;
+    for reference in photo_reference_images {
         if !reference_images
             .iter()
             .any(|item| item.url == reference.url)
@@ -119,6 +123,11 @@ pub async fn page_image_job_input(
         prompt
     } else {
         format!("{prompt} 本页故事关系：{page_story_context}。")
+    };
+    let prompt = if photo_reference_clause.is_empty() {
+        prompt
+    } else {
+        format!("{prompt} {photo_reference_clause}")
     };
     let relation_clause = page_role_relation_clause(&named_roles);
     let prompt = if relation_clause.is_empty() {
@@ -627,14 +636,23 @@ async fn page_visual_reference_images(
     workspace_id: Uuid,
     storybook_id: Uuid,
     page_id: Uuid,
-) -> Result<Vec<ImageReference>, DbErr> {
+) -> Result<(Vec<ImageReference>, String), DbErr> {
     let Some(plan) = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select s.customization_plan, p.page_number
+            select s.customization_plan,
+                   creation_job.input_json as creation_input_json,
+                   p.page_number
             from storybook_pages p
             join storybooks s on s.id = p.storybook_id
+            left join storybook_creation_sessions creation_session
+              on creation_session.workspace_id = s.workspace_id
+             and creation_session.storybook_id = s.id
+            left join generation_jobs creation_job
+              on creation_job.id = creation_session.last_job_id
+             and creation_job.workspace_id = s.workspace_id
+             and creation_job.job_type = 'creation_storybook_generate'
             where s.workspace_id = $1 and s.id = $2 and p.id = $3
             limit 1
             "#,
@@ -642,14 +660,20 @@ async fn page_visual_reference_images(
         ))
         .await?
     else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), String::new()));
     };
-    let customization_plan: JsonValue = plan.try_get("", "customization_plan")?;
+    let customization_plan: Option<JsonValue> = plan.try_get("", "customization_plan")?;
+    let creation_input: Option<JsonValue> = plan.try_get("", "creation_input_json")?;
+    let visual_reference_plan = page_visual_reference_plan(
+        customization_plan.unwrap_or(JsonValue::Null),
+        creation_input,
+    );
     let page_number: i32 = plan.try_get("", "page_number")?;
+    let photo_reference_clause = page_photo_reference_clause(&visual_reference_plan, page_number);
     let mut preview_urls = Vec::new();
     let mut visual_reference_ids = Vec::new();
 
-    if let Some(page_evidence) = customization_plan
+    if let Some(page_evidence) = visual_reference_plan
         .get("page_evidence")
         .and_then(JsonValue::as_array)
         .and_then(|items| {
@@ -667,22 +691,44 @@ async fn page_visual_reference_images(
         );
     }
 
-    if let Some(references) = customization_plan
+    let page_plan = visual_reference_plan
+        .get("page_plan")
+        .and_then(JsonValue::as_array)
+        .and_then(|pages| {
+            pages.iter().find(|page| {
+                page.get("page_number")
+                    .and_then(JsonValue::as_i64)
+                    .is_some_and(|value| value == i64::from(page_number))
+            })
+        });
+    let page_reference_ids = page_plan.map(page_reference_ids).unwrap_or_default();
+    let has_typed_page_reference_ids = page_plan.is_some_and(has_typed_page_reference_ids);
+
+    if let Some(references) = visual_reference_plan
         .get("confirmed_photo_references")
         .and_then(JsonValue::as_array)
     {
         for reference in references {
-            let appears_on_page = reference
-                .get("planned_pages")
-                .and_then(JsonValue::as_array)
-                .is_some_and(|pages| {
-                    pages.iter().any(|page| {
-                        page.get("page_number")
-                            .and_then(JsonValue::as_i64)
-                            .is_some_and(|value| value == i64::from(page_number))
-                    })
+            let is_assigned_to_page = reference
+                .get("asset_reference_id")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|id| {
+                    page_reference_ids
+                        .iter()
+                        .any(|assigned_id| assigned_id == id)
                 });
-            if appears_on_page {
+            let is_assigned_by_legacy_plan = !has_typed_page_reference_ids
+                && reference
+                    .get("planned_pages")
+                    .and_then(JsonValue::as_array)
+                    .is_some_and(|pages| {
+                        pages.iter().any(|page| {
+                            page.get("page_number")
+                                .and_then(JsonValue::as_i64)
+                                .is_some_and(|value| value == i64::from(page_number))
+                        })
+                    });
+            if is_assigned_to_page || is_assigned_by_legacy_plan {
                 collect_visual_reference_inputs(
                     reference,
                     &mut preview_urls,
@@ -752,7 +798,170 @@ async fn page_visual_reference_images(
         });
     }
 
-    Ok(references)
+    Ok((references, photo_reference_clause))
+}
+
+fn page_photo_reference_clause(visual_reference_plan: &JsonValue, page_number: i32) -> String {
+    let mut references = Vec::<(String, String)>::new();
+    let mut seen_ids = HashSet::new();
+    let page_evidence = visual_reference_plan
+        .get("page_evidence")
+        .and_then(JsonValue::as_array)
+        .and_then(|pages| {
+            pages.iter().find(|page| {
+                page.get("page_number")
+                    .and_then(JsonValue::as_i64)
+                    .is_some_and(|value| value == i64::from(page_number))
+            })
+        });
+    if let Some(evidence) = page_evidence {
+        if let Some(asset_references) = evidence
+            .get("asset_references")
+            .and_then(JsonValue::as_array)
+        {
+            for reference in asset_references {
+                collect_photo_reference_clause_item(&mut references, &mut seen_ids, reference);
+            }
+        }
+    }
+
+    let page_plan = visual_reference_plan
+        .get("page_plan")
+        .and_then(JsonValue::as_array)
+        .and_then(|pages| {
+            pages.iter().find(|page| {
+                page.get("page_number")
+                    .and_then(JsonValue::as_i64)
+                    .is_some_and(|value| value == i64::from(page_number))
+            })
+        });
+    let assigned_ids = page_plan.map(page_reference_ids).unwrap_or_default();
+    if !assigned_ids.is_empty() {
+        if let Some(confirmed_references) = visual_reference_plan
+            .get("confirmed_photo_references")
+            .and_then(JsonValue::as_array)
+        {
+            for reference in confirmed_references {
+                if reference
+                    .get("asset_reference_id")
+                    .and_then(JsonValue::as_str)
+                    .is_some_and(|id| assigned_ids.iter().any(|assigned_id| assigned_id == id))
+                {
+                    collect_photo_reference_clause_item(&mut references, &mut seen_ids, reference);
+                }
+            }
+        }
+    }
+
+    let names_for = |reference_type: &str| {
+        references
+            .iter()
+            .filter(|(kind, _)| kind == reference_type)
+            .map(|(_, name)| name.as_str())
+            .collect::<Vec<_>>()
+            .join("、")
+    };
+    let mut rules = Vec::new();
+    let character_names = names_for("character_reference");
+    if !character_names.is_empty() {
+        rules.push(format!(
+            "角色参考（{character_names}）仅约束对应人物的外观；参考图或原照片中的背景不得作为本页故事场景"
+        ));
+    }
+    let prop_names = names_for("prop_reference");
+    if !prop_names.is_empty() {
+        rules.push(format!(
+            "道具参考（{prop_names}）仅约束对应物品或宠物的颜色、轮廓和材质，不得画成角色"
+        ));
+    }
+    let scene_names = names_for("scene_reference");
+    if !scene_names.is_empty() {
+        rules.push(format!(
+            "场景参考（{scene_names}）仅约束本页地点、环境和光线；场景图中的人物不得成为故事角色"
+        ));
+    }
+    if rules.is_empty() {
+        String::new()
+    } else {
+        format!("照片参考使用规则：{}。", rules.join("；"))
+    }
+}
+
+fn collect_photo_reference_clause_item(
+    references: &mut Vec<(String, String)>,
+    seen_ids: &mut HashSet<String>,
+    reference: &JsonValue,
+) {
+    let Some(reference_type) = reference
+        .get("reference_type")
+        .and_then(JsonValue::as_str)
+        .or_else(|| match reference.get("kind").and_then(JsonValue::as_str) {
+            Some("person") => Some("character_reference"),
+            Some("scene") => Some("scene_reference"),
+            Some("object") => Some("prop_reference"),
+            _ => None,
+        })
+    else {
+        return;
+    };
+    let Some(id) = reference
+        .get("asset_reference_id")
+        .and_then(JsonValue::as_str)
+    else {
+        return;
+    };
+    if !seen_ids.insert(id.to_string()) {
+        return;
+    }
+    let name = reference
+        .get("display_name")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("已确认照片参考");
+    references.push((reference_type.to_string(), name.to_string()));
+}
+
+fn page_visual_reference_plan(
+    customization_plan: JsonValue,
+    creation_input: Option<JsonValue>,
+) -> JsonValue {
+    if ["page_evidence", "page_plan", "confirmed_photo_references"]
+        .into_iter()
+        .any(|field| customization_plan.get(field).is_some())
+    {
+        return customization_plan;
+    }
+    creation_input.unwrap_or(JsonValue::Null)
+}
+
+fn page_reference_ids(page_plan: &JsonValue) -> Vec<String> {
+    [
+        "character_reference_ids",
+        "prop_reference_ids",
+        "scene_reference_ids",
+    ]
+    .into_iter()
+    .flat_map(|field| {
+        page_plan
+            .get(field)
+            .and_then(JsonValue::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(JsonValue::as_str)
+            .map(str::to_string)
+    })
+    .collect()
+}
+
+fn has_typed_page_reference_ids(page_plan: &JsonValue) -> bool {
+    [
+        "character_reference_ids",
+        "prop_reference_ids",
+        "scene_reference_ids",
+    ]
+    .into_iter()
+    .any(|field| page_plan.get(field).and_then(JsonValue::as_array).is_some())
 }
 
 fn collect_visual_reference_inputs(
@@ -1300,8 +1509,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        PageNamedRole, image_request_from_job, image_target_from_job, is_image_job,
-        page_camera_priority_guard, page_role_relation_clause,
+        PageNamedRole, has_typed_page_reference_ids, image_request_from_job, image_target_from_job,
+        is_image_job, page_camera_priority_guard, page_photo_reference_clause, page_reference_ids,
+        page_role_relation_clause, page_visual_reference_plan,
     };
     use crate::models::GenerationJob;
 
@@ -1388,6 +1598,104 @@ mod tests {
         assert_eq!(request.prompt, "生成同画风参考");
         assert_eq!(request.reference_images.len(), 1);
         assert_eq!(request.reference_images[0].source, "storybook_asset");
+    }
+
+    #[test]
+    fn page_reference_ids_keep_photo_types_separate_from_legacy_input() {
+        let page_plan = json!({
+            "character_reference_ids": ["character-ref"],
+            "prop_reference_ids": ["prop-ref"],
+            "scene_reference_ids": ["scene-ref"],
+            "asset_reference_ids": ["legacy-ref"]
+        });
+
+        let ids = page_reference_ids(&page_plan);
+
+        assert_eq!(ids, vec!["character-ref", "prop-ref", "scene-ref"]);
+        assert!(!ids.contains(&"legacy-ref".to_string()));
+        assert!(has_typed_page_reference_ids(&page_plan));
+        assert!(!has_typed_page_reference_ids(&json!({
+            "asset_reference_ids": ["legacy-ref"]
+        })));
+    }
+
+    #[test]
+    fn page_photo_reference_clause_keeps_each_reference_type_in_its_scope() {
+        let plan = json!({
+            "page_evidence": [{
+                "page_number": 2,
+                "asset_references": [
+                    { "asset_reference_id": "person-ref", "kind": "person", "display_name": "嘟嘟" },
+                    { "asset_reference_id": "prop-ref", "kind": "object", "display_name": "小火车" },
+                    { "asset_reference_id": "scene-ref", "kind": "scene", "display_name": "彩虹教室" }
+                ]
+            }]
+        });
+
+        let clause = page_photo_reference_clause(&plan, 2);
+
+        assert!(clause.contains("角色参考（嘟嘟）仅约束对应人物的外观"));
+        assert!(clause.contains("道具参考（小火车）仅约束对应物品或宠物"));
+        assert!(clause.contains("场景参考（彩虹教室）仅约束本页地点"));
+        assert!(clause.contains("不得作为本页故事场景"));
+    }
+
+    #[test]
+    fn page_photo_reference_clause_only_describes_references_assigned_to_the_page() {
+        let plan = json!({
+            "page_plan": [{
+                "page_number": 2,
+                "character_reference_ids": ["person-ref"],
+                "prop_reference_ids": [],
+                "scene_reference_ids": []
+            }],
+            "confirmed_photo_references": [
+                { "asset_reference_id": "person-ref", "reference_type": "character_reference", "display_name": "嘟嘟" },
+                { "asset_reference_id": "scene-ref", "reference_type": "scene_reference", "display_name": "彩虹教室" }
+            ]
+        });
+
+        let clause = page_photo_reference_clause(&plan, 2);
+
+        assert!(clause.contains("角色参考（嘟嘟）"));
+        assert!(!clause.contains("彩虹教室"));
+        assert!(!clause.contains("场景参考"));
+    }
+
+    #[test]
+    fn direct_creation_input_supplies_page_visual_reference_plan() {
+        let direct_creation_input = json!({
+            "page_evidence": [{
+                "page_number": 2,
+                "prop_reference_ids": ["prop-ref"],
+                "scene_reference_ids": ["scene-ref"]
+            }]
+        });
+
+        let plan = page_visual_reference_plan(json!({}), Some(direct_creation_input));
+
+        assert_eq!(plan["page_evidence"][0]["page_number"], 2);
+        assert_eq!(
+            page_reference_ids(&plan["page_evidence"][0]),
+            vec!["prop-ref", "scene-ref"]
+        );
+    }
+
+    #[test]
+    fn customization_plan_remains_authoritative_over_creation_input() {
+        let customization_plan = json!({
+            "page_evidence": [{ "page_number": 1, "prop_reference_ids": ["custom-ref"] }]
+        });
+        let direct_creation_input = json!({
+            "page_evidence": [{ "page_number": 1, "prop_reference_ids": ["creation-ref"] }]
+        });
+
+        let plan = page_visual_reference_plan(customization_plan, Some(direct_creation_input));
+
+        assert_eq!(
+            page_reference_ids(&plan["page_evidence"][0]),
+            vec!["custom-ref"]
+        );
     }
 }
 

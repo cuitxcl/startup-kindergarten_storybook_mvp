@@ -2024,6 +2024,15 @@ img.photo-thumb {
   display: block;
   object-fit: cover;
 }
+.photo-image-zoom-trigger {
+  width: 54px;
+  height: 54px;
+  flex: none;
+}
+.photo-image-zoom-trigger .photo-thumb {
+  width: 100%;
+  height: 100%;
+}
 .recipient-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .recipient-card {
   display: grid;
@@ -2190,7 +2199,12 @@ img.photo-thumb {
   padding: 8px;
 }
 .visual-reference-preview { width: 88px; height: 88px; border-radius: var(--radius); }
+img.visual-reference-preview { display: block; object-fit: cover; }
 .visual-reference-inline.compact .visual-reference-preview { width: 70px; height: 70px; }
+.reference-image-zoom-trigger { width: 88px; height: 88px; }
+.visual-reference-inline.compact .reference-image-zoom-trigger { width: 70px; height: 70px; }
+.reference-image-zoom-trigger .visual-reference-preview { width: 100%; height: 100%; }
+.compact-row .reference-image-zoom-trigger { width: 42px; height: 42px; }
 .ready-preview {
   display: grid;
   place-items: center;

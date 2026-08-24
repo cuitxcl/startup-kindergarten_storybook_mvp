@@ -394,12 +394,20 @@ pub async fn derive_custom(
         let target_child_nickname = target_child.nickname.clone();
         let intensity = payload.intensity.clone();
         let primary_material = payload.primary_material.clone();
-        let customization_plan = attach_single_run_identity(
+        let submitted_plan = attach_single_run_identity(
             payload.customization_plan.clone(),
             child_id,
             Some(target_child_nickname),
             primary_material.clone(),
         );
+        let confirmed_photo_references = validate_confirmed_photo_reference_ids(
+            &ctx.db,
+            workspace_id,
+            &confirmed_photo_reference_ids_from_plan(submitted_plan.as_ref()),
+        )
+        .await?;
+        let customization_plan =
+            synchronize_photo_reference_placements(submitted_plan, &confirmed_photo_references);
         let actor_id = common::actor_user_id(headers)?;
         let source = crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
             .await
@@ -977,7 +985,6 @@ fn build_source_customization_plan(
         })
         .collect::<Vec<serde_json::Value>>();
     attach_photo_references_to_page_plan(&mut page_plan, confirmed_photo_references);
-
     json!({
         "entry_type": "from_storybook",
         "mode": payload.mode,
@@ -1136,36 +1143,86 @@ fn attach_photo_references_to_page_plan(
     page_plan: &mut [serde_json::Value],
     confirmed_photo_references: &[crate::models::StorybookAssetReference],
 ) {
-    if confirmed_photo_references.is_empty() {
-        return;
-    }
-    let reference_ids = confirmed_photo_references
+    let customizable_page_indexes = page_plan
         .iter()
-        .map(|reference| serde_json::Value::String(reference.id.to_string()))
+        .enumerate()
+        .filter_map(|(index, item)| {
+            item.get("decision")
+                .and_then(|value| value.as_str())
+                .is_some_and(|decision| matches!(decision, "personalize" | "redraw_required"))
+                .then_some(index)
+        })
         .collect::<Vec<_>>();
-    for item in page_plan {
-        let should_place = item
-            .get("decision")
-            .and_then(|value| value.as_str())
-            .is_some_and(|decision| matches!(decision, "personalize" | "redraw_required"));
-        if should_place {
-            if let Some(object) = item.as_object_mut() {
-                object.insert(
-                    "asset_reference_ids".to_string(),
-                    serde_json::Value::Array(reference_ids.clone()),
-                );
+    let mut character_reference_ids_by_page = vec![Vec::new(); page_plan.len()];
+
+    for reference in confirmed_photo_references
+        .iter()
+        .filter(|reference| reference.kind == "person")
+    {
+        if reference.usage.as_deref() == Some("main_character") {
+            for page_index in &customizable_page_indexes {
+                character_reference_ids_by_page[*page_index]
+                    .push(serde_json::Value::String(reference.id.to_string()));
             }
+        }
+    }
+
+    for (index, item) in page_plan.iter_mut().enumerate() {
+        let should_place = customizable_page_indexes.contains(&index);
+        if should_place && let Some(object) = item.as_object_mut() {
+            object.insert(
+                "character_reference_ids".to_string(),
+                serde_json::Value::Array(character_reference_ids_by_page[index].clone()),
+            );
+            object.insert(
+                "prop_reference_ids".to_string(),
+                serde_json::Value::Array(Vec::new()),
+            );
+            // Non-main characters, props, and scenes require an explicit page selection.
+            object.insert(
+                "scene_reference_ids".to_string(),
+                serde_json::Value::Array(Vec::new()),
+            );
         }
     }
 }
 
-fn planned_photo_pages(page_plan: &[serde_json::Value]) -> Vec<serde_json::Value> {
+fn photo_reference_type(kind: &str) -> &'static str {
+    match kind {
+        "person" => "character_reference",
+        "scene" => "scene_reference",
+        _ => "prop_reference",
+    }
+}
+
+fn photo_reference_type_label(kind: &str) -> &'static str {
+    match kind {
+        "person" => "角色参考",
+        "scene" => "场景参考",
+        _ => "道具参考",
+    }
+}
+
+fn planned_photo_pages(
+    reference: &crate::models::StorybookAssetReference,
+    page_plan: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let reference_type = photo_reference_type(reference.kind.as_str());
+    let reference_id = reference.id.to_string();
+    let reference_ids_field = match reference_type {
+        "character_reference" => "character_reference_ids",
+        "prop_reference" => "prop_reference_ids",
+        _ => "scene_reference_ids",
+    };
     page_plan
         .iter()
         .filter(|item| {
-            item.get("decision")
-                .and_then(|value| value.as_str())
-                .is_some_and(|decision| matches!(decision, "personalize" | "redraw_required"))
+            item.get(reference_ids_field)
+                .and_then(|value| value.as_array())
+                .is_some_and(|ids| {
+                    ids.iter()
+                        .any(|id| id.as_str() == Some(reference_id.as_str()))
+                })
         })
         .map(|item| {
             json!({
@@ -1183,9 +1240,11 @@ fn confirmed_photo_reference_json(
     reference: &crate::models::StorybookAssetReference,
     page_plan: &[serde_json::Value],
 ) -> serde_json::Value {
-    let planned_pages = planned_photo_pages(page_plan);
+    let reference_type = photo_reference_type(reference.kind.as_str());
+    let planned_pages = planned_photo_pages(reference, page_plan);
+    let placement_scope = "page";
     let unplaced_reason = if planned_pages.is_empty() {
-        Some("no_customized_page_available")
+        Some("page_selection_required")
     } else {
         None
     };
@@ -1196,14 +1255,96 @@ fn confirmed_photo_reference_json(
         "kind": reference.kind,
         "display_name": reference.display_name,
         "usage": reference.usage,
-        "reference_type": match reference.kind.as_str() {
-            "person" => "角色参考",
-            "scene" => "场景参考",
-            _ => "道具参考",
-        },
+        "reference_type": reference_type,
+        "reference_type_label": photo_reference_type_label(reference.kind.as_str()),
+        "placement_scope": placement_scope,
         "planned_pages": planned_pages,
         "unplaced_reason": unplaced_reason,
     })
+}
+
+fn synchronize_photo_reference_placements(
+    customization_plan: Option<serde_json::Value>,
+    confirmed_photo_references: &[crate::models::StorybookAssetReference],
+) -> Option<serde_json::Value> {
+    let mut plan = customization_plan?;
+    let reference_fields = confirmed_photo_references
+        .iter()
+        .map(|reference| {
+            let field = match photo_reference_type(reference.kind.as_str()) {
+                "character_reference" => "character_reference_ids",
+                "scene_reference" => "scene_reference_ids",
+                _ => "prop_reference_ids",
+            };
+            (reference.id.to_string(), field)
+        })
+        .collect::<HashMap<_, _>>();
+
+    if let Some(page_plan) = plan
+        .get_mut("page_plan")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for page in page_plan {
+            let is_customizable = page
+                .get("decision")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|decision| matches!(decision, "personalize" | "redraw_required"));
+            let Some(page_object) = page.as_object_mut() else {
+                continue;
+            };
+            for field in [
+                "character_reference_ids",
+                "prop_reference_ids",
+                "scene_reference_ids",
+            ] {
+                let valid_ids = page_object
+                    .get(field)
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .filter(|id| is_customizable && reference_fields.get(*id) == Some(&field))
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                page_object.insert(
+                    field.to_string(),
+                    serde_json::Value::Array(
+                        valid_ids
+                            .into_iter()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+        }
+    }
+
+    let page_plan = plan
+        .get("page_plan")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(object) = plan.as_object_mut() {
+        object.insert(
+            "confirmed_photo_reference_ids".to_string(),
+            json!(
+                confirmed_photo_references
+                    .iter()
+                    .map(|reference| reference.id.to_string())
+                    .collect::<Vec<_>>()
+            ),
+        );
+        object.insert(
+            "confirmed_photo_references".to_string(),
+            json!(
+                confirmed_photo_references
+                    .iter()
+                    .map(|reference| confirmed_photo_reference_json(reference, &page_plan))
+                    .collect::<Vec<_>>()
+            ),
+        );
+    }
+    Some(plan)
 }
 
 pub async fn derive_custom_batch(
@@ -1247,7 +1388,7 @@ pub async fn derive_custom_batch(
             }
             children
         };
-        let run_customization_plan = attach_batch_target_children(
+        let submitted_plan = attach_batch_target_children(
             attach_batch_material_choices(
                 payload.customization_plan.clone(),
                 &payload.child_ids,
@@ -1255,6 +1396,14 @@ pub async fn derive_custom_batch(
             ),
             &target_children,
         );
+        let confirmed_photo_references = validate_confirmed_photo_reference_ids(
+            &ctx.db,
+            workspace_id,
+            &confirmed_photo_reference_ids_from_plan(submitted_plan.as_ref()),
+        )
+        .await?;
+        let run_customization_plan =
+            synchronize_photo_reference_placements(submitted_plan, &confirmed_photo_references);
         let single_target_plan = payload.child_ids.len() == 1
             && run_customization_plan
                 .as_ref()
@@ -2244,6 +2393,9 @@ mod tests {
                 "title": "第二页",
                 "decision": "personalize",
                 "reason": "替换为对象版本，保持原书阅读节奏。",
+                "character_reference_ids": [reference.id.to_string()],
+                "prop_reference_ids": [],
+                "scene_reference_ids": [],
             }),
         ];
         let summary = confirmed_photo_reference_json(&reference, &page_plan);
@@ -2253,7 +2405,8 @@ mod tests {
             summary["visual_reference_id"],
             reference.visual_reference.as_ref().unwrap().id.to_string()
         );
-        assert_eq!(summary["reference_type"], "角色参考");
+        assert_eq!(summary["reference_type"], "character_reference");
+        assert_eq!(summary["reference_type_label"], "角色参考");
         assert_eq!(summary["display_name"], "爸爸");
         assert_eq!(summary["planned_pages"].as_array().unwrap().len(), 1);
         assert_eq!(summary["planned_pages"][0]["page_number"], 2);
@@ -2261,11 +2414,15 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_photo_references_attach_to_customized_pages() {
+    fn non_main_photo_references_require_an_explicit_page_selection() {
         let source = test_storybook();
         let child_id = Uuid::new_v4();
-        let reference = test_asset_reference("person", "爸爸", "main_character");
-        let reference_id = reference.id.to_string();
+        let character_reference = test_asset_reference("person", "爸爸", "main_character");
+        let prop_reference = test_asset_reference("object", "小汽车", "story_object");
+        let scene_reference = test_asset_reference("scene", "幼儿园操场", "background_scene");
+        let character_reference_id = character_reference.id.to_string();
+        let prop_reference_id = prop_reference.id.to_string();
+        let scene_reference_id = scene_reference.id.to_string();
         let plan = build_source_customization_plan(
             &source,
             &BuildCustomizationPlanRequest {
@@ -2274,19 +2431,99 @@ mod tests {
                 target_child_ids: Vec::new(),
                 primary_material: Some("profile".to_string()),
                 optional_keep_page_ids: Vec::new(),
-                confirmed_photo_reference_ids: vec![reference.id],
+                confirmed_photo_reference_ids: vec![
+                    character_reference.id,
+                    prop_reference.id,
+                    scene_reference.id,
+                ],
             },
             &[(child_id, "乐乐".to_string())],
-            &[reference],
+            &[character_reference, prop_reference, scene_reference],
         );
 
         assert_eq!(
             plan["confirmed_photo_references"][0]["planned_pages"][0]["page_number"],
             2
         );
-        assert_eq!(plan["page_plan"][1]["asset_reference_ids"][0], reference_id);
+        assert_eq!(
+            plan["page_plan"][1]["character_reference_ids"][0],
+            character_reference_id
+        );
+        assert!(
+            plan["page_plan"][1]["prop_reference_ids"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(plan["page_plan"][1].get("asset_reference_ids").is_none());
+        assert!(
+            plan["page_plan"][1]["scene_reference_ids"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        for reference_type in ["prop_reference", "scene_reference"] {
+            let reference = plan["confirmed_photo_references"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|reference| reference["reference_type"] == reference_type)
+                .unwrap();
+            assert!(reference["planned_pages"].as_array().unwrap().is_empty());
+            assert_eq!(reference["unplaced_reason"], "page_selection_required");
+        }
         ensure_customization_photo_references_placed(Some(&plan))
-            .expect("planned photo references should pass run gate");
+            .expect_err("unselected photo references must block the run");
+        assert_ne!(prop_reference_id, scene_reference_id);
+    }
+
+    #[test]
+    fn photo_reference_placement_is_derived_from_valid_typed_pages() {
+        let prop_reference = test_asset_reference("object", "小汽车", "story_object");
+        let scene_reference = test_asset_reference("scene", "幼儿园操场", "background_scene");
+        let prop_id = prop_reference.id.to_string();
+        let scene_id = scene_reference.id.to_string();
+        let plan = synchronize_photo_reference_placements(Some(json!({
+            "confirmed_photo_references": [
+                { "asset_reference_id": prop_id, "reference_type": "scene_reference", "planned_pages": [{ "page_number": 99 }] },
+                { "asset_reference_id": scene_id, "reference_type": "prop_reference", "planned_pages": [{ "page_number": 99 }] }
+            ],
+            "page_plan": [
+                { "page_number": 1, "decision": "keep", "prop_reference_ids": [prop_id], "scene_reference_ids": [] },
+                { "page_number": 2, "decision": "personalize", "prop_reference_ids": [scene_id, prop_id], "scene_reference_ids": [scene_id] }
+            ]
+        })), &[prop_reference, scene_reference])
+        .expect("plan should remain present");
+
+        assert!(
+            plan["page_plan"][0]["prop_reference_ids"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(plan["page_plan"][1]["prop_reference_ids"], json!([prop_id]));
+        assert_eq!(
+            plan["page_plan"][1]["scene_reference_ids"],
+            json!([scene_id])
+        );
+        assert_eq!(
+            plan["confirmed_photo_references"][0]["planned_pages"][0]["page_number"],
+            2
+        );
+        assert_eq!(
+            plan["confirmed_photo_references"][1]["planned_pages"][0]["page_number"],
+            2
+        );
+        assert_eq!(
+            plan["confirmed_photo_references"][0]["reference_type"],
+            "prop_reference"
+        );
+        assert_eq!(
+            plan["confirmed_photo_references"][1]["reference_type"],
+            "scene_reference"
+        );
+        ensure_customization_photo_references_placed(Some(&plan))
+            .expect("normalized references should pass the placement gate");
     }
 
     #[test]

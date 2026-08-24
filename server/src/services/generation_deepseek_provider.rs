@@ -527,7 +527,7 @@ pub(crate) fn prompt_for(job_type: &str) -> String {
                 .to_string()
         }
         "storybook_pages" => {
-            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。如果 input.creation_context 存在，说明这是“专属绘本创作”的最终成品生成：必须优先服务用户的被理解、参与感和私人定制感；正文要承接 input.creation_context.quick_idea、understanding、selected_direction、materials、visual_preferences，不能只泛泛扩写 outline。\n\n专属素材规则：input.creation_context.materials 中 locked=true 的素材，其 label 必须至少一次原样出现在某一页 title、body 或最终插图描述中；如果素材较难自然进入正文，也要用原 label 放入画面道具、场景细节或角色称呼里，避免只做语义暗示。如果 input.creation_context.asset_references 或 confirmed_photo_references 非空，这些是用户已确认的真实照片同画风视觉参考：必须使用 display_name 原名，并按 usage/kind 把它写成角色、道具或场景约束；不要把原始照片当贴图、不要承诺像不像、不要凭空识别人脸身份。每个已确认照片参考必须落到 input.creation_context.page_evidence 指定的页；没有页级落点时，在 quality_notice 里用用户语言提示需要重新预览。\n\n必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。每页正文应像正式儿童绘本文案：简短、有画面、有情绪推进，避免说教，避免把大纲句原样复制成正文。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
+            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。如果 input.creation_context 存在，说明这是“专属绘本创作”的最终成品生成：必须优先服务用户的被理解、参与感和私人定制感；正文要承接 input.creation_context.quick_idea、understanding、selected_direction、materials、visual_preferences，不能只泛泛扩写 outline。\n\n专属素材规则：input.creation_context.materials 中 locked=true 的素材，其 label 必须至少一次原样出现在某一页 title、body 或最终插图描述中；如果素材较难自然进入正文，也要用原 label 放入画面道具、场景细节或角色称呼里，避免只做语义暗示。如果 input.creation_context.asset_references 或 confirmed_photo_references 非空，这些是用户已确认的真实照片同画风视觉参考：必须使用 display_name 原名，并按 usage/kind 把它写成角色、道具或场景约束；不要把原始照片当贴图、不要承诺像不像、不要凭空识别人脸身份。人物/角色参考只能约束对应人物的外观，人物照片或角色参考中的背景不得作为故事场景；道具参考只能约束对应物品或宠物的外观与材质，不得变成角色；场景参考只能约束对应地点、环境和光线，场景图中的人物不得成为故事角色。每个已确认照片参考必须落到 input.creation_context.page_evidence 指定的页；没有页级落点时，在 quality_notice 里用用户语言提示需要重新预览。\n\n必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。每页正文应像正式儿童绘本文案：简短、有画面、有情绪推进，避免说教，避免把大纲句原样复制成正文。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
         }
         "storybook_page_prompt" => {
             format!("根据 input.page 的标题（title）和正文（body），为这一页重新创作插图设定，替换现有插图描述。正文必须忠于 input.page.body，不要改动剧情。必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。\n\ninput.neighbor_pages 包含前后相邻页的插图描述（可能为空）：本页必须与相邻页保持场景连续，相邻页出现的人群在本页必须仍在场（可以退到后排或让出画面中心，但不能消失）；如果剧情确实让人群散去了，必须在 crowd 槽位写明人群去了哪里。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
@@ -630,7 +630,8 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
                 "confirmed_photo_references": [{
                     "display_name": "string",
                     "usage": "string",
-                    "reference_type": "角色参考 | 道具参考 | 场景参考",
+                    "reference_type": "character_reference | prop_reference | scene_reference",
+                    "reference_type_label": "角色参考 | 道具参考 | 场景参考",
                     "planned_pages": [{"page_number": "number", "reason": "string"}]
                 }],
                 "unplaced_materials": [{"display_name": "string", "reason": "string"}],

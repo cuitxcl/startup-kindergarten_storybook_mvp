@@ -725,6 +725,10 @@ pub async fn generate_storybook(
     )
     .await
     .map_err(common::db_error)?;
+    let character_photo_references =
+        photo_references_by_kind(&confirmed_asset_references, "person");
+    let prop_photo_references = photo_references_by_kind(&confirmed_asset_references, "object");
+    let scene_photo_references = photo_references_by_kind(&confirmed_asset_references, "scene");
 
     let input_json = json!({
         "creation_session_id": session.id,
@@ -737,6 +741,9 @@ pub async fn generate_storybook(
         "page_evidence": direct_creation_page_evidence(&outline, &confirmed_asset_references),
         "visual_preferences": session.visual_preferences,
         "asset_references": confirmed_asset_references,
+        "character_photo_references": character_photo_references,
+        "prop_photo_references": prop_photo_references,
+        "scene_photo_references": scene_photo_references,
         "generation_mode": generation_mode,
         "include_images": include_images,
         "idempotency_key": idempotency_key,
@@ -1447,6 +1454,21 @@ fn direct_creation_page_evidence(
                         })
                     })
                     .collect::<Vec<_>>();
+                let character_reference_ids = page_asset_references
+                    .iter()
+                    .filter(|reference| reference.get("kind").and_then(serde_json::Value::as_str) == Some("person"))
+                    .filter_map(|reference| reference.get("asset_reference_id").cloned())
+                    .collect::<Vec<_>>();
+                let prop_reference_ids = page_asset_references
+                    .iter()
+                    .filter(|reference| reference.get("kind").and_then(serde_json::Value::as_str) == Some("object"))
+                    .filter_map(|reference| reference.get("asset_reference_id").cloned())
+                    .collect::<Vec<_>>();
+                let scene_reference_ids = page_asset_references
+                    .iter()
+                    .filter(|reference| reference.get("kind").and_then(serde_json::Value::as_str) == Some("scene"))
+                    .filter_map(|reference| reference.get("asset_reference_id").cloned())
+                    .collect::<Vec<_>>();
                 json!({
                     "page_number": page.page_number,
                     "summary": page.summary,
@@ -1455,12 +1477,26 @@ fn direct_creation_page_evidence(
                         .iter()
                         .filter_map(|reference| reference.get("asset_reference_id").cloned())
                         .collect::<Vec<_>>(),
+                    "character_reference_ids": character_reference_ids,
+                    "prop_reference_ids": prop_reference_ids,
+                    "scene_reference_ids": scene_reference_ids,
                     "asset_references": page_asset_references,
                     "evidence_source": "creation_outline",
                 })
             })
             .collect(),
     )
+}
+
+fn photo_references_by_kind(
+    references: &[crate::models::StorybookAssetReference],
+    kind: &str,
+) -> Vec<crate::models::StorybookAssetReference> {
+    references
+        .iter()
+        .filter(|reference| reference.kind == kind)
+        .cloned()
+        .collect()
 }
 
 fn validate_outline_pages(pages: &[CreationOutlinePage]) -> Result<(), ApiError> {
@@ -1663,7 +1699,7 @@ fn step(key: &str, label: &str, status: &str) -> CreationGenerationStep {
 mod tests {
     use super::{
         can_refresh_directions_from_status, direct_creation_page_evidence,
-        unplaced_locked_materials,
+        photo_references_by_kind, unplaced_locked_materials,
     };
     use crate::models::{
         CreationMaterial, CreationOutline, CreationOutlinePage, StorybookAssetReference,
@@ -1773,6 +1809,64 @@ mod tests {
             evidence[0]["asset_references"][0]["visual_reference_id"],
             visual_reference_id.to_string()
         );
+        assert_eq!(
+            evidence[0]["prop_reference_ids"][0],
+            asset_reference.id.to_string()
+        );
+        assert!(
+            evidence[0]["character_reference_ids"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(evidence[0]["evidence_source"], "creation_outline");
+    }
+
+    #[test]
+    fn photo_references_are_grouped_by_kind_for_generation_input() {
+        let mut character_reference = StorybookAssetReference {
+            id: Uuid::new_v4(),
+            asset_id: Uuid::new_v4(),
+            asset: StorybookAssetSummary {
+                id: Uuid::new_v4(),
+                storage_key: "/storybook-assets/source.png".to_string(),
+                status: "ready".to_string(),
+                processing_message: None,
+                content_type: "image/png".to_string(),
+                byte_size: 128,
+                width: Some(2),
+                height: Some(2),
+                visibility_scope: "creation_session".to_string(),
+                retention_policy: "session_scoped".to_string(),
+            },
+            kind: "person".to_string(),
+            display_name: "乐乐".to_string(),
+            usage: Some("main_character".to_string()),
+            status: "ready".to_string(),
+            material_id: Some("m1".to_string()),
+            preview_url: None,
+            visual_reference: None,
+            revoked_at: None,
+            revoked_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let mut scene_reference = character_reference.clone();
+        scene_reference.id = Uuid::new_v4();
+        scene_reference.kind = "scene".to_string();
+        scene_reference.usage = Some("background_scene".to_string());
+        character_reference.kind = "person".to_string();
+
+        let references = vec![character_reference.clone(), scene_reference.clone()];
+
+        assert_eq!(
+            photo_references_by_kind(&references, "person")[0].id,
+            character_reference.id
+        );
+        assert_eq!(
+            photo_references_by_kind(&references, "scene")[0].id,
+            scene_reference.id
+        );
+        assert!(photo_references_by_kind(&references, "object").is_empty());
     }
 }

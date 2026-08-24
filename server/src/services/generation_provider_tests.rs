@@ -661,6 +661,8 @@ fn deepseek_pages_prompt_carries_personalized_photo_rules() {
     assert!(user_prompt.contains("asset_references"));
     assert!(user_prompt.contains("confirmed_photo_references"));
     assert!(user_prompt.contains("不要把原始照片当贴图"));
+    assert!(user_prompt.contains("人物/角色参考只能约束对应人物的外观"));
+    assert!(user_prompt.contains("场景图中的人物不得成为故事角色"));
     assert!(user_prompt.contains("page_evidence"));
 }
 
@@ -691,6 +693,10 @@ fn deepseek_customization_prompt_matches_product_gates() {
     assert!(user_prompt.contains("后端负责"));
     assert!(prompt["response_schema"]["customization_plan"]["page_plan"].is_array());
     assert!(prompt["response_schema"]["customization_plan"]["unplaced_materials"].is_array());
+    assert_eq!(
+        prompt["response_schema"]["customization_plan"]["confirmed_photo_references"][0]["reference_type"],
+        "character_reference | prop_reference | scene_reference"
+    );
     assert!(
         prompt["response_schema"]["customization_plan"]
             .get("target_child_id")
