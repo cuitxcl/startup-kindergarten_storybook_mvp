@@ -17,6 +17,7 @@ pub const SUPPORTED_IMAGE_JOB_TYPES: &[&str] = &[
     "storybook_cover_image",
     "storybook_page_image",
     "storybook_role_reference_image",
+    "storybook_visual_reference",
 ];
 
 pub struct SeedreamImageProvider {
@@ -261,6 +262,14 @@ pub(crate) fn seedream_reference_image_input(
     if let Some(file_name) = url.strip_prefix("/generated-images/") {
         let bytes =
             storage::read_generated_image(file_name).map_err(GenerationProviderError::new)?;
+        return Ok(format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(bytes)
+        ));
+    }
+    if let Some(file_name) = url.strip_prefix("/storybook-assets/") {
+        let bytes =
+            storage::read_storybook_asset(file_name).map_err(GenerationProviderError::new)?;
         return Ok(format!(
             "data:image/png;base64,{}",
             BASE64_STANDARD.encode(bytes)

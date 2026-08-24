@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use axum::http::HeaderMap;
 use loco_rs::app::AppContext;
 use sea_orm::TransactionTrait;
@@ -33,6 +35,49 @@ pub async fn create(
 ) -> Result<StorybookCreationSession, ApiError> {
     common::require_editor_db(ctx, headers, workspace_id).await?;
     let actor_id = common::actor_user_id(headers)?;
+    let entry_type = payload
+        .entry_type
+        .as_deref()
+        .unwrap_or("direct_create")
+        .trim()
+        .to_string();
+    if !matches!(
+        entry_type.as_str(),
+        "direct_create" | "from_storybook_assets"
+    ) {
+        return Err(ApiError::validation(
+            "entry_type",
+            "创作会话入口只能是 direct_create 或 from_storybook_assets",
+        ));
+    }
+    let source_storybook_id = if entry_type == "from_storybook_assets" {
+        let source_storybook_id = payload
+            .source_storybook_id
+            .ok_or_else(|| ApiError::validation("source_storybook_id", "请选择来源绘本"))?;
+        let source =
+            crate::repositories::storybooks::find(&ctx.db, workspace_id, source_storybook_id)
+                .await
+                .map_err(common::db_error)?;
+        crate::repositories::storybook_customization::ensure_source_ready_for_customization(
+            &source,
+        )
+        .map_err(common::db_error)?;
+        if let Some(existing) =
+            crate::repositories::storybook_creation_sessions::latest_source_asset_session(
+                &ctx.db,
+                workspace_id,
+                actor_id,
+                source_storybook_id,
+            )
+            .await
+            .map_err(common::db_error)?
+        {
+            return Ok(existing);
+        }
+        Some(source_storybook_id)
+    } else {
+        None
+    };
     let quick_idea = validate_quick_idea(payload.quick_idea)?;
     let use_scene = clean_or(payload.use_scene, "家庭共读");
     let age_group = clean_or(payload.age_group, "4-5 岁");
@@ -59,6 +104,8 @@ pub async fn create(
         &ctx.db,
         workspace_id,
         actor_id,
+        entry_type,
+        source_storybook_id,
         quick_idea,
         use_scene,
         age_group,
@@ -145,6 +192,7 @@ pub async fn update(
     payload: UpdateStorybookCreationSessionRequest,
 ) -> Result<CreationSessionUpdateResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_not_terminal_for_edit(&session)?;
     if matches!(session.status.as_str(), "generating") {
         return Err(ApiError::state_conflict("生成中不能修改基础输入"));
@@ -188,6 +236,7 @@ pub async fn refresh_understanding(
     payload: RefreshUnderstandingRequest,
 ) -> Result<StorybookCreationSession, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_not_generating_or_ready(&session)?;
     let preserved = if payload.preserve_user_materials.unwrap_or(true) {
         session
@@ -230,6 +279,7 @@ pub async fn patch_materials(
     payload: PatchCreationMaterialsRequest,
 ) -> Result<CreationMaterialsResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_not_generating_or_ready(&session)?;
     for op in payload.operations {
         match op.op.as_str() {
@@ -307,10 +357,13 @@ pub async fn generate_directions(
     payload: GenerateDirectionsRequest,
 ) -> Result<CreationDirectionsResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
-    ensure_status_any(
-        &session,
-        &["understanding_ready", "directions_ready", "failed"],
-    )?;
+    ensure_direct_creation_session(&session)?;
+    if !can_refresh_directions_from_status(&session.status) {
+        return Err(ApiError::state_conflict(format!(
+            "当前状态 {} 不能重新生成故事方向",
+            session.status
+        )));
+    }
     if let Some(reason) = payload.refresh_reason.as_deref()
         && ![
             "initial",
@@ -348,6 +401,7 @@ pub async fn select_direction(
     payload: SelectDirectionRequest,
 ) -> Result<SelectDirectionResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_status_any(&session, &["directions_ready"])?;
     let selected = session
         .directions
@@ -376,6 +430,7 @@ pub async fn generate_outline(
     payload: GenerateOutlineRequest,
 ) -> Result<CreationOutlineResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_status_any(&session, &["direction_selected"])?;
     let page_count = normalize_page_count(payload.page_count.or(Some(session.page_count)));
     session.page_count = page_count;
@@ -401,6 +456,7 @@ pub async fn update_outline_page(
     payload: UpdateOutlinePageRequest,
 ) -> Result<UpdateOutlinePageResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_status_any(&session, &["outline_ready", "failed"])?;
     let mut outline = session
         .outline
@@ -432,6 +488,7 @@ pub async fn update_outline(
     payload: UpdateCreationOutlineRequest,
 ) -> Result<UpdateOutlineResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_status_any(&session, &["outline_ready", "failed"])?;
     validate_outline_pages(&payload.pages)?;
     let outline = CreationOutline {
@@ -461,6 +518,7 @@ pub async fn update_visual_preferences(
     payload: UpdateVisualPreferencesRequest,
 ) -> Result<VisualPreferencesResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
+    ensure_direct_creation_session(&session)?;
     ensure_not_generating_or_ready(&session)?;
     if let Some(style) = payload.style {
         session.visual_preferences.style = common::required(style, "style")?;
@@ -540,6 +598,7 @@ pub async fn generate_storybook(
     .await
     .map_err(common::db_error)?;
     ensure_session_visible(&workspace, &session, actor_id)?;
+    ensure_direct_creation_session(&session)?;
 
     if session.status == "generating" {
         txn.commit().await.map_err(common::db_error)?;
@@ -563,10 +622,66 @@ pub async fn generate_storybook(
         return Ok(generation_response(&session, include_images));
     }
     ensure_status_any(&session, &["outline_ready", "failed"])?;
+    let blocking_asset_references =
+        crate::repositories::storybook_creation_assets::blocking_references_for_generation(
+            &ctx.db,
+            workspace_id,
+            session_id,
+        )
+        .await
+        .map_err(common::db_error)?;
+    if !blocking_asset_references.is_empty() {
+        let blocking_asset_reference_ids: Vec<Uuid> = blocking_asset_references
+            .iter()
+            .map(|reference| reference.id)
+            .collect();
+        return Err(ApiError::state_conflict_with_code_and_details(
+            "visual_reference_required",
+            format!(
+                "先处理 {} 张照片的用途或同画风参考，再开始制作",
+                blocking_asset_references.len()
+            ),
+            json!({
+                "blocking_asset_reference_ids": blocking_asset_reference_ids,
+                "next_action": "confirm_visual_reference"
+            }),
+        ));
+    }
+    let confirmed_asset_references =
+        crate::repositories::storybook_creation_assets::confirmed_references_for_generation(
+            &ctx.db,
+            workspace_id,
+            session_id,
+        )
+        .await
+        .map_err(common::db_error)?;
     let outline = session
         .outline
         .clone()
         .ok_or_else(|| ApiError::state_conflict("生成绘本前需要先确认大纲"))?;
+    let unplaced_materials = unplaced_locked_materials(&session.materials, &outline);
+    if !unplaced_materials.is_empty() {
+        let unplaced_material_ids = unplaced_materials
+            .iter()
+            .map(|material| material.id.clone())
+            .collect::<Vec<_>>();
+        let unplaced_material_labels = unplaced_materials
+            .iter()
+            .map(|material| material.label.clone())
+            .collect::<Vec<_>>();
+        return Err(ApiError::state_conflict_with_code_and_details(
+            "material_unplaced",
+            format!(
+                "还有 {} 个专属素材没有安排到故事大纲里",
+                unplaced_materials.len()
+            ),
+            json!({
+                "unplaced_material_ids": unplaced_material_ids,
+                "unplaced_material_labels": unplaced_material_labels,
+                "next_action": "regenerate_outline"
+            }),
+        ));
+    }
     let selected_direction = selected_direction(&session)?;
     let storybook_id = match session.storybook_id {
         Some(storybook_id) => storybook_id,
@@ -602,6 +717,14 @@ pub async fn generate_storybook(
     )
     .await
     .map_err(common::db_error)?;
+    crate::repositories::storybook_creation_sessions::bind_confirmed_person_reference_images(
+        &txn,
+        storybook_id,
+        workspace_id,
+        &confirmed_asset_references,
+    )
+    .await
+    .map_err(common::db_error)?;
 
     let input_json = json!({
         "creation_session_id": session.id,
@@ -611,7 +734,9 @@ pub async fn generate_storybook(
         "materials": session.materials,
         "selected_direction": selected_direction,
         "outline": outline,
+        "page_evidence": direct_creation_page_evidence(&outline, &confirmed_asset_references),
         "visual_preferences": session.visual_preferences,
+        "asset_references": confirmed_asset_references,
         "generation_mode": generation_mode,
         "include_images": include_images,
         "idempotency_key": idempotency_key,
@@ -644,9 +769,16 @@ pub async fn generate_storybook(
         .map_err(common::db_error)?;
     txn.commit().await.map_err(common::db_error)?;
 
-    crate::workers::generation::enqueue_generation_job(ctx, workspace_id, job.id)
-        .await
-        .map_err(|err| ApiError::state_conflict(format!("生成任务入队失败：{err}")))?;
+    if let Err(err) =
+        crate::workers::generation::enqueue_generation_job(ctx, workspace_id, job.id).await
+    {
+        let _ =
+            crate::repositories::generation::cancel_generation_job(&ctx.db, workspace_id, job.id)
+                .await;
+        return Err(ApiError::state_conflict(format!(
+            "生成任务入队失败，已恢复为可重试状态：{err}"
+        )));
+    }
 
     Ok(generation_response(&session, include_images))
 }
@@ -660,6 +792,18 @@ pub async fn abandon(
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
     if session.status == "storybook_ready" {
         return Err(ApiError::state_conflict("已生成绘本的会话不能放弃"));
+    }
+    if session.status == "generating" {
+        let job_id = session
+            .last_job_id
+            .ok_or_else(|| ApiError::state_conflict("当前制作任务缺少可取消记录，请刷新后重试"))?;
+        crate::repositories::generation::cancel_generation_job(&ctx.db, workspace_id, job_id)
+            .await
+            .map_err(|err| {
+                ApiError::state_conflict(format!(
+                    "当前制作任务状态已变化，无法安全停止：{err}。请刷新后查看结果"
+                ))
+            })?;
     }
     if session.status != "abandoned" {
         session.status = "abandoned".to_string();
@@ -716,6 +860,24 @@ fn ensure_status_any(session: &StorybookCreationSession, allowed: &[&str]) -> Re
             "当前状态 {} 不能执行该操作",
             session.status
         )))
+    }
+}
+
+fn can_refresh_directions_from_status(status: &str) -> bool {
+    matches!(
+        status,
+        "understanding_ready" | "directions_ready" | "outline_ready" | "failed"
+    )
+}
+
+fn ensure_direct_creation_session(session: &StorybookCreationSession) -> Result<(), ApiError> {
+    if session.entry_type == "direct_create" {
+        Ok(())
+    } else {
+        Err(ApiError::state_conflict_with_code(
+            "invalid_creation_session_entry_type",
+            "这个会话只用于来源书照片素材，不能执行从想法开始的创作流程",
+        ))
     }
 }
 
@@ -1234,6 +1396,73 @@ fn selected_direction(session: &StorybookCreationSession) -> Result<StoryDirecti
         .ok_or_else(|| ApiError::state_conflict("已选故事方向已失效，请重新选择"))
 }
 
+fn unplaced_locked_materials<'a>(
+    materials: &'a [CreationMaterial],
+    outline: &CreationOutline,
+) -> Vec<&'a CreationMaterial> {
+    let placed_material_ids = outline
+        .pages
+        .iter()
+        .flat_map(|page| page.material_ids.iter().map(String::as_str))
+        .collect::<HashSet<_>>();
+    materials
+        .iter()
+        .filter(|material| material.locked && !placed_material_ids.contains(material.id.as_str()))
+        .collect()
+}
+
+fn direct_creation_page_evidence(
+    outline: &CreationOutline,
+    asset_references: &[crate::models::StorybookAssetReference],
+) -> serde_json::Value {
+    let references_by_material_id = asset_references
+        .iter()
+        .filter_map(|reference| {
+            reference
+                .material_id
+                .as_deref()
+                .map(|material_id| (material_id, reference))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    serde_json::Value::Array(
+        outline
+            .pages
+            .iter()
+            .map(|page| {
+                let page_asset_references = page
+                    .material_ids
+                    .iter()
+                    .filter_map(|material_id| references_by_material_id.get(material_id.as_str()))
+                    .map(|reference| {
+                        json!({
+                            "asset_reference_id": reference.id,
+                            "asset_id": reference.asset_id,
+                            "material_id": reference.material_id,
+                            "kind": reference.kind,
+                            "display_name": reference.display_name,
+                            "usage": reference.usage,
+                            "visual_reference_id": reference.visual_reference.as_ref().map(|visual_reference| visual_reference.id),
+                            "visual_reference_status": reference.visual_reference.as_ref().map(|visual_reference| visual_reference.status.as_str()),
+                            "visual_reference_preview_url": reference.visual_reference.as_ref().and_then(|visual_reference| visual_reference.preview_url.clone()),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                json!({
+                    "page_number": page.page_number,
+                    "summary": page.summary,
+                    "material_ids": page.material_ids,
+                    "asset_reference_ids": page_asset_references
+                        .iter()
+                        .filter_map(|reference| reference.get("asset_reference_id").cloned())
+                        .collect::<Vec<_>>(),
+                    "asset_references": page_asset_references,
+                    "evidence_source": "creation_outline",
+                })
+            })
+            .collect(),
+    )
+}
+
 fn validate_outline_pages(pages: &[CreationOutlinePage]) -> Result<(), ApiError> {
     if pages.is_empty() {
         return Err(ApiError::validation("pages", "大纲至少需要 1 页"));
@@ -1286,6 +1515,7 @@ fn validate_material_type(value: String) -> Result<String, ApiError> {
     let allowed = [
         "character",
         "object",
+        "scene",
         "place",
         "event",
         "theme",
@@ -1426,5 +1656,123 @@ fn step(key: &str, label: &str, status: &str) -> CreationGenerationStep {
         key: key.to_string(),
         label: label.to_string(),
         status: status.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        can_refresh_directions_from_status, direct_creation_page_evidence,
+        unplaced_locked_materials,
+    };
+    use crate::models::{
+        CreationMaterial, CreationOutline, CreationOutlinePage, StorybookAssetReference,
+        StorybookAssetSummary, StorybookVisualReferenceSummary,
+    };
+    use uuid::Uuid;
+
+    fn material(id: &str, label: &str, locked: bool) -> CreationMaterial {
+        CreationMaterial {
+            id: id.to_string(),
+            label: label.to_string(),
+            material_type: "character".to_string(),
+            source: "user_added".to_string(),
+            confidence: None,
+            locked,
+        }
+    }
+
+    fn outline(material_ids: Vec<&str>) -> CreationOutline {
+        CreationOutline {
+            summary: "故事大纲".to_string(),
+            pages: vec![CreationOutlinePage {
+                page_number: 1,
+                summary: "第一页".to_string(),
+                material_ids: material_ids.into_iter().map(str::to_string).collect(),
+            }],
+            review_points: Vec::new(),
+            generation_source: Some("test".to_string()),
+            quality_flags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn locked_materials_must_be_placed_in_outline() {
+        let materials = vec![material("m1", "乐乐", true), material("m2", "爸爸", true)];
+        let outline = outline(vec!["m1"]);
+
+        let unplaced = unplaced_locked_materials(&materials, &outline);
+
+        assert_eq!(unplaced.len(), 1);
+        assert_eq!(unplaced[0].id, "m2");
+    }
+
+    #[test]
+    fn unlocked_materials_do_not_block_generation() {
+        let materials = vec![material("m1", "乐乐", true), material("m2", "爸爸", false)];
+        let outline = outline(vec!["m1"]);
+
+        assert!(unplaced_locked_materials(&materials, &outline).is_empty());
+    }
+
+    #[test]
+    fn direction_refresh_can_replace_an_existing_outline() {
+        assert!(can_refresh_directions_from_status("outline_ready"));
+        assert!(!can_refresh_directions_from_status("generating"));
+        assert!(!can_refresh_directions_from_status("storybook_ready"));
+    }
+
+    #[test]
+    fn direct_creation_page_evidence_freezes_asset_references_by_outline_page() {
+        let visual_reference_id = Uuid::new_v4();
+        let asset_reference = StorybookAssetReference {
+            id: Uuid::new_v4(),
+            asset_id: Uuid::new_v4(),
+            asset: StorybookAssetSummary {
+                id: Uuid::new_v4(),
+                storage_key: "/storybook-assets/source.png".to_string(),
+                status: "ready".to_string(),
+                processing_message: None,
+                content_type: "image/png".to_string(),
+                byte_size: 128,
+                width: Some(2),
+                height: Some(2),
+                visibility_scope: "creation_session".to_string(),
+                retention_policy: "session_scoped".to_string(),
+            },
+            kind: "object".to_string(),
+            display_name: "小汽车".to_string(),
+            usage: Some("story_object".to_string()),
+            status: "ready".to_string(),
+            material_id: Some("m1".to_string()),
+            preview_url: Some("/api/assets/preview".to_string()),
+            visual_reference: Some(StorybookVisualReferenceSummary {
+                id: visual_reference_id,
+                status: "confirmed".to_string(),
+                generation_job_id: Some(Uuid::new_v4()),
+                preview_url: Some("/api/generated/reference.png".to_string()),
+                failure_reason: None,
+                confirmed_at: Some(chrono::Utc::now()),
+                confirmed_by: Some(Uuid::new_v4()),
+            }),
+            revoked_at: None,
+            revoked_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let outline = outline(vec!["m1"]);
+
+        let evidence = direct_creation_page_evidence(&outline, &[asset_reference.clone()]);
+
+        assert_eq!(evidence[0]["page_number"], 1);
+        assert_eq!(
+            evidence[0]["asset_reference_ids"][0],
+            asset_reference.id.to_string()
+        );
+        assert_eq!(
+            evidence[0]["asset_references"][0]["visual_reference_id"],
+            visual_reference_id.to_string()
+        );
+        assert_eq!(evidence[0]["evidence_source"], "creation_outline");
     }
 }

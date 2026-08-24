@@ -54,6 +54,14 @@ pub fn db_error(err: sea_orm::DbErr) -> ApiError {
         sea_orm::DbErr::RecordNotFound(resource) if resource == "generation_job" => {
             ApiError::not_found("generation_job")
         }
+        sea_orm::DbErr::Custom(message)
+            if message == "visual_reference_not_ready_for_confirmation" =>
+        {
+            ApiError::state_conflict_with_code(
+                "visual_reference_not_ready",
+                "同画风参考还没有生成完成，暂不能确认",
+            )
+        }
         sea_orm::DbErr::RecordNotFound(_) => ApiError::not_found("resource"),
         other => ApiError::state_conflict(format!("数据库操作失败：{other}")),
     }

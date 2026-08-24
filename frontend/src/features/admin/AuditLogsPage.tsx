@@ -13,7 +13,7 @@ const actionLabel: Record<string, string> = {
   "storybook.updated": "更新绘本设置",
   "storybook.page_updated": "更新绘本分页",
   "storybook.role_updated": "更新角色设定",
-  "storybook.custom_derived": "生成定制绘本",
+  "storybook.custom_derived": "创作专属版本",
   "parent_intake.submitted": "提交家长资料",
   "parent_intake.confirmed": "确认家长资料",
   "parent_intake_link.created": "创建家长资料链接",

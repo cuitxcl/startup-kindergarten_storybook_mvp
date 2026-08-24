@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// 绘本角色之外的常见"代称动物"黑名单：出现在正文/插图描述里但没有对应已确认角色时，
@@ -182,6 +183,9 @@ pub struct StorybookPage {
     pub body: String,
     pub illustration_prompt: String,
     pub status: String,
+    pub review_status: String,
+    pub reviewed_by: Option<Uuid>,
+    pub reviewed_at: Option<String>,
     pub image_url: Option<String>,
     pub selected_image_variant_id: Option<Uuid>,
 }
@@ -280,6 +284,12 @@ pub struct Storybook {
     pub source: String,
     pub source_title: Option<String>,
     pub target_child_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customization_run_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customization_run_item_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customization_plan: Option<JsonValue>,
     pub creator_name: String,
     pub updated_at: String,
     pub age_group: String,
@@ -410,6 +420,89 @@ pub struct CreationMaterial {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookAssetSummary {
+    pub id: Uuid,
+    #[serde(skip_serializing)]
+    pub storage_key: String,
+    pub status: String,
+    pub processing_message: Option<String>,
+    pub content_type: String,
+    pub byte_size: i64,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub visibility_scope: String,
+    pub retention_policy: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookVisualReferenceSummary {
+    pub id: Uuid,
+    pub status: String,
+    pub generation_job_id: Option<Uuid>,
+    pub preview_url: Option<String>,
+    pub failure_reason: Option<String>,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub confirmed_by: Option<Uuid>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookAssetReference {
+    pub id: Uuid,
+    pub asset_id: Uuid,
+    pub asset: StorybookAssetSummary,
+    pub kind: String,
+    pub display_name: String,
+    pub usage: Option<String>,
+    pub status: String,
+    pub material_id: Option<String>,
+    pub preview_url: Option<String>,
+    pub visual_reference: Option<StorybookVisualReferenceSummary>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoked_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookAssetUploadPolicy {
+    pub max_files: u32,
+    pub remaining_slots: u32,
+    pub max_file_size_bytes: u64,
+    pub accepted_content_types: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookAssetReferenceResponse {
+    pub asset_reference: StorybookAssetReference,
+    pub remaining_slots: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookVisualReferenceResponse {
+    pub visual_reference: StorybookVisualReferenceSummary,
+    pub next_action: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorybookAssetReferenceDeleteResponse {
+    pub id: Uuid,
+    pub status: String,
+    pub remaining_slots: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateStorybookAssetReferenceRequest {
+    pub kind: Option<String>,
+    pub display_name: Option<String>,
+    pub usage: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateStorybookVisualReferenceRequest {
+    pub idempotency_key: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoryDirection {
     pub id: String,
     pub title: String,
@@ -465,6 +558,8 @@ pub struct StorybookCreationSession {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub created_by: Uuid,
+    pub entry_type: String,
+    pub source_storybook_id: Option<Uuid>,
     pub status: String,
     pub quick_idea: String,
     pub use_scene: String,
@@ -472,6 +567,8 @@ pub struct StorybookCreationSession {
     pub page_count: u32,
     pub understanding: CreationUnderstanding,
     pub materials: Vec<CreationMaterial>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_references: Vec<StorybookAssetReference>,
     pub directions: Vec<StoryDirection>,
     pub selected_direction_id: Option<String>,
     pub outline: Option<CreationOutline>,
@@ -597,7 +694,7 @@ pub struct AuditLogEntry {
 pub struct Envelope<T> {
     pub data: T,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub meta: Option<PaginationMeta>,
+    pub meta: Option<ResponseMeta>,
 }
 
 impl<T> Envelope<T> {
@@ -608,7 +705,21 @@ impl<T> Envelope<T> {
     pub fn with_meta(data: T, meta: PaginationMeta) -> Self {
         Self {
             data,
-            meta: Some(meta),
+            meta: Some(ResponseMeta::from(meta)),
+        }
+    }
+
+    pub fn with_warnings(data: T, warnings: Vec<ResponseWarning>) -> Self {
+        if warnings.is_empty() {
+            Self::new(data)
+        } else {
+            Self {
+                data,
+                meta: Some(ResponseMeta {
+                    warnings,
+                    ..ResponseMeta::default()
+                }),
+            }
         }
     }
 }
@@ -619,6 +730,42 @@ pub struct PaginationMeta {
     pub limit: usize,
     pub offset: usize,
     pub has_more: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ResponseMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ResponseWarning>,
+}
+
+impl From<PaginationMeta> for ResponseMeta {
+    fn from(value: PaginationMeta) -> Self {
+        Self {
+            total: Some(value.total),
+            limit: Some(value.limit),
+            offset: Some(value.offset),
+            has_more: Some(value.has_more),
+            warnings: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ResponseWarning {
+    pub code: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_reference_ids: Vec<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_action: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -740,6 +887,10 @@ pub struct StorybookCreationSessionListQuery {
 #[derive(Debug, Deserialize)]
 pub struct CreateStorybookCreationSessionRequest {
     pub quick_idea: String,
+    #[serde(default)]
+    pub entry_type: Option<String>,
+    #[serde(default)]
+    pub source_storybook_id: Option<Uuid>,
     pub use_scene: Option<String>,
     pub age_group: Option<String>,
     pub page_count: Option<u32>,
@@ -911,6 +1062,7 @@ pub struct UpdatePageRequest {
     pub body: Option<String>,
     pub illustration_prompt: Option<String>,
     pub status: Option<String>,
+    pub review_status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -954,7 +1106,24 @@ pub struct DeriveCustomRequest {
     pub child_id: Uuid,
     pub intensity: String,
     #[serde(default)]
+    pub primary_material: Option<String>,
+    #[serde(default)]
     pub customization_plan: Option<JsonValue>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BuildCustomizationPlanRequest {
+    pub mode: String,
+    #[serde(default)]
+    pub target_child_id: Option<Uuid>,
+    #[serde(default)]
+    pub target_child_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub primary_material: Option<String>,
+    #[serde(default)]
+    pub optional_keep_page_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub confirmed_photo_reference_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -963,14 +1132,83 @@ pub struct DeriveCustomBatchRequest {
     pub intensity: String,
     #[serde(default)]
     pub customization_plan: Option<JsonValue>,
+    #[serde(default)]
+    pub material_choices: HashMap<Uuid, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeriveCustomBatchResponse {
     pub source_storybook_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<Uuid>,
     pub requested_count: usize,
     pub created_count: usize,
     pub storybooks: Vec<Storybook>,
+    #[serde(default)]
+    pub items: Vec<DeriveCustomBatchItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeriveCustomBatchItem {
+    pub child_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_item_id: Option<Uuid>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storybook: Option<Storybook>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorybookCustomizationRun {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub source_storybook_id: Uuid,
+    pub created_by: Uuid,
+    pub entry_type: String,
+    pub mode: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customization_plan: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_snapshot: Option<JsonValue>,
+    pub requested_count: usize,
+    pub succeeded_count: usize,
+    pub failed_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub items: Vec<StorybookCustomizationRunItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorybookCustomizationRunItem {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub run_id: Uuid,
+    pub source_storybook_id: Uuid,
+    pub target_child_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_child_nickname: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_storybook_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_storybook_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_material: Option<String>,
+    pub status: String,
+    pub generation_input_snapshot: JsonValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1051,7 +1289,7 @@ pub struct ActionResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExportJob, GenerationJob};
+    use super::{ExportJob, GenerationJob, StorybookAssetSummary};
     use chrono::Utc;
     use serde_json::json;
     use uuid::Uuid;
@@ -1093,5 +1331,27 @@ mod tests {
 
         assert!(generation_json.get("created_by").is_none());
         assert!(export_json.get("created_by").is_none());
+    }
+
+    #[test]
+    fn storybook_asset_storage_key_is_not_serialized() {
+        let asset = StorybookAssetSummary {
+            id: Uuid::new_v4(),
+            storage_key: "/storybook-assets/private.png".to_string(),
+            status: "ready".to_string(),
+            processing_message: None,
+            content_type: "image/png".to_string(),
+            byte_size: 128,
+            width: Some(512),
+            height: Some(512),
+            visibility_scope: "creation_session".to_string(),
+            retention_policy: "session_scoped".to_string(),
+        };
+
+        let asset_json = serde_json::to_value(asset).expect("asset should serialize");
+
+        assert!(asset_json.get("storage_key").is_none());
+        assert_eq!(asset_json["visibility_scope"], "creation_session");
+        assert_eq!(asset_json["retention_policy"], "session_scoped");
     }
 }

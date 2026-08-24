@@ -10,6 +10,7 @@ pub async fn update_page(
     storybook_id: Uuid,
     page_id: Uuid,
     payload: UpdatePageRequest,
+    actor_user_id: Uuid,
 ) -> Result<StorybookPage, DbErr> {
     let book = crate::repositories::storybook_queries::find(db, workspace_id, storybook_id).await?;
     let mut page = book
@@ -17,6 +18,10 @@ pub async fn update_page(
         .into_iter()
         .find(|page| page.id == page_id)
         .ok_or_else(|| DbErr::RecordNotFound("page".to_string()))?;
+    let content_changed = payload.title.is_some()
+        || payload.body.is_some()
+        || payload.illustration_prompt.is_some()
+        || payload.status.is_some();
     if let Some(value) = payload.title {
         page.title = value;
     }
@@ -29,6 +34,11 @@ pub async fn update_page(
     if let Some(value) = payload.status {
         page.status = value;
     }
+    if let Some(value) = payload.review_status {
+        page.review_status = value;
+    } else if content_changed {
+        page.review_status = "unchecked".to_string();
+    }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
@@ -36,7 +46,10 @@ pub async fn update_page(
         set title = $3,
             body = $4,
             illustration_prompt = $5,
-            status = $6
+            status = $6,
+            review_status = $7,
+            reviewed_by = case when $7::text = 'unchecked' then null else $8::uuid end,
+            reviewed_at = case when $7::text = 'unchecked' then null else now() end
         where storybook_id = $1 and id = $2
         "#,
         [
@@ -46,10 +59,12 @@ pub async fn update_page(
             page.body.clone().into(),
             page.illustration_prompt.clone().into(),
             page.status.clone().into(),
+            page.review_status.clone().into(),
+            actor_user_id.into(),
         ],
     ))
     .await?;
-    touch_storybook(db, workspace_id, storybook_id).await?;
+    touch_storybook(db, workspace_id, storybook_id, content_changed).await?;
     Ok(page)
 }
 
@@ -134,7 +149,7 @@ pub async fn update_role(
         ))
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("role".to_string()))?;
-    touch_storybook(db, workspace_id, storybook_id).await?;
+    touch_storybook(db, workspace_id, storybook_id, true).await?;
     if should_mark_pages_for_regeneration {
         mark_storybook_pages_need_regeneration(db, storybook_id).await?;
     }
@@ -175,6 +190,7 @@ async fn touch_storybook(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     storybook_id: Uuid,
+    content_changed: bool,
 ) -> Result<(), DbErr> {
     let exists = db
         .query_one(Statement::from_sql_and_values(
@@ -187,7 +203,18 @@ async fn touch_storybook(
     if !exists {
         return Err(DbErr::RecordNotFound("storybook".to_string()));
     }
-    crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id).await
+    if content_changed {
+        crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id)
+            .await
+    } else {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "update storybooks set updated_at = now() where workspace_id = $1 and id = $2",
+            [workspace_id.into(), storybook_id.into()],
+        ))
+        .await?;
+        Ok(())
+    }
 }
 
 fn clean_optional_text(value: Option<String>) -> Option<String> {

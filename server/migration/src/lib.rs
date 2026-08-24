@@ -21,6 +21,10 @@ mod m20260726_000018_add_storybook_teacher_review;
 mod m20260727_000019_create_storybook_image_variants;
 mod m20260810_000020_add_storybook_page_aspect_ratio;
 mod m20260814_000021_create_storybook_creation_sessions;
+mod m20260821_000022_create_storybook_creation_assets;
+mod m20260821_000023_add_storybook_customization_plan;
+mod m20260821_000024_create_storybook_customization_runs;
+mod m20260821_000025_add_storybook_page_review_status;
 
 pub struct Migrator;
 
@@ -49,6 +53,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20260727_000019_create_storybook_image_variants::Migration),
             Box::new(m20260810_000020_add_storybook_page_aspect_ratio::Migration),
             Box::new(m20260814_000021_create_storybook_creation_sessions::Migration),
+            Box::new(m20260821_000022_create_storybook_creation_assets::Migration),
+            Box::new(m20260821_000023_add_storybook_customization_plan::Migration),
+            Box::new(m20260821_000024_create_storybook_customization_runs::Migration),
+            Box::new(m20260821_000025_add_storybook_page_review_status::Migration),
         ]
     }
 }

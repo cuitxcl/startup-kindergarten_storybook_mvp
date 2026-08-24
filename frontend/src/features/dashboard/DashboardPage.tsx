@@ -96,6 +96,10 @@ function generationJobTime(job: GenerationJob) {
   return job.finishedAt || job.createdAt;
 }
 
+function storybookTarget(book: Storybook) {
+  return book.type === "custom" ? `../storybooks/${book.id}/review` : `../storybooks/${book.id}`;
+}
+
 function getPrimary(workspace: Workspace, books: Storybook[], childItems: ChildProfile[]) {
   const editable = books.find((book) => book.status !== "exportable" && book.status !== "listed");
   const exportable = books.find((book) => book.status === "exportable");
@@ -106,7 +110,7 @@ function getPrimary(workspace: Workspace, books: Storybook[], childItems: ChildP
   const continueTarget = (book: Storybook) =>
     ["draft", "plan_pending", "roles_pending"].includes(book.status)
       ? `../storybooks/new?bookId=${book.id}`
-      : `../storybooks/${book.id}`;
+      : storybookTarget(book);
 
   if (workspace.role === "school_admin") {
     return {
@@ -123,9 +127,9 @@ function getPrimary(workspace: Workspace, books: Storybook[], childItems: ChildP
       icon: <BookOpen size={20} />,
       title: exportable ? `继续使用《${exportable.title}》` : "为授权班级准备一套绘本",
       copy: incompleteChild
-        ? `${incompleteChild.nickname} 的资料完整度 ${incompleteChild.completeness}%，补齐后更适合生成定制绘本。`
-        : "可以从普通绘本开始，也可以基于已有绘本为班级儿童生成定制副本。",
-      action: { label: exportable ? "打开最近绘本" : "新建普通绘本", to: exportable ? `../storybooks/${exportable.id}` : "../storybooks/new" },
+        ? `${incompleteChild.nickname} 的资料完整度 ${incompleteChild.completeness}%，补齐后更适合创作专属绘本。`
+        : "可以从普通绘本开始，也可以基于已有绘本为班级儿童创作专属版本。",
+      action: { label: exportable ? "打开最近绘本" : "新建普通绘本", to: exportable ? storybookTarget(exportable) : "../storybooks/new" },
       meta: "老师今日重点",
     };
   }
@@ -135,7 +139,7 @@ function getPrimary(workspace: Workspace, books: Storybook[], childItems: ChildP
     title: editable ? `继续完成《${editable.title}》` : "生成或复用一套普通绘本",
     copy: editable
       ? nextStepCopy(editable)
-      : "先做普通绘本，再按孩子资料生成定制副本，适合验证完整创作流程。",
+      : "先做普通绘本，再按孩子资料创作专属版本，适合验证完整创作流程。",
     action: { label: editable ? "继续编辑" : "新建普通绘本", to: editable ? continueTarget(editable) : "../storybooks/new" },
     meta: "个人空间重点",
   };
@@ -190,13 +194,13 @@ function getTasks(workspace: Workspace, books: Storybook[], childItems: ChildPro
     return [
       ...incompleteChildren.slice(0, 1).map((child) => ({
         title: `检查 ${child.nickname} 的定制资料`,
-        copy: `${child.classroom || "授权班级"} · ${child.focus}，资料完整后可稳定生成定制副本。`,
+        copy: `${child.classroom || "授权班级"} · ${child.focus}，资料完整后可稳定创作专属版本。`,
         to: `../children/${child.id}`,
         badge: "档案检查",
         tone: "warn" as const,
       })),
       ...exportable.slice(0, 1).map((book) => ({
-        title: `基于《${book.title}》生成定制绘本`,
+        title: `基于《${book.title}》创作专属版本`,
         copy: "先选择孩子，再检查档案、定制强度和生成方案。",
         to: `../storybooks/${book.id}/customize`,
         badge: "可定制",
@@ -218,14 +222,14 @@ function getTasks(workspace: Workspace, books: Storybook[], childItems: ChildPro
       copy: nextStepCopy(book),
       to: ["draft", "plan_pending", "roles_pending"].includes(book.status)
         ? `../storybooks/new?bookId=${book.id}`
-        : `../storybooks/${book.id}`,
+        : storybookTarget(book),
       badge: storybookStatusLabel[book.status],
       tone: statusTone(book.status),
     })),
     ...exportable.slice(0, 1).map((book) => ({
       title: `导出或定制《${book.title}》`,
-      copy: "这本普通绘本已经可导出，也可以继续为单个孩子生成定制副本。",
-      to: `../storybooks/${book.id}`,
+      copy: "这本普通绘本已经可导出，也可以继续为单个孩子创作专属版本。",
+      to: storybookTarget(book),
       badge: "可继续使用",
       tone: "good" as const,
     })),
@@ -256,7 +260,7 @@ function getMetrics(workspace: Workspace, books: Storybook[], childItems: ChildP
 
   if (workspace.role === "school_teacher") {
     return [
-      { label: "授权班级儿童", value: childItems.length, copy: "可维护资料并生成定制绘本", tone: "good" },
+      { label: "授权班级儿童", value: childItems.length, copy: "可维护资料并创作专属绘本", tone: "good" },
       { label: "可定制母本", value: exportableCount, copy: "已完成且可继续派生", tone: "good" },
       { label: "继续编辑", value: editableCount, copy: "需要确认文字、角色或插图", tone: editableCount > 0 ? "warn" : "good" },
       { label: "本空间绘本", value: books.length, copy: "班级共读和规则引导内容", tone: "info" },
@@ -266,7 +270,7 @@ function getMetrics(workspace: Workspace, books: Storybook[], childItems: ChildP
   return [
     { label: "可继续编辑", value: editableCount, copy: "草稿、编辑中或待确认绘本", tone: editableCount > 0 ? "warn" : "good" },
     { label: "可导出绘本", value: exportableCount, copy: "已完成，可分享或派生", tone: "good" },
-    { label: "孩子资料", value: childItems.length, copy: "用于生成定制绘本", tone: childItems.length > 0 ? "good" : "warn" },
+    { label: "孩子资料", value: childItems.length, copy: "用于创作专属绘本", tone: childItems.length > 0 ? "good" : "warn" },
     { label: "普通绘本", value: books.filter((book) => book.type === "plain").length, copy: "可作为定制绘本母本", tone: "info" },
   ];
 }
@@ -295,9 +299,7 @@ function getQuickActions(workspace: Workspace, childItems: ChildProfile[]) {
   ];
 }
 
-function getCreationActions(books: Storybook[]) {
-  const firstExportable = books.find((book) => book.status === "exportable");
-
+function getCreationActions() {
   return [
     {
       icon: <BookOpen />,
@@ -309,21 +311,19 @@ function getCreationActions(books: Storybook[]) {
     },
     {
       icon: <FileCheck2 />,
-      title: "生成定制绘本",
-      copy: firstExportable
-        ? `基于《${firstExportable.title}》选择孩子，检查档案后生成独立副本。`
-        : "先完成一本可导出的普通绘本，再为单个孩子生成定制副本。",
-      to: firstExportable ? `../storybooks/${firstExportable.id}/customize` : "../storybooks",
-      label: firstExportable ? "选择孩子定制" : "先选择母本",
-      tone: firstExportable ? "good" as const : "warn" as const,
+      title: "创建专属绘本",
+      copy: "从一个真实想法、人物或喜欢的物品开始，和系统一起整理成独立绘本。",
+      to: "../storybooks/personalized/new",
+      label: "开始专属创作",
+      tone: "good" as const,
     },
   ];
 }
 
 function dashboardCopy(workspace: Workspace) {
   if (workspace.role === "school_admin") return "今天先看园所协作、投稿隐私和班级资料，再安排绘本生产。";
-  if (workspace.role === "school_teacher") return "聚焦授权班级：准备普通绘本，检查儿童资料，再生成定制副本。";
-  return "从普通绘本开始，继续编辑、导出或基于孩子资料生成定制绘本。";
+  if (workspace.role === "school_teacher") return "聚焦授权班级：准备普通绘本，检查儿童资料，再创作专属版本。";
+  return "从普通绘本开始，继续编辑、导出或基于孩子资料创作专属绘本。";
 }
 
 function formatBytes(value: number) {
@@ -366,8 +366,8 @@ export function DashboardPage() {
   const tasks = getTasks(workspace, books, childItems, submissionItems).slice(0, 4);
   const metrics = getMetrics(workspace, books, childItems, submissionItems);
   const quickActions = getQuickActions(workspace, childItems);
-  const creationActions = getCreationActions(books);
-  const showCreationLaunch = workspace.type === "school";
+  const creationActions = getCreationActions();
+  const showCreationLaunch = true;
   const isPersonal = workspace.type === "personal";
   const isEmptyAccount =
     books.length === 0 &&
@@ -527,7 +527,7 @@ export function DashboardPage() {
             <Link className="action-card" to="../children">
               <UsersRound />
               创建孩子资料
-              <span>记录兴趣、特质和关注点，用于生成定制绘本</span>
+              <span>记录兴趣、特质和关注点，用于创作专属绘本</span>
             </Link>
             <Link className="action-card" to="../storybooks/new">
               <BookOpen />
@@ -555,6 +555,7 @@ export function DashboardPage() {
             ) : (
               <div className="compact-list generation-job-list">
                 {generationJobs.slice(0, 5).map((job) => {
+                  const relatedBook = job.storybookId ? books.find((book) => book.id === job.storybookId) : undefined;
                   const row = (
                     <>
                       <div>
@@ -567,7 +568,7 @@ export function DashboardPage() {
                     </>
                   );
                   return job.storybookId ? (
-                    <Link key={job.id} to={`../storybooks/${job.storybookId}`} className="compact-row dashboard-recent-row">
+                    <Link key={job.id} to={relatedBook ? storybookTarget(relatedBook) : `../storybooks/${job.storybookId}`} className="compact-row dashboard-recent-row">
                       {row}
                     </Link>
                   ) : (
@@ -590,7 +591,7 @@ export function DashboardPage() {
             ) : (
               <div className="compact-list">
                 {books.slice(0, 4).map((book) => (
-                  <Link key={book.id} to={`../storybooks/${book.id}`} className="compact-row dashboard-recent-row">
+                  <Link key={book.id} to={storybookTarget(book)} className="compact-row dashboard-recent-row">
                     <div>
                       <strong>{book.title}</strong>
                       <span>{book.useScene} · {book.ageGroup} · {book.updatedAt}</span>

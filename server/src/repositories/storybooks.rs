@@ -311,6 +311,7 @@ pub async fn update_page(
     storybook_id: Uuid,
     page_id: Uuid,
     payload: UpdatePageRequest,
+    actor_user_id: Uuid,
 ) -> Result<StorybookPage, DbErr> {
     crate::repositories::storybook_editing::update_page(
         db,
@@ -318,6 +319,7 @@ pub async fn update_page(
         storybook_id,
         page_id,
         payload,
+        actor_user_id,
     )
     .await
 }

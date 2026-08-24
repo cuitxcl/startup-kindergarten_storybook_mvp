@@ -1114,7 +1114,7 @@ export function NewStorybookPage() {
   return (
     <div className="page-stack">
       <header className="wizard-header">
-        <h1>创建专属故事</h1>
+        <h1>创建普通绘本</h1>
         <span>创建在 {workspace.name}</span>
       </header>
       {provider && !provider.realTextReady && (retryJob || step === 3) && (
@@ -1291,7 +1291,7 @@ export function NewStorybookPage() {
                     <p>故事和画面会按当前方向生成，技术细节会自动处理。</p>
                   </div>
                   <div className="generation-composer">
-                    <div><span>故事</span><strong>{selectedDirection?.title || form.title || "专属故事"}</strong></div>
+                    <div><span>绘本</span><strong>{selectedDirection?.title || form.title || "新绘本"}</strong></div>
                     <div><span>页数</span><strong>{form.pageCount || outlineItems.length} 页 + 封面</strong></div>
                     <div><span>画面设置会参与生成</span><strong>{visualSummary}</strong></div>
                   </div>
@@ -1360,7 +1360,7 @@ function storybookTitleFor(form: StorybookRequestForm) {
   if (title) return title;
   const idea = form.quickIdea.trim();
   if (idea) return titleFromIdea(idea);
-  return form.theme.trim() || "新建专属故事";
+  return form.theme.trim() || "新建绘本";
 }
 
 function normalizeRecoveredForm(form: Partial<StorybookRequestForm>) {
@@ -1486,7 +1486,7 @@ function materialLabelsFor(form: StorybookRequestForm, plan: EditablePlan, custo
 
 function directionsFor(form: StorybookRequestForm, plan: EditablePlan, materials: string[], batch = 0): StoryDirection[] {
   const idea = form.quickIdea.trim() || plan.summary.trim() || form.theme || "一个温暖的小故事";
-  const titleSeed = form.title.trim() || firstMaterial(materials) || "专属故事";
+  const titleSeed = form.title.trim() || firstMaterial(materials) || "新绘本";
   const theme = form.theme.trim() || "成长";
   const useScene = form.useScene.trim() || "共读";
   const hook = personalHookFor(materials, idea);
@@ -1533,7 +1533,7 @@ function directionsFor(form: StorybookRequestForm, plan: EditablePlan, materials
         id: "memory",
         title: `${titleSeed}的特别回忆`,
         summary: `把${useScene}里的真实细节串成一段值得保存的故事。`,
-        fitReason: "纪念感 / 私人定制",
+        fitReason: "纪念感 / 专属版本",
         personalHook: `专属落点：把${hook}做成反复出现的记忆符号。`,
       },
     ],

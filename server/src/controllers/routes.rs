@@ -2,7 +2,8 @@ use loco_rs::controller::Routes;
 
 use super::{
     auth, children, delivery, generation, health, marketplace, operator, organization,
-    parent_intakes, storybook_creation, storybooks, submissions, workspaces,
+    parent_intakes, storybook_creation, storybook_creation_assets, storybooks, submissions,
+    workspaces,
 };
 
 pub fn routes() -> Vec<Routes> {
@@ -16,6 +17,7 @@ pub fn routes() -> Vec<Routes> {
         marketplace::routes(),
         submissions::routes(),
         storybook_creation::routes(),
+        storybook_creation_assets::routes(),
         storybooks::routes(),
         generation::routes(),
         delivery::routes(),

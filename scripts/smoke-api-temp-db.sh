@@ -97,7 +97,7 @@ echo "1. migrate"
 echo "2. start backend"
 (
   cd "$ROOT_DIR/server"
-  KINDLEAF_DEMO_SEED=1 DATABASE_URL="$DATABASE_URL" cargo run --features db -- -e test start
+  KINDLEAF_DEMO_SEED=1 KINDLEAF_GENERATION_PROVIDER=mock DATABASE_URL="$DATABASE_URL" cargo run --features db -- -e test start
 ) >"$LOG_DIR/server.log" 2>&1 &
 server_pid="$!"
 wait_for_api

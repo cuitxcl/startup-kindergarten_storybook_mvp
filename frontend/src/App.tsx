@@ -14,6 +14,7 @@ const DashboardPage = lazy(() => import("./features/dashboard/DashboardPage").th
 const StorybookListPage = lazy(() => import("./features/storybooks/StorybookListPage").then((m) => ({ default: m.StorybookListPage })));
 const StorybookDetailPage = lazy(() => import("./features/storybooks/StorybookDetailPage").then((m) => ({ default: m.StorybookDetailPage })));
 const NewStorybookPage = lazy(() => import("./features/storybooks/NewStorybookPage").then((m) => ({ default: m.NewStorybookPage })));
+const PersonalizedStorybookPage = lazy(() => import("./features/storybooks/PersonalizedStorybookPage").then((m) => ({ default: m.PersonalizedStorybookPage })));
 const CustomizeStorybookPage = lazy(() => import("./features/storybooks/CustomizeStorybookPage").then((m) => ({ default: m.CustomizeStorybookPage })));
 const ChildrenPage = lazy(() => import("./features/children/ChildrenPage").then((m) => ({ default: m.ChildrenPage })));
 const ChildDetailPage = lazy(() => import("./features/children/ChildDetailPage").then((m) => ({ default: m.ChildDetailPage })));
@@ -93,6 +94,8 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="storybooks" element={<StorybookListPage />} />
         <Route path="storybooks/new" element={<NewStorybookPage />} />
+        <Route path="storybooks/personalized/new" element={<PersonalizedStorybookPage />} />
+        <Route path="storybooks/:storybookId/review" element={<StorybookDetailPage />} />
         <Route path="storybooks/:storybookId" element={<StorybookDetailPage />} />
         <Route path="storybooks/:storybookId/customize" element={<CustomizeStorybookPage />} />
         <Route path="children" element={<ChildrenPage />} />

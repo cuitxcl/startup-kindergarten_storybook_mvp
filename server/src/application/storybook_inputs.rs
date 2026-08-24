@@ -44,6 +44,15 @@ pub(crate) fn clean_page_status(value: Option<String>) -> Result<Option<String>,
     )
 }
 
+pub(crate) fn clean_page_review_status(value: Option<String>) -> Result<Option<String>, ApiError> {
+    clean_status_value(
+        value,
+        "review_status",
+        &["unchecked", "satisfied", "needs_changes"],
+        "分页验收状态必须是 unchecked、satisfied 或 needs_changes",
+    )
+}
+
 pub(crate) fn clean_reference_status(value: Option<String>) -> Result<Option<String>, ApiError> {
     clean_status_value(
         value,
@@ -120,6 +129,15 @@ mod tests {
             Some("needs_regeneration".to_string())
         );
         assert!(clean_page_status(Some("done".to_string())).is_err());
+    }
+
+    #[test]
+    fn page_review_status_input_accepts_known_values() {
+        assert_eq!(
+            clean_page_review_status(Some("satisfied".to_string())).unwrap(),
+            Some("satisfied".to_string())
+        );
+        assert!(clean_page_review_status(Some("done".to_string())).is_err());
     }
 
     #[test]

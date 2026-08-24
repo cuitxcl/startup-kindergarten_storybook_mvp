@@ -155,6 +155,11 @@ fn seedream_summary_reports_image_ready_only() {
             .supports_image
             .contains(&"storybook_role_reference_image".to_string())
     );
+    assert!(
+        summary
+            .supports_image
+            .contains(&"storybook_visual_reference".to_string())
+    );
     let image = summary
         .components
         .iter()
@@ -206,6 +211,11 @@ fn composite_summary_reports_text_and_image_ready() {
         summary
             .supports_image
             .contains(&"storybook_role_reference_image".to_string())
+    );
+    assert!(
+        summary
+            .supports_image
+            .contains(&"storybook_visual_reference".to_string())
     );
     assert!(
         summary
@@ -629,6 +639,71 @@ fn deepseek_prompt_contract_names_schema_and_job_type() {
 }
 
 #[test]
+fn deepseek_pages_prompt_carries_personalized_photo_rules() {
+    let provider = DeepSeekTextProvider {
+        api_key: Some("test-key".to_string()),
+        base_url: "https://api.deepseek.com".to_string(),
+        endpoint_path: "/chat/completions".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        timeout_seconds: 45,
+        max_tokens: 4096,
+    };
+    let prompt = provider
+        .build_prompt(&GenerationRequest {
+            job_type: "storybook_pages",
+            input: &json!({"page_count": 6}),
+        })
+        .expect("prompt contract should be built");
+
+    let user_prompt = prompt["user_prompt"]
+        .as_str()
+        .expect("user prompt should be text");
+    assert!(user_prompt.contains("asset_references"));
+    assert!(user_prompt.contains("confirmed_photo_references"));
+    assert!(user_prompt.contains("不要把原始照片当贴图"));
+    assert!(user_prompt.contains("page_evidence"));
+}
+
+#[test]
+fn deepseek_customization_prompt_matches_product_gates() {
+    let provider = DeepSeekTextProvider {
+        api_key: Some("test-key".to_string()),
+        base_url: "https://api.deepseek.com".to_string(),
+        endpoint_path: "/chat/completions".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        timeout_seconds: 45,
+        max_tokens: 4096,
+    };
+    let prompt = provider
+        .build_prompt(&GenerationRequest {
+            job_type: "customization_plan",
+            input: &json!({}),
+        })
+        .expect("prompt contract should be built");
+
+    let user_prompt = prompt["user_prompt"]
+        .as_str()
+        .expect("user prompt should be text");
+    assert!(user_prompt.contains("来源绘本永远只读"));
+    assert!(user_prompt.contains("保留来源书主线、页数和阅读节奏"));
+    assert!(user_prompt.contains("confirmed_photo_references"));
+    assert!(user_prompt.contains("不要输出儿童 id"));
+    assert!(user_prompt.contains("后端负责"));
+    assert!(prompt["response_schema"]["customization_plan"]["page_plan"].is_array());
+    assert!(prompt["response_schema"]["customization_plan"]["unplaced_materials"].is_array());
+    assert!(
+        prompt["response_schema"]["customization_plan"]
+            .get("target_child_id")
+            .is_none()
+    );
+    assert!(
+        prompt["response_schema"]["customization_plan"]
+            .get("source_storybook_id")
+            .is_none()
+    );
+}
+
+#[test]
 fn deepseek_pages_output_must_reference_confirmed_roles() {
     let input = json!({
         "confirmed_roles": [
@@ -813,9 +888,25 @@ fn normalizes_provider_output_keeps_privacy_audit() {
 fn provider_output_content_safety_allows_normal_review_language() {
     let output = normalize_provider_output(
         json!({
-            "customization": {
+            "customization_plan": {
+                "source_snapshot": {
+                    "title": "小熊等一等",
+                    "status": "exportable",
+                    "updated_at": "2026-08-21T00:00:00Z",
+                    "page_count": 1,
+                    "pages": [{"page_number": 1, "title": "排队", "summary": "大家轮流等候"}]
+                },
                 "strategy": "保留主线，加入孩子兴趣",
-                "rewrite_points": [{"scope": "pages", "action": "替换关键道具"}],
+                "page_plan": [{
+                    "page_number": 1,
+                    "decision": "personalize",
+                    "requires_redraw": true,
+                    "reason": "替换关键道具",
+                    "material_labels": [],
+                    "photo_display_names": []
+                }],
+                "confirmed_photo_references": [],
+                "unplaced_materials": [],
                 "risk_checks": ["不写入家庭住址", "不暴露敏感健康信息", "不改变老师确认过的规则引导目标"]
             }
         }),
@@ -1465,7 +1556,15 @@ fn deepseek_payload_appends_retry_feedback() {
 #[test]
 fn provider_output_requires_customization_strategy() {
     let err = normalize_provider_output(
-        json!({"customization": {"rewrite_points": []}}),
+        json!({"customization_plan": {
+            "source_snapshot": {
+                "title": "小熊等一等",
+                "pages": [{"page_number": 1, "title": "排队", "summary": "大家轮流等候"}]
+            },
+            "page_plan": [],
+            "confirmed_photo_references": [],
+            "unplaced_materials": []
+        }}),
         "deepseek",
         "customization_plan",
         None,
@@ -1479,11 +1578,17 @@ fn provider_output_requires_customization_strategy() {
 }
 
 #[test]
-fn provider_output_requires_customization_rewrite_points() {
+fn provider_output_requires_customization_page_plan() {
     let err = normalize_provider_output(
         json!({
-            "customization": {
+            "customization_plan": {
+                "source_snapshot": {
+                    "title": "小熊等一等",
+                    "pages": [{"page_number": 1, "title": "排队", "summary": "大家轮流等候"}]
+                },
                 "strategy": "保留主线，加入孩子兴趣",
+                "confirmed_photo_references": [],
+                "unplaced_materials": [],
                 "risk_checks": ["不暴露家庭信息"]
             }
         }),
@@ -1493,22 +1598,35 @@ fn provider_output_requires_customization_rewrite_points() {
         None,
         None,
     )
-    .expect_err("missing rewrite points should fail");
+    .expect_err("missing page plan should fail");
 
     assert!(!err.retryable);
-    assert!(
-        err.safe_message()
-            .contains("customization_plan.rewrite_points")
-    );
+    assert!(err.safe_message().contains("customization_plan.page_plan"));
 }
 
 #[test]
 fn provider_output_validates_customization_risk_checks() {
     let err = normalize_provider_output(
         json!({
-            "customization": {
+            "customization_plan": {
+                "source_snapshot": {
+                    "title": "小熊等一等",
+                    "status": "exportable",
+                    "updated_at": "2026-08-21T00:00:00Z",
+                    "page_count": 1,
+                    "pages": [{"page_number": 1, "title": "排队", "summary": "大家轮流等候"}]
+                },
                 "strategy": "保留主线，加入孩子兴趣",
-                "rewrite_points": [{"scope": "pages", "action": "替换关键道具"}],
+                "page_plan": [{
+                    "page_number": 1,
+                    "decision": "personalize",
+                    "requires_redraw": true,
+                    "reason": "替换关键道具",
+                    "material_labels": [],
+                    "photo_display_names": []
+                }],
+                "confirmed_photo_references": [],
+                "unplaced_materials": [],
                 "risk_checks": ["不暴露家庭信息", ""]
             }
         }),

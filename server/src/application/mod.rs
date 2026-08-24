@@ -18,6 +18,7 @@ pub mod operator_readiness_checks;
 pub mod organization;
 pub mod parent_intakes;
 pub mod storybook_creation;
+pub mod storybook_creation_assets;
 pub mod storybook_customization;
 pub mod storybook_editing;
 pub mod storybook_inputs;

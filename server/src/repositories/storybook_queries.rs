@@ -55,7 +55,10 @@ pub async fn list_by_workspace(
             r#"
             select
               s.id, s.workspace_id, s.storybook_type, s.status, s.visibility, s.source,
-              s.source_storybook_id, s.target_child_id, s.title, coalesce(s.age_group, '') as age_group,
+              s.source_storybook_id, s.target_child_id,
+              latest_run_item.run_id as customization_run_id,
+              latest_run_item.id as customization_run_item_id,
+              s.customization_plan, s.title, coalesce(s.age_group, '') as age_group,
               coalesce(s.use_scene, '') as use_scene, coalesce(s.teaching_goal, '') as teaching_goal,
               coalesce(s.cover_tone, '') as cover_tone,
               coalesce(s.page_aspect_ratio, 'portrait_4_5') as page_aspect_ratio,
@@ -68,6 +71,14 @@ pub async fn list_by_workspace(
             from storybooks s
             left join users u on u.id = s.creator_id
             left join storybooks source on source.id = s.source_storybook_id
+            left join lateral (
+              select i.id, i.run_id
+              from storybook_customization_run_items i
+              where i.workspace_id = s.workspace_id
+                and i.output_storybook_id = s.id
+              order by i.updated_at desc
+              limit 1
+            ) latest_run_item on true
             where s.workspace_id = $1
               and ($2::text is null or s.storybook_type = $2)
               and ($3::text is null or s.status = $3)
@@ -135,7 +146,10 @@ async fn query_storybooks(
             r#"
             select
               s.id, s.workspace_id, s.storybook_type, s.status, s.visibility, s.source,
-              s.source_storybook_id, s.target_child_id, s.title, coalesce(s.age_group, '') as age_group,
+              s.source_storybook_id, s.target_child_id,
+              latest_run_item.run_id as customization_run_id,
+              latest_run_item.id as customization_run_item_id,
+              s.customization_plan, s.title, coalesce(s.age_group, '') as age_group,
               coalesce(s.use_scene, '') as use_scene, coalesce(s.teaching_goal, '') as teaching_goal,
               coalesce(s.cover_tone, '') as cover_tone,
               coalesce(s.page_aspect_ratio, 'portrait_4_5') as page_aspect_ratio,
@@ -148,6 +162,14 @@ async fn query_storybooks(
             from storybooks s
             left join users u on u.id = s.creator_id
             left join storybooks source on source.id = s.source_storybook_id
+            left join lateral (
+              select i.id, i.run_id
+              from storybook_customization_run_items i
+              where i.workspace_id = s.workspace_id
+                and i.output_storybook_id = s.id
+              order by i.updated_at desc
+              limit 1
+            ) latest_run_item on true
             where s.workspace_id = $1
             order by s.updated_at desc, s.title
             "#,
@@ -160,7 +182,10 @@ async fn query_storybooks(
             r#"
             select
               s.id, s.workspace_id, s.storybook_type, s.status, s.visibility, s.source,
-              s.source_storybook_id, s.target_child_id, s.title, coalesce(s.age_group, '') as age_group,
+              s.source_storybook_id, s.target_child_id,
+              latest_run_item.run_id as customization_run_id,
+              latest_run_item.id as customization_run_item_id,
+              s.customization_plan, s.title, coalesce(s.age_group, '') as age_group,
               coalesce(s.use_scene, '') as use_scene, coalesce(s.teaching_goal, '') as teaching_goal,
               coalesce(s.cover_tone, '') as cover_tone,
               coalesce(s.page_aspect_ratio, 'portrait_4_5') as page_aspect_ratio,
@@ -173,6 +198,14 @@ async fn query_storybooks(
             from storybooks s
             left join users u on u.id = s.creator_id
             left join storybooks source on source.id = s.source_storybook_id
+            left join lateral (
+              select i.id, i.run_id
+              from storybook_customization_run_items i
+              where i.workspace_id = s.workspace_id
+                and i.output_storybook_id = s.id
+              order by i.updated_at desc
+              limit 1
+            ) latest_run_item on true
             order by s.updated_at desc, s.title
             "#
             .to_string(),
@@ -203,6 +236,9 @@ async fn storybooks_from_rows(
             source: row.try_get("", "source")?,
             source_title: row.try_get("", "source_title")?,
             target_child_id: row.try_get("", "target_child_id")?,
+            customization_run_id: row.try_get("", "customization_run_id")?,
+            customization_run_item_id: row.try_get("", "customization_run_item_id")?,
+            customization_plan: row.try_get("", "customization_plan")?,
             creator_name: row.try_get("", "creator_name")?,
             updated_at: row
                 .try_get::<DateTime<Utc>>("", "updated_at")?
@@ -244,6 +280,9 @@ async fn pages_for(
               p.body,
               p.illustration_prompt,
               p.status,
+              coalesce(p.review_status, 'unchecked') as review_status,
+              p.reviewed_by,
+              p.reviewed_at,
               p.selected_image_variant_id,
               selected_variant.image_url as selected_image_url,
               selected_variant.generation_job_id as selected_generation_job_id
@@ -267,6 +306,11 @@ async fn pages_for(
                 body: row.try_get("", "body")?,
                 illustration_prompt: row.try_get("", "illustration_prompt")?,
                 status: row.try_get("", "status")?,
+                review_status: row.try_get("", "review_status")?,
+                reviewed_by: row.try_get("", "reviewed_by")?,
+                reviewed_at: row
+                    .try_get::<Option<DateTime<Utc>>>("", "reviewed_at")?
+                    .map(|value| value.format("%Y-%m-%d %H:%M").to_string()),
                 image_url: selected_image_url(
                     row.try_get("", "selected_image_url")?,
                     workspace_id,

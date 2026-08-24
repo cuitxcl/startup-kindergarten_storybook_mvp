@@ -14,14 +14,17 @@ use crate::workers::export::enqueue_export_job;
 use crate::application::delivery::{find_storybook, mock_workspace_export, shared_state};
 use crate::{
     application::delivery::{
-        delivery_error, delivery_privacy_risk_labels, ensure_storybook_deliverable,
-        log_delivery_privacy_blocked, read_export_job_file, valid_export_file_name,
-        with_workspace_export_download_url,
+        delivery_error, delivery_privacy_risk_labels, ensure_storybook_deliverable_for_operation,
+        ensure_storybook_evidence_ready, log_delivery_privacy_blocked, read_export_job_file,
+        valid_export_file_name, with_workspace_export_download_url,
     },
     domains::common,
     error::ApiError,
     models::{ExportJob, ListQuery, PaginationMeta},
 };
+
+#[cfg(not(feature = "db"))]
+use crate::application::delivery::ensure_storybook_deliverable;
 
 pub async fn create_export(
     ctx: &AppContext,
@@ -36,7 +39,15 @@ pub async fn create_export(
         let book = crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
             .await
             .map_err(common::db_error)?;
-        ensure_storybook_deliverable(&book)?;
+        ensure_storybook_deliverable_for_operation(
+            &ctx.db,
+            Some(workspace_id),
+            Some(actor_id),
+            &book,
+            "export",
+        )
+        .await?;
+        ensure_storybook_evidence_ready(&ctx.db, &book).await?;
         let job = match crate::repositories::delivery::create_export(
             &ctx.db,
             workspace_id,

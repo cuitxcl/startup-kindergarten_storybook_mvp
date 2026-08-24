@@ -85,6 +85,24 @@ fn text(input: &JsonValue, key: &str, fallback: &str) -> String {
 fn mock_storybook_plan(input: &JsonValue) -> JsonValue {
     let title = text(input, "title", "动物世界");
     let theme = text(input, "theme", "动物迁徙");
+    let page_count = input
+        .get("page_count")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(6)
+        .clamp(1, 12);
+    let outline = (1..=page_count)
+        .map(|page_number| {
+            json!({
+                "page_range": page_number.to_string(),
+                "goal": format!("第 {page_number} 页推进一个清楚的观察目标"),
+                "beat": match page_number {
+                    1 => "孩子提出问题，故事从真实场景开始。".to_string(),
+                    n if n == page_count => "孩子整理发现，留下温柔约定。".to_string(),
+                    _ => "老师陪孩子观察线索，情绪和行动继续推进。".to_string(),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
     json!({
         "schema_version": "generation.mock.v1",
         "provider": "mock",
@@ -92,23 +110,19 @@ fn mock_storybook_plan(input: &JsonValue) -> JsonValue {
         "plan": {
             "title": title,
             "theme": theme,
+            "age_group": text(input, "age_group", "4-5 岁"),
             "summary": "孩子跟随老师观察动物移动和生活环境，在比较中发现自然规律。",
-            "page_beats": [
-                "第 1 页：孩子提出问题，故事开始。",
-                "第 2 页：老师陪孩子观察第一个线索。",
-                "第 3 页：孩子发现新的对比。",
-                "第 4 页：大家一起验证想法。",
-                "第 5 页：孩子记录观察结果。",
-                "第 6 页：故事温和收束。"
-            ],
-            "role_requirements": "主角、老师和关键动物角色。",
-            "teacher_focus": "适合课堂共读，鼓励观察、比较和表达。"
+            "page_count": page_count,
+            "outline": outline,
+            "role_requirements": ["主角孩子", "陪伴老师", "关键观察对象"],
+            "review_points": ["故事是否围绕主题", "页数节奏是否适合共读"]
         },
         "message": "生成任务已完成，当前为 mock 方案结果"
     })
 }
 
-fn mock_storybook_roles(_input: &JsonValue) -> JsonValue {
+fn mock_storybook_roles(input: &JsonValue) -> JsonValue {
+    let teacher_name = text(input, "teacher_name", "老师");
     json!({
         "schema_version": "generation.mock.v1",
         "provider": "mock",
@@ -123,7 +137,7 @@ fn mock_storybook_roles(_input: &JsonValue) -> JsonValue {
                 "reference_status": "not_started"
             },
             {
-                "name": "老师",
+                "name": teacher_name,
                 "role_type": "teacher",
                 "appearance": "温和老师，绿色衬衫，棕色长裤，戴眼镜，笑容亲切",
                 "story_function": "陪伴并引导孩子观察",
@@ -145,29 +159,36 @@ fn mock_storybook_roles(_input: &JsonValue) -> JsonValue {
 
 fn mock_storybook_pages(input: &JsonValue) -> JsonValue {
     let title = text(input, "title", "动物世界");
+    let teacher_name = text(input, "teacher_name", "老师");
     json!({
         "schema_version": "generation.mock.v1",
         "provider": "mock",
         "mode": "storybook_pages",
         "pages": [
-            mock_page(1, &title, "孩子在图画书里看到大象排队，产生了好奇。", "中景"),
-            mock_page(2, "我们去看看", "老师带孩子一起观察动物为什么移动。", "全景"),
-            mock_page(3, "找到线索", "孩子发现动物会为了水和食物寻找合适的地方。", "近景"),
-            mock_page(4, "一起记录", "大家把观察到的发现画在纸上。", "俯视"),
-            mock_page(5, "新的发现", "孩子比较不同动物的移动方式。", "跟随视角"),
-            mock_page(6, "温柔的约定", "孩子和老师约定继续保护自然。", "中近景")
+            mock_page(1, &title, "孩子在图画书里看到大象排队，产生了好奇。", "中景", &teacher_name),
+            mock_page(2, "我们去看看", &format!("{teacher_name}带孩子一起观察动物为什么移动。"), "全景", &teacher_name),
+            mock_page(3, "找到线索", "孩子发现动物会为了水和食物寻找合适的地方。", "近景", &teacher_name),
+            mock_page(4, "一起记录", "大家把观察到的发现画在纸上。", "俯视", &teacher_name),
+            mock_page(5, "新的发现", "孩子比较不同动物的移动方式。", "跟随视角", &teacher_name),
+            mock_page(6, "温柔的约定", &format!("孩子和{teacher_name}约定继续保护自然。"), "中近景", &teacher_name)
         ],
         "message": "生成任务已完成，当前为 mock 分页结果"
     })
 }
 
-fn mock_page(page_number: i32, title: &str, text: &str, camera: &str) -> JsonValue {
+fn mock_page(
+    page_number: i32,
+    title: &str,
+    body: &str,
+    camera: &str,
+    teacher_name: &str,
+) -> JsonValue {
     json!({
         "page_number": page_number,
         "title": title,
-        "body": text,
+        "body": body,
         "illustration_prompt": format!(
-            "儿童绘本插图，{camera}，温暖教室和自然观察角，孩子与老师正在互动，画面有明确动作和表情，不出现文字。"
+            "儿童绘本插图，{camera}，温暖教室和自然观察角，孩子与{teacher_name}正在互动，画面有明确动作和表情，不出现文字。"
         )
     })
 }
@@ -187,14 +208,76 @@ fn mock_storybook_page_prompt(input: &JsonValue) -> JsonValue {
 }
 
 fn mock_customization_plan(input: &JsonValue) -> JsonValue {
+    let source_snapshot = input.get("source_snapshot").cloned().unwrap_or_else(|| {
+        json!({
+            "title": text(input, "title", "来源绘本"),
+            "status": "exportable",
+            "updated_at": "mock",
+            "page_count": 6,
+            "pages": [
+                {"page_number": 1, "title": "开场", "summary": "建立原书场景"},
+                {"page_number": 2, "title": "尝试", "summary": "目标对象进入情节"},
+                {"page_number": 3, "title": "变化", "summary": "关键素材推动冲突"},
+                {"page_number": 4, "title": "解决", "summary": "角色一起尝试办法"},
+                {"page_number": 5, "title": "发现", "summary": "目标对象获得新理解"},
+                {"page_number": 6, "title": "约定", "summary": "保持原书温柔收束"}
+            ]
+        })
+    });
+    let pages = source_snapshot
+        .get("pages")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_else(|| {
+            (1..=6)
+                .map(|page_number| json!({"page_number": page_number, "title": "分页", "summary": "来源页摘要"}))
+                .collect()
+        });
+    let confirmed_photo_references = input
+        .get("confirmed_photo_references")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let photo_names = confirmed_photo_references
+        .iter()
+        .filter_map(|item| item.get("display_name").and_then(JsonValue::as_str))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let page_plan = pages
+        .iter()
+        .map(|page| {
+            let page_number = page
+                .get("page_number")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(1);
+            let decision = if page_number == 1 {
+                "keep"
+            } else if page_number % 3 == 0 {
+                "redraw_required"
+            } else {
+                "personalize"
+            };
+            json!({
+                "page_number": page_number,
+                "decision": decision,
+                "requires_redraw": decision == "redraw_required",
+                "reason": if decision == "keep" { "保留来源书开场节奏" } else { "把目标对象和专属素材自然放入这一页" },
+                "material_labels": input.get("material_labels").cloned().unwrap_or_else(|| json!([])),
+                "photo_display_names": photo_names,
+            })
+        })
+        .collect::<Vec<_>>();
     json!({
         "schema_version": "generation.mock.v1",
         "provider": "mock",
         "mode": "customization_plan",
-        "plan": {
-            "title": text(input, "title", "定制绘本"),
-            "summary": "根据孩子特点生成的本地 mock 定制方案。",
-            "teacher_notes": "当前为本地 mock，不会调用 DeepSeek。"
+        "customization_plan": {
+            "source_snapshot": source_snapshot,
+            "strategy": "保留来源书主线、页数和阅读节奏，只替换目标对象相关页面。",
+            "page_plan": page_plan,
+            "confirmed_photo_references": confirmed_photo_references,
+            "unplaced_materials": [],
+            "risk_checks": ["mock_provider：请用真实 provider 复核最终文案和重绘范围"]
         },
         "message": "生成任务已完成，当前为 mock 定制结果"
     })
@@ -367,4 +450,58 @@ fn mock_creation_outline(input: &JsonValue) -> JsonValue {
         },
         "quality_flags": ["mock_provider"]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mock_customization_plan, mock_storybook_plan};
+    use serde_json::json;
+
+    #[test]
+    fn mock_storybook_plan_matches_real_plan_contract() {
+        let output = mock_storybook_plan(&json!({
+            "title": "排队洗手",
+            "theme": "轮流等待",
+            "age_group": "中班",
+            "page_count": 6
+        }));
+
+        assert_eq!(output["mode"], "storybook_plan");
+        assert_eq!(output["plan"]["title"], "排队洗手");
+        assert_eq!(output["plan"]["outline"].as_array().unwrap().len(), 6);
+        assert!(output["plan"]["outline"][0]["page_range"].is_string());
+        assert!(output["plan"]["role_requirements"].is_array());
+        assert!(output["plan"]["review_points"].is_array());
+    }
+
+    #[test]
+    fn mock_customization_plan_matches_prompt_contract_without_internal_ids() {
+        let output = mock_customization_plan(&json!({
+            "source_snapshot": {
+                "title": "小熊等一等",
+                "status": "exportable",
+                "updated_at": "2026-08-21T00:00:00Z",
+                "page_count": 2,
+                "pages": [
+                    {"page_number": 1, "title": "门口", "summary": "大家排队"},
+                    {"page_number": 2, "title": "轮到我", "summary": "小熊尝试等待"}
+                ]
+            },
+            "confirmed_photo_references": [{
+                "display_name": "小汽车",
+                "usage": "story_object",
+                "reference_type": "道具参考",
+                "planned_pages": [{"page_number": 2, "reason": "推动任务"}]
+            }]
+        }));
+
+        let plan = &output["customization_plan"];
+        assert!(plan["source_snapshot"].is_object());
+        assert_eq!(plan["page_plan"].as_array().unwrap().len(), 2);
+        assert!(plan["confirmed_photo_references"].is_array());
+        assert!(plan["unplaced_materials"].is_array());
+        assert!(plan.get("target_child_id").is_none());
+        assert!(plan.get("source_storybook_id").is_none());
+        assert!(plan.get("asset_reference_id").is_none());
+    }
 }

@@ -69,6 +69,7 @@ fn share_export_download_url(token: &str, export_id: Uuid) -> String {
     format!("/api/share-links/{token}/exports/{export_id}/download")
 }
 
+#[cfg(not(feature = "db"))]
 pub(crate) fn ensure_storybook_deliverable(book: &Storybook) -> Result<(), ApiError> {
     if matches!(
         book.status,
@@ -84,8 +85,88 @@ pub(crate) fn ensure_storybook_deliverable(book: &Storybook) -> Result<(), ApiEr
 }
 
 #[cfg(feature = "db")]
+pub(crate) async fn ensure_storybook_deliverable_for_operation(
+    db: &sea_orm::DatabaseConnection,
+    workspace_id: Option<Uuid>,
+    actor_user_id: Option<Uuid>,
+    book: &Storybook,
+    operation: &str,
+) -> Result<(), ApiError> {
+    if !matches!(
+        book.status,
+        StorybookStatus::Exportable | StorybookStatus::Listed
+    ) {
+        return Err(ApiError::state_conflict(
+            "绘本还未标记为可交付，不能导出或创建分享链接",
+        ));
+    }
+
+    match crate::repositories::storybook_rules::ensure_delivery_access_ready(book) {
+        Ok(()) => Ok(()),
+        Err(sea_orm::DbErr::Custom(message))
+            if delivery_privacy_risk_labels(&message).is_some() =>
+        {
+            let risks = delivery_privacy_risk_labels(&message).unwrap_or_default();
+            log_delivery_privacy_blocked(
+                db,
+                workspace_id,
+                actor_user_id,
+                book.id,
+                operation,
+                risks,
+            )
+            .await?;
+            Err(delivery_error(sea_orm::DbErr::Custom(message)))
+        }
+        Err(err) => Err(common::db_error(err)),
+    }
+}
+
+#[cfg(feature = "db")]
+pub(crate) async fn ensure_storybook_evidence_ready(
+    db: &sea_orm::DatabaseConnection,
+    book: &Storybook,
+) -> Result<(), ApiError> {
+    crate::repositories::delivery::ensure_storybook_custom_evidence_ready(db, book)
+        .await
+        .map_err(delivery_error)?;
+    crate::repositories::delivery::ensure_storybook_direct_creation_evidence_ready(book)
+        .await
+        .map_err(delivery_error)?;
+    Ok(())
+}
+
+#[cfg(feature = "db")]
 pub(crate) fn delivery_error(err: sea_orm::DbErr) -> ApiError {
     match err {
+        sea_orm::DbErr::Custom(message)
+            if custom_evidence_missing_details_from_message(&message).is_some() =>
+        {
+            ApiError::state_conflict_with_code_and_details(
+                "custom_evidence_missing",
+                "本次定制绘本缺少运行证据，请先回到修改与交付页刷新或重新制作后再导出或分享",
+                custom_evidence_missing_details_from_message(&message).unwrap_or_else(|| {
+                    json!({
+                        "next_action": "review_customization_run"
+                    })
+                }),
+            )
+        }
+        sea_orm::DbErr::Custom(message)
+            if direct_creation_evidence_missing_details_from_message(&message).is_some() =>
+        {
+            ApiError::state_conflict_with_code_and_details(
+                "direct_creation_evidence_missing",
+                "这本专属绘本缺少生成证据，请先回到修改与交付页检查或重新制作后再导出或分享",
+                direct_creation_evidence_missing_details_from_message(&message).unwrap_or_else(
+                    || {
+                        json!({
+                            "next_action": "review_direct_creation_evidence"
+                        })
+                    },
+                ),
+            )
+        }
         sea_orm::DbErr::Custom(message) if delivery_privacy_risk_labels(&message).is_some() => {
             let risks = delivery_privacy_risk_labels(&message).unwrap_or_default();
             ApiError::state_conflict(format!("绘本内容可能包含{}，请先修改后再导出或分享", risks))
@@ -97,6 +178,22 @@ pub(crate) fn delivery_error(err: sea_orm::DbErr) -> ApiError {
 #[cfg(feature = "db")]
 pub(crate) fn delivery_privacy_risk_labels(message: &str) -> Option<&str> {
     message.strip_prefix("delivery_privacy_risk:")
+}
+
+#[cfg(feature = "db")]
+fn custom_evidence_missing_details_from_message(message: &str) -> Option<serde_json::Value> {
+    let details =
+        message.strip_prefix(crate::repositories::delivery::CUSTOM_EVIDENCE_MISSING_PREFIX)?;
+    serde_json::from_str(details).ok()
+}
+
+#[cfg(feature = "db")]
+fn direct_creation_evidence_missing_details_from_message(
+    message: &str,
+) -> Option<serde_json::Value> {
+    let details = message
+        .strip_prefix(crate::repositories::delivery::DIRECT_CREATION_EVIDENCE_MISSING_PREFIX)?;
+    serde_json::from_str(details).ok()
 }
 
 #[cfg(feature = "db")]

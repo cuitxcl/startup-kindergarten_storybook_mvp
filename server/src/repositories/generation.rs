@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 use serde_json::{Value as JsonValue, json};
 use uuid::Uuid;
@@ -26,7 +28,9 @@ const ALLOWED_JOB_TYPES: &[&str] = &[
     "storybook_cover_image",
     "storybook_page_image",
     "storybook_role_reference_image",
+    "storybook_visual_reference",
     "customization_plan",
+    "storybook_customization_derive",
     "creation_storybook_generate",
 ];
 const INLINE_WORKER_ID: &str = "inline-mock-executor";
@@ -62,10 +66,46 @@ pub async fn retry_failed_job(
         INLINE_WORKER_ID,
     )
     .await?;
+    if job.job_type == "storybook_customization_derive" {
+        let run_id = job
+            .input_json
+            .get("customization_run_id")
+            .and_then(JsonValue::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        let run_item_id = job
+            .input_json
+            .get("customization_run_item_id")
+            .and_then(JsonValue::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        if let Some(item_id) = run_item_id {
+            crate::repositories::storybook_customization_runs::mark_item_retrying(
+                db,
+                workspace_id,
+                item_id,
+            )
+            .await?;
+        }
+        if let Some(run_id) = run_id {
+            crate::repositories::storybook_customization_runs::finish_run(
+                db,
+                workspace_id,
+                run_id,
+                None,
+            )
+            .await?;
+        }
+    }
     if job.job_type == "storybook_role_reference_image" {
         if let (Some(storybook_id), Some(role_id)) = (job.storybook_id, role_id_from_job(&job)) {
             mark_role_reference_status(db, storybook_id, role_id, "generating").await?;
         }
+    } else if job.job_type == "storybook_visual_reference" {
+        crate::repositories::storybook_creation_assets::mark_visual_reference_generating_by_job(
+            db,
+            workspace_id,
+            job.id,
+        )
+        .await?;
     } else if job.job_type == "storybook_page_image" {
         if let (Some(storybook_id), Some(page_id)) = (job.storybook_id, page_id_from_job(&job)) {
             mark_page_image_status(db, storybook_id, page_id, "generating").await?;
@@ -74,7 +114,10 @@ pub async fn retry_failed_job(
 
     let provider = ConfiguredGenerationProvider::from_env();
     let provider_name = provider.name_for_job_type(&job.job_type);
-    if job.job_type == "creation_storybook_generate" {
+    if matches!(
+        job.job_type.as_str(),
+        "creation_storybook_generate" | "storybook_customization_derive"
+    ) {
         return execute_claimed_generation_record(db, job).await;
     }
     let retried = if is_image_job(&job.job_type) {
@@ -282,7 +325,7 @@ pub async fn create_generation_job_record(
             .ok_or_else(|| DbErr::Custom("定制方案需要有效儿童档案 ID".to_string()))?;
         ensure_child_in_workspace(db, workspace_id, child_id).await?;
     }
-    if is_image_job(job_type) {
+    if is_image_job(job_type) && job_type != "storybook_visual_reference" {
         let storybook_id = payload
             .storybook_id
             .ok_or_else(|| DbErr::Custom("图片生成任务需要关联绘本（storybook_id）".to_string()))?;
@@ -317,7 +360,7 @@ pub async fn create_generation_job_record(
         input_json,
     )
     .await?;
-    if is_image_job(job_type) {
+    if is_image_job(job_type) && job_type != "storybook_visual_reference" {
         crate::repositories::storybook_image_variants::create_generating_variant_for_job(db, &job)
             .await?;
     }
@@ -923,7 +966,7 @@ pub async fn cancel_generation_job(
     job_id: Uuid,
 ) -> Result<GenerationJob, DbErr> {
     let job = find_job(db, workspace_id, job_id).await?;
-    if !matches!(job.status.as_str(), "queued" | "failed") {
+    if !matches!(job.status.as_str(), "queued" | "running" | "failed") {
         return Err(DbErr::Custom("generation_job_not_cancelable".to_string()));
     }
 
@@ -932,6 +975,34 @@ pub async fn cancel_generation_job(
     // 图片任务在入队时已经把分页/角色和图片变体标记为生成中。
     // 取消也必须走同一套目标状态回写，否则界面会永久停留在“生成中”。
     propagate_failed_generation_job_state_with_message(db, &canceled, "生成任务已取消").await?;
+    Ok(canceled)
+}
+
+pub async fn cancel_customization_run_jobs(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    run_id: Uuid,
+) -> Result<usize, DbErr> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select id
+            from generation_jobs
+            where workspace_id = $1
+              and job_type = 'storybook_customization_derive'
+              and status in ('queued', 'running', 'failed')
+              and input_json ->> 'customization_run_id' = $2
+            "#,
+            [workspace_id.into(), run_id.to_string().into()],
+        ))
+        .await?;
+    let mut canceled = 0;
+    for row in rows {
+        let job_id: Uuid = row.try_get("", "id")?;
+        cancel_generation_job(db, workspace_id, job_id).await?;
+        canceled += 1;
+    }
     Ok(canceled)
 }
 
@@ -1051,6 +1122,14 @@ async fn execute_generation_record(
         INLINE_WORKER_ID,
     )
     .await?;
+    if running.job_type == "storybook_visual_reference" {
+        crate::repositories::storybook_creation_assets::mark_visual_reference_generating_by_job(
+            db,
+            running.workspace_id,
+            running.id,
+        )
+        .await?;
+    }
     execute_claimed_generation_record(db, running).await
 }
 
@@ -1070,6 +1149,14 @@ async fn execute_claimed_generation_record(
     let updated = if job_type == "creation_storybook_generate" {
         let output_json = creation_storybook_generate_output(db, &job).await;
         complete_and_apply_running_job(db, job.id, output_json).await?
+    } else if job_type == "storybook_customization_derive" {
+        match customization_derive_output(db, &job).await {
+            Ok(output_json) => complete_and_apply_running_job(db, job.id, output_json).await?,
+            Err(err) => {
+                fail_running_job(db, job.id, provider_name, &job_type, job.attempt_count, err)
+                    .await?
+            }
+        }
     } else if is_image_job(&job_type) {
         let target = image_target_from_job(&job)?;
         let image_request = image_request_from_job(&job)?;
@@ -1183,6 +1270,218 @@ async fn execute_claimed_generation_record(
     Ok(updated)
 }
 
+async fn customization_derive_output(
+    db: &DatabaseConnection,
+    job: &GenerationJob,
+) -> Result<JsonValue, GenerationProviderError> {
+    let parse_uuid = |key: &str| {
+        job.input_json
+            .get(key)
+            .and_then(JsonValue::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok())
+            .ok_or_else(|| GenerationProviderError::new(format!("定制生成任务缺少有效 {key}")))
+    };
+    let run_id = parse_uuid("customization_run_id")?;
+    let run_item_id = parse_uuid("customization_run_item_id")?;
+    let source_storybook_id = parse_uuid("source_storybook_id")?;
+    let child_id = parse_uuid("target_child_id")?;
+    let actor_id = job
+        .created_by
+        .ok_or_else(|| GenerationProviderError::new("定制生成任务缺少创建者"))?;
+    let intensity = job
+        .input_json
+        .get("intensity")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("standard")
+        .to_string();
+    let primary_material = job
+        .input_json
+        .get("primary_material")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let customization_plan = job.input_json.get("customization_plan").cloned();
+
+    ensure_customization_asset_references_active(db, job.workspace_id, customization_plan.as_ref())
+        .await?;
+
+    let claimed = crate::repositories::storybook_customization_runs::mark_item_running(
+        db,
+        job.workspace_id,
+        run_item_id,
+    )
+    .await
+    .map_err(|err| GenerationProviderError::new(err.to_string()))?;
+    if !claimed {
+        return Err(GenerationProviderError::new(
+            "定制制作已取消或已结束，不再继续生成",
+        ));
+    }
+    crate::repositories::storybook_customization_runs::finish_run(
+        db,
+        job.workspace_id,
+        run_id,
+        None,
+    )
+    .await
+    .map_err(|err| GenerationProviderError::new(err.to_string()))?;
+
+    match crate::repositories::storybooks::derive_custom(
+        db,
+        job.workspace_id,
+        source_storybook_id,
+        actor_id,
+        crate::models::DeriveCustomRequest {
+            child_id,
+            intensity,
+            primary_material,
+            customization_plan,
+        },
+    )
+    .await
+    {
+        Ok(book) => {
+            let delivered = crate::repositories::storybook_customization_runs::mark_item_succeeded(
+                db,
+                job.workspace_id,
+                run_item_id,
+                book.id,
+            )
+            .await
+            .map_err(|err| GenerationProviderError::new(err.to_string()))?;
+            if !delivered {
+                crate::repositories::storybooks::delete(db, job.workspace_id, book.id)
+                    .await
+                    .map_err(|err| GenerationProviderError::new(err.to_string()))?;
+                let _ = crate::repositories::storybook_customization_runs::finish_run(
+                    db,
+                    job.workspace_id,
+                    run_id,
+                    None,
+                )
+                .await;
+                return Err(GenerationProviderError::new(
+                    "定制制作已取消，已丢弃未交付的结果",
+                ));
+            }
+            crate::repositories::storybook_customization_runs::finish_run(
+                db,
+                job.workspace_id,
+                run_id,
+                None,
+            )
+            .await
+            .map_err(|err| GenerationProviderError::new(err.to_string()))?;
+            Ok(
+                json!({ "storybook_id": book.id, "customization_run_id": run_id, "customization_run_item_id": run_item_id }),
+            )
+        }
+        Err(err) => {
+            let message = err.to_string();
+            let _ = crate::repositories::storybook_customization_runs::mark_item_failed(
+                db,
+                job.workspace_id,
+                run_item_id,
+                &message,
+            )
+            .await;
+            let _ = crate::repositories::storybook_customization_runs::finish_run(
+                db,
+                job.workspace_id,
+                run_id,
+                None,
+            )
+            .await;
+            Err(GenerationProviderError::new(message))
+        }
+    }
+}
+
+async fn ensure_customization_asset_references_active(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    customization_plan: Option<&JsonValue>,
+) -> Result<(), GenerationProviderError> {
+    let ids = customization_asset_reference_ids(customization_plan);
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let references =
+        crate::repositories::storybook_creation_assets::list_by_ids(db, workspace_id, &ids)
+            .await
+            .map_err(|err| GenerationProviderError::new(err.to_string()))?;
+    let all_confirmed = references.len() == ids.len()
+        && references.iter().all(|reference| {
+            reference.status == "ready"
+                && matches!(
+                    reference
+                        .visual_reference
+                        .as_ref()
+                        .map(|visual| visual.status.as_str()),
+                    Some("confirmed")
+                )
+        });
+    if all_confirmed {
+        Ok(())
+    } else {
+        Err(GenerationProviderError::new(
+            "照片素材已被移除或尚未确认，请重新预览后再制作",
+        ))
+    }
+}
+
+fn customization_asset_reference_ids(customization_plan: Option<&JsonValue>) -> Vec<Uuid> {
+    let mut ids = HashSet::new();
+    let Some(plan) = customization_plan else {
+        return Vec::new();
+    };
+    if let Some(values) = plan
+        .get("confirmed_photo_reference_ids")
+        .and_then(JsonValue::as_array)
+    {
+        ids.extend(
+            values
+                .iter()
+                .filter_map(|value| value.as_str().and_then(|value| Uuid::parse_str(value).ok())),
+        );
+    }
+    if let Some(references) = plan
+        .get("confirmed_photo_references")
+        .and_then(JsonValue::as_array)
+    {
+        ids.extend(references.iter().filter_map(|reference| {
+            reference
+                .get("asset_reference_id")
+                .and_then(JsonValue::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+        }));
+    }
+    ids.into_iter().collect()
+}
+
+#[cfg(test)]
+mod customization_derive_tests {
+    use super::*;
+
+    #[test]
+    fn customization_asset_reference_ids_deduplicates_both_plan_shapes() {
+        let first_id = Uuid::new_v4();
+        let second_id = Uuid::new_v4();
+        let plan = json!({
+            "confirmed_photo_reference_ids": [first_id.to_string()],
+            "confirmed_photo_references": [
+                { "asset_reference_id": first_id.to_string() },
+                { "asset_reference_id": second_id.to_string() }
+            ]
+        });
+
+        let ids = customization_asset_reference_ids(Some(&plan));
+
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&first_id));
+        assert!(ids.contains(&second_id));
+    }
+}
+
 async fn complete_and_apply_running_job(
     db: &DatabaseConnection,
     job_id: Uuid,
@@ -1202,7 +1501,7 @@ async fn complete_and_apply_running_job(
     let job = crate::repositories::generation_jobs::complete_running_job(&txn, job_id, output_json)
         .await?;
     record_generation_cost_log(&txn, &job).await?;
-    if is_image_job(&job.job_type) {
+    if is_image_job(&job.job_type) && job.job_type != "storybook_visual_reference" {
         crate::repositories::storybook_image_variants::mark_job_variant_ready(&txn, &job).await?;
     }
     crate::repositories::generation_writeback::apply_completed_generation(&txn, &job).await?;
@@ -1432,6 +1731,14 @@ async fn propagate_failed_generation_job_state_with_message(
         if let (Some(storybook_id), Some(role_id)) = (job.storybook_id, role_id_from_job(job)) {
             mark_role_reference_status_for_job(db, storybook_id, role_id, job.id, "failed").await?;
         }
+    } else if job.job_type == "storybook_visual_reference" {
+        crate::repositories::storybook_creation_assets::mark_visual_reference_failed_by_job(
+            db,
+            job.workspace_id,
+            job.id,
+            message.to_string(),
+        )
+        .await?;
     } else if job.job_type == "storybook_page_image" {
         crate::repositories::storybook_image_variants::mark_job_variant_failed(db, job, message)
             .await?;
@@ -1453,6 +1760,44 @@ async fn propagate_failed_generation_job_state_with_message(
                 job.workspace_id,
                 session_id,
                 job.id,
+            )
+            .await?;
+        }
+    } else if job.job_type == "storybook_customization_derive" {
+        let run_id = job
+            .input_json
+            .get("customization_run_id")
+            .and_then(JsonValue::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        let run_item_id = job
+            .input_json
+            .get("customization_run_item_id")
+            .and_then(JsonValue::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        if let Some(item_id) = run_item_id {
+            if job.status == "canceled" {
+                crate::repositories::storybook_customization_runs::mark_item_canceled(
+                    db,
+                    job.workspace_id,
+                    item_id,
+                )
+                .await?;
+            } else {
+                crate::repositories::storybook_customization_runs::mark_item_failed(
+                    db,
+                    job.workspace_id,
+                    item_id,
+                    message,
+                )
+                .await?;
+            }
+        }
+        if let Some(run_id) = run_id {
+            crate::repositories::storybook_customization_runs::finish_run(
+                db,
+                job.workspace_id,
+                run_id,
+                None,
             )
             .await?;
         }
@@ -1658,11 +2003,16 @@ async fn creation_storybook_pages_input(
         },
         "confirmed_roles": roles,
         "materials": job.input_json.get("materials").cloned().unwrap_or_else(|| json!([])),
+        "asset_references": job.input_json.get("asset_references").cloned().unwrap_or_else(|| json!([])),
+        "page_evidence": job.input_json.get("page_evidence").cloned().unwrap_or_else(|| json!([])),
         "visual_preferences": visual_preferences,
         "creation_context": {
             "quick_idea": job.input_json.get("quick_idea").cloned().unwrap_or(JsonValue::Null),
             "understanding": job.input_json.get("understanding").cloned().unwrap_or(JsonValue::Null),
             "materials": job.input_json.get("materials").cloned().unwrap_or_else(|| json!([])),
+            "asset_references": job.input_json.get("asset_references").cloned().unwrap_or_else(|| json!([])),
+            "confirmed_photo_references": job.input_json.get("asset_references").cloned().unwrap_or_else(|| json!([])),
+            "page_evidence": job.input_json.get("page_evidence").cloned().unwrap_or_else(|| json!([])),
             "selected_direction": selected_direction,
             "outline": job.input_json.get("outline").cloned().unwrap_or_else(|| json!({})),
             "visual_preferences": visual_preferences,

@@ -15,8 +15,8 @@ use crate::{
         CreationMaterialsResponse, CreationOutlineResponse, CreationSessionUpdateResponse,
         CreationStorybookGenerationResponse, Envelope, GenerateCreationStorybookRequest,
         GenerateDirectionsRequest, GenerateOutlineRequest, PatchCreationMaterialsRequest,
-        RefreshUnderstandingRequest, SelectDirectionRequest, SelectDirectionResponse,
-        StorybookCreationSession, StorybookCreationSessionListItem,
+        RefreshUnderstandingRequest, ResponseWarning, SelectDirectionRequest,
+        SelectDirectionResponse, StorybookCreationSession, StorybookCreationSessionListItem,
         StorybookCreationSessionListQuery, UpdateCreationOutlineRequest, UpdateOutlinePageRequest,
         UpdateOutlinePageResponse, UpdateOutlineResponse, UpdateStorybookCreationSessionRequest,
         UpdateVisualPreferencesRequest, VisualPreferencesResponse,
@@ -165,7 +165,8 @@ async fn patch_materials(
         payload,
     )
     .await?;
-    Ok(Json(Envelope::new(response)))
+    let warnings = asset_reference_warnings(&ctx, workspace_id, session_id).await?;
+    Ok(Json(Envelope::with_warnings(response, warnings)))
 }
 
 async fn generate_directions(
@@ -182,7 +183,8 @@ async fn generate_directions(
         payload,
     )
     .await?;
-    Ok(Json(Envelope::new(response)))
+    let warnings = asset_reference_warnings(&ctx, workspace_id, session_id).await?;
+    Ok(Json(Envelope::with_warnings(response, warnings)))
 }
 
 async fn select_direction(
@@ -216,7 +218,38 @@ async fn generate_outline(
         payload,
     )
     .await?;
-    Ok(Json(Envelope::new(response)))
+    let warnings = asset_reference_warnings(&ctx, workspace_id, session_id).await?;
+    Ok(Json(Envelope::with_warnings(response, warnings)))
+}
+
+async fn asset_reference_warnings(
+    ctx: &AppContext,
+    workspace_id: Uuid,
+    session_id: Uuid,
+) -> Result<Vec<ResponseWarning>, ApiError> {
+    let references =
+        crate::repositories::storybook_creation_assets::blocking_references_for_generation(
+            &ctx.db,
+            workspace_id,
+            session_id,
+        )
+        .await
+        .map_err(crate::domains::common::db_error)?;
+    if references.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(vec![ResponseWarning {
+        code: "visual_reference_pending".to_string(),
+        message: format!(
+            "{} 张照片还没有确认同画风参考，开始制作前需要处理。",
+            references.len()
+        ),
+        asset_reference_ids: references
+            .into_iter()
+            .map(|reference| reference.id)
+            .collect(),
+        next_action: Some("confirm_visual_reference".to_string()),
+    }])
 }
 
 async fn update_outline_page(

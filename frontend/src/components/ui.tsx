@@ -97,7 +97,7 @@ export function PageHeader({
 
 export function ProgressSteps({ steps, active }: { steps: string[]; active: number }) {
   return (
-    <ol className="steps">
+    <ol className="steps" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
       {steps.map((step, index) => (
         <li key={step} className={index === active ? "active" : index < active ? "done" : ""}>
           <span>{index + 1}</span>

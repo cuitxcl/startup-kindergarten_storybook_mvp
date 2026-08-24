@@ -418,29 +418,35 @@ fn validate_provider_output_shape(
             required_text(page, "illustration_prompt", job_type)?;
         }
         "customization_plan" => {
-            let customization = required_object(object, "customization", job_type)?;
-            required_text(customization, "strategy", job_type)?;
-            let rewrite_points = required_array(customization, "rewrite_points", job_type)?;
-            for (index, point) in rewrite_points.iter().enumerate() {
-                let point = point.as_object().ok_or_else(|| {
+            let plan = required_object(object, "customization_plan", job_type)?;
+            let source_snapshot = required_object(plan, "source_snapshot", job_type)?;
+            required_text(source_snapshot, "title", job_type)?;
+            required_array(source_snapshot, "pages", job_type)?;
+            required_text(plan, "strategy", job_type)?;
+            let page_plan = required_array(plan, "page_plan", job_type)?;
+            for (index, page) in page_plan.iter().enumerate() {
+                let page = page.as_object().ok_or_else(|| {
                     GenerationProviderError::new(format!(
-                        "provider 输出 {job_type}.rewrite_points[{index}] 必须是 object"
+                        "provider 输出 {job_type}.page_plan[{index}] 必须是 object"
                     ))
                 })?;
-                required_text_at(
-                    point,
-                    "scope",
-                    job_type,
-                    &format!("rewrite_points[{index}]"),
-                )?;
-                required_text_at(
-                    point,
-                    "action",
-                    job_type,
-                    &format!("rewrite_points[{index}]"),
-                )?;
+                required_text_at(page, "decision", job_type, &format!("page_plan[{index}]"))?;
+                required_text_at(page, "reason", job_type, &format!("page_plan[{index}]"))?;
+                if page
+                    .get("requires_redraw")
+                    .and_then(JsonValue::as_bool)
+                    .is_none()
+                {
+                    return Err(GenerationProviderError::new(format!(
+                        "provider 输出 {job_type}.page_plan[{index}].requires_redraw 必须是 boolean"
+                    )));
+                }
+                array_field(page, "material_labels", job_type)?;
+                array_field(page, "photo_display_names", job_type)?;
             }
-            let risk_checks = required_array(customization, "risk_checks", job_type)?;
+            array_field(plan, "confirmed_photo_references", job_type)?;
+            array_field(plan, "unplaced_materials", job_type)?;
+            let risk_checks = required_array(plan, "risk_checks", job_type)?;
             for (index, check) in risk_checks.iter().enumerate() {
                 let has_text = check.as_str().is_some_and(|value| !value.trim().is_empty());
                 if !has_text {
@@ -596,6 +602,19 @@ fn required_array<'a>(
         )));
     }
     Ok(values)
+}
+
+fn array_field<'a>(
+    object: &'a JsonMap<String, JsonValue>,
+    key: &str,
+    job_type: &str,
+) -> Result<&'a Vec<JsonValue>, GenerationProviderError> {
+    object
+        .get(key)
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| {
+            GenerationProviderError::new(format!("provider 输出 {job_type}.{key} 必须是 array"))
+        })
 }
 
 fn required_text(

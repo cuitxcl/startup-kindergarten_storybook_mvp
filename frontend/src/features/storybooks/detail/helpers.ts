@@ -118,13 +118,13 @@ export function buildLocalStorybookQuality(book: Storybook): StorybookQualityRep
 }
 
 export function customizationBlockerFor(book: Storybook, quality?: StorybookQualityReport) {
-  if (book.type !== "plain") return "只有基础故事可以继续生成儿童定制版";
+  if (book.type !== "plain") return "只有普通绘本可以继续创作专属版本";
   if (!book.pages.length) return "请先生成绘本分页";
   if (!book.roles.length) return "请先确认角色与道具";
   const generatingPages = book.pages.filter((page) => page.status === "generating");
-  if (generatingPages.length) return "仍有分页插图正在生成，请完成后再生成定制版";
+  if (generatingPages.length) return "仍有分页插图正在生成，请完成后再创作专属版本";
   const failedPages = book.pages.filter((page) => page.status === "failed");
-  if (failedPages.length) return "仍有分页插图生成失败，请修复后再生成定制版";
+  if (failedPages.length) return "仍有分页插图生成失败，请修复后再创作专属版本";
   const redrawPages = book.pages.filter((page) => page.status === "needs_regeneration");
   if (redrawPages.length) return `仍有 ${redrawPages.length} 页需要重绘，请先完成基础故事`;
   const missingReferences = book.roles.filter((role) => roleNeedsReference(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl));
@@ -390,6 +390,13 @@ export function resultNoticeFromSearch(search: string): { title: string; copy: s
     return {
       title: "定制结果已展示",
       copy: "这本定制绘本已经生成完成。请检查儿童信息、故事改写和插图一致性，再导出或分享给家长。",
+      tone: "good",
+    };
+  }
+  if (result === "personalized") {
+    return {
+      title: "专属绘本已生成",
+      copy: "请在修改与交付页检查素材落点、分页内容和插图一致性，确认没有问题后再导出或分享。",
       tone: "good",
     };
   }

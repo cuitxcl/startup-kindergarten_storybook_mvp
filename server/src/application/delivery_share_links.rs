@@ -14,13 +14,17 @@ use crate::application::delivery::{
 use crate::workers::export::enqueue_export_job;
 use crate::{
     application::delivery::{
-        delivery_error, delivery_privacy_risk_labels, ensure_storybook_deliverable,
-        log_delivery_privacy_blocked, read_export_job_file, with_share_export_download_url,
+        delivery_error, delivery_privacy_risk_labels, ensure_storybook_deliverable_for_operation,
+        ensure_storybook_evidence_ready, log_delivery_privacy_blocked, read_export_job_file,
+        with_share_export_download_url,
     },
     domains::common,
     error::ApiError,
     models::{CreateShareLinkRequest, ExportJob, ListQuery, PaginationMeta, ShareLink, Storybook},
 };
+
+#[cfg(not(feature = "db"))]
+use crate::application::delivery::ensure_storybook_deliverable;
 
 pub async fn create_share_link(
     ctx: &AppContext,
@@ -36,7 +40,15 @@ pub async fn create_share_link(
         let book = crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
             .await
             .map_err(common::db_error)?;
-        ensure_storybook_deliverable(&book)?;
+        ensure_storybook_deliverable_for_operation(
+            &ctx.db,
+            Some(workspace_id),
+            Some(actor_id),
+            &book,
+            "share_link",
+        )
+        .await?;
+        ensure_storybook_evidence_ready(&ctx.db, &book).await?;
         let link = match crate::repositories::delivery::create_share_link(
             &ctx.db,
             workspace_id,
@@ -213,7 +225,14 @@ pub async fn get_public_share(ctx: &AppContext, token: String) -> Result<Storybo
         let book = crate::repositories::delivery::storybook_by_share_token(&ctx.db, &token)
             .await
             .map_err(common::db_error)?;
-        ensure_storybook_deliverable(&book)?;
+        ensure_storybook_deliverable_for_operation(
+            &ctx.db,
+            Some(book.workspace_id),
+            None,
+            &book,
+            "public_share",
+        )
+        .await?;
         crate::repositories::delivery::record_share_link_access(&ctx.db, &token)
             .await
             .map_err(common::db_error)?;
@@ -247,7 +266,15 @@ pub async fn create_public_export(ctx: &AppContext, token: String) -> Result<Exp
             crate::repositories::delivery::storybook_by_share_token(&ctx.db, &token)
                 .await
                 .map_err(delivery_error)?;
-        ensure_storybook_deliverable(&shared_storybook)?;
+        ensure_storybook_deliverable_for_operation(
+            &ctx.db,
+            Some(shared_storybook.workspace_id),
+            None,
+            &shared_storybook,
+            "public_export",
+        )
+        .await?;
+        ensure_storybook_evidence_ready(&ctx.db, &shared_storybook).await?;
         let job = match crate::repositories::delivery::create_export_by_share_token(&ctx.db, &token)
             .await
         {

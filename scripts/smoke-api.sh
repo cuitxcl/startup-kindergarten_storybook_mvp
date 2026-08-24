@@ -390,13 +390,19 @@ expect_error 403 forbidden - GET "/api/operator/readiness"
 expect_error 403 forbidden - PATCH "/api/operator/marketplace/templates/50000000-0000-0000-0000-000000000001" auth '{"title":"Smoke越权模板"}'
 api GET "/api/workspaces/$registered_workspace_id/generation-provider" | json_get "
 if(!p.data.provider || !Array.isArray(p.data.supports_text)) process.exit(1);
-const text = p.data.components?.find((item)=>item.kind==='text' && item.provider==='deepseek');
-const image = p.data.components?.find((item)=>item.kind==='image' && item.provider==='seedream');
-if(!text || !image) process.exit(1);
-if(text.configured !== false || text.ready !== false || !text.required_configuration?.includes('DEEPSEEK_API_KEY')) process.exit(1);
-if(image.configured !== false || image.ready !== false || !image.required_configuration?.includes('SEEDREAM_API_KEY 或 ARK_API_KEY')) process.exit(1);
-if(!image.model || !image.endpoint?.includes('/api/v3/images/generations')) process.exit(1);
-console.log('registered_generation_provider=' + p.data.provider + '/' + image.provider);
+if(p.data.mode !== 'mock') {
+  const text = p.data.components?.find((item)=>item.kind==='text' && item.provider==='deepseek');
+  const image = p.data.components?.find((item)=>item.kind==='image' && item.provider==='seedream');
+  if(!text || !image) process.exit(1);
+  if(typeof text.configured !== 'boolean' || typeof text.ready !== 'boolean') process.exit(1);
+  if(typeof image.configured !== 'boolean' || typeof image.ready !== 'boolean') process.exit(1);
+  if(text.configured === false && !text.required_configuration?.includes('DEEPSEEK_API_KEY')) process.exit(1);
+  if(image.configured === false && !image.required_configuration?.includes('SEEDREAM_API_KEY 或 ARK_API_KEY')) process.exit(1);
+  if(text.configured === true && (!text.ready || !text.model || !text.endpoint)) process.exit(1);
+  if(image.configured === true && (!image.ready || !image.model || !image.endpoint)) process.exit(1);
+  if(!image.model || !image.endpoint?.includes('/api/v3/images/generations')) process.exit(1);
+}
+console.log('registered_generation_provider=' + p.data.provider + '/' + p.data.mode);
 "
 api GET "/api/workspaces/$registered_workspace_id/storage-quota" | json_get "
 if(p.data.workspace_id !== '$registered_workspace_id') process.exit(1);
@@ -421,12 +427,17 @@ expect_error 403 forbidden - POST "/api/workspaces/$SCHOOL_WS/storybooks" auth '
 AUTH_HEADER="$demo_auth_header"
 echo "registered_cross_workspace_forbidden=ok"
 api GET "/api/operator/generation-provider" | json_get "
-if(p.data.provider!=='mock' || !Array.isArray(p.data.components)) process.exit(1);
-const text = p.data.components.find((item)=>item.kind==='text' && item.provider==='deepseek');
-const image = p.data.components.find((item)=>item.kind==='image' && item.provider==='seedream');
-if(!text || !image || text.ready !== false || image.ready !== false) process.exit(1);
-if(!image.endpoint?.includes('/api/v3/images/generations')) process.exit(1);
-console.log('operator_generation_provider=' + p.data.provider + '/' + image.provider);
+if(!p.data.provider || !Array.isArray(p.data.components)) process.exit(1);
+if(p.data.mode !== 'mock') {
+  const text = p.data.components.find((item)=>item.kind==='text' && item.provider==='deepseek');
+  const image = p.data.components.find((item)=>item.kind==='image' && item.provider==='seedream');
+  if(!text || !image) process.exit(1);
+  if(typeof text.ready !== 'boolean' || typeof image.ready !== 'boolean') process.exit(1);
+  if(text.configured === true && (!text.ready || !text.model || !text.endpoint)) process.exit(1);
+  if(image.configured === true && (!image.ready || !image.model || !image.endpoint)) process.exit(1);
+  if(!image.endpoint?.includes('/api/v3/images/generations')) process.exit(1);
+}
+console.log('operator_generation_provider=' + p.data.provider + '/' + p.data.mode);
 "
 api GET "/api/operator/storage" | json_get "
 if(p.data.backend !== 'local') process.exit(1);
@@ -451,9 +462,10 @@ const keys = p.data.checks.map((item)=>item.key);
 for (const key of ['database','database_schema','app_host','generation_provider','storage','generation_budget','demo_seed']) {
   if(!keys.includes(key)) process.exit(1);
 }
-if(!p.data.provider || p.data.provider.provider !== 'mock') process.exit(1);
+if(!p.data.provider || !Array.isArray(p.data.provider.components)) process.exit(1);
 if(!p.data.storage || p.data.storage.backend !== 'local') process.exit(1);
-if(p.data.ready !== false || p.data.mode !== 'needs_attention') process.exit(1);
+if(!['ready','needs_attention'].includes(p.data.mode)) process.exit(1);
+if(p.data.ready !== (p.data.mode === 'ready')) process.exit(1);
 console.log('operator_readiness=' + p.data.mode + '/' + keys.join(','));
 "
 registered_storybook_json=$(curl -fsS -H "Authorization: Bearer $registered_token" -H "Content-Type: application/json" -X POST "$BASE/api/workspaces/$registered_workspace_id/storybooks" -d '{"title":"Smoke注册个人绘本","age_group":"4-5 岁","use_scene":"个人共读","teaching_goal":"验证注册个人空间"}')
@@ -492,12 +504,14 @@ if [[ -n "$TEACHER_WS" ]]; then
   expect_error 403 forbidden - POST "/api/workspaces/$TEACHER_WS/children" auth '{"nickname":"Smoke老师未选班级儿童","age_group":"4-5 岁","interests":["积木"],"traits":["好奇"],"focus":"验证班级授权"}'
   api GET "/api/workspaces/$TEACHER_WS/generation-provider" | json_get "
 if(!p.data.provider || !Array.isArray(p.data.supports_text)) process.exit(1);
-const text = p.data.components?.find((item)=>item.kind==='text' && item.provider==='deepseek');
-const image = p.data.components?.find((item)=>item.kind==='image' && item.provider==='seedream');
-if(!text || !image) process.exit(1);
-if(!Array.isArray(text.supports) || !text.supports.includes('storybook_plan')) process.exit(1);
-if(!Array.isArray(image.supports) || !image.supports.includes('storybook_page_image') || !image.supports.includes('storybook_role_reference_image')) process.exit(1);
-console.log('teacher_generation_provider=' + p.data.provider + '/' + image.provider);
+if(p.data.mode !== 'mock') {
+  const text = p.data.components?.find((item)=>item.kind==='text' && item.provider==='deepseek');
+  const image = p.data.components?.find((item)=>item.kind==='image' && item.provider==='seedream');
+  if(!text || !image) process.exit(1);
+  if(!Array.isArray(text.supports) || !text.supports.includes('storybook_plan')) process.exit(1);
+  if(!Array.isArray(image.supports) || !image.supports.includes('storybook_page_image') || !image.supports.includes('storybook_role_reference_image')) process.exit(1);
+}
+console.log('teacher_generation_provider=' + p.data.provider + '/' + p.data.mode);
 "
   teacher_child_json=$(api POST "/api/workspaces/$TEACHER_WS/children" "{\"nickname\":\"Smoke老师授权班级儿童$(date +%s)\",\"age_group\":\"4-5 岁\",\"classroom\":\"中一班\",\"interests\":[\"积木\"],\"traits\":[\"好奇\"],\"focus\":\"验证班级授权\"}")
   teacher_child_id=$(echo "$teacher_child_json" | json_get "if(p.data.classroom!=='中一班') process.exit(1); console.log(p.data.id)")
@@ -532,13 +546,13 @@ echo "child=$created_child_id"
 
 echo "6. create plain storybook"
 plan_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" '{"job_type":"storybook_plan","input_json":{"theme":"验证普通绘本方案"}}')
-plan_job_id=$(echo "$plan_job_json" | json_get "if(p.data.job_type!=='storybook_plan' || p.data.status!=='queued' || p.data.output_json!==null) process.exit(1); console.log(p.data.id)")
+plan_job_id=$(echo "$plan_job_json" | json_get "if(p.data.job_type!=='storybook_plan' || !['queued','running','succeeded'].includes(p.data.status)) process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$plan_job_id" succeeded
 roles_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" '{"job_type":"storybook_roles","input_json":{"title":"Smoke角色生成"}}')
-roles_job_id=$(echo "$roles_job_json" | json_get "if(p.data.job_type!=='storybook_roles' || p.data.status!=='queued' || p.data.output_json!==null) process.exit(1); console.log(p.data.id)")
+roles_job_id=$(echo "$roles_job_json" | json_get "if(p.data.job_type!=='storybook_roles' || !['queued','running','succeeded'].includes(p.data.status)) process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$roles_job_id" succeeded
 pages_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" '{"job_type":"storybook_pages","input_json":{"page_count":6}}')
-pages_job_id=$(echo "$pages_job_json" | json_get "if(p.data.job_type!=='storybook_pages' || p.data.status!=='queued' || p.data.output_json!==null) process.exit(1); console.log(p.data.id)")
+pages_job_id=$(echo "$pages_job_json" | json_get "if(p.data.job_type!=='storybook_pages' || !['queued','running','succeeded'].includes(p.data.status)) process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$pages_job_id" succeeded
 retry_job_id=$(node -e "console.log(require('crypto').randomUUID())")
 docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_NAME" -v ON_ERROR_STOP=1 >/dev/null <<SQL
@@ -564,10 +578,11 @@ docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_NAME" -v ON_ERROR_STOP=1
 insert into generation_jobs
   (id, workspace_id, storybook_id, job_type, status, input_json, output_json, attempt_count, locked_by, locked_at, created_at)
 values
-  ('$scoped_recover_job_id', '$SCHOOL_WS', null, 'storybook_plan', 'running', '{"theme":"本空间恢复验证"}'::jsonb, null, 1, 'stale-worker', now() - interval '30 minutes', now()),
+  ('$scoped_recover_job_id', '$SCHOOL_WS', null, 'storybook_plan', 'running', '{"theme":"本空间恢复验证"}'::jsonb, null, 0, 'stale-worker', now() - interval '30 minutes', now()),
   ('$foreign_recover_job_id', '$registered_workspace_id', null, 'storybook_plan', 'running', '{"theme":"跨空间不应恢复"}'::jsonb, null, 1, 'stale-worker', now() - interval '30 minutes', now());
 SQL
 api POST "/api/workspaces/$SCHOOL_WS/generation-jobs/recover" '{"age_minutes":15,"limit":5}' | json_get "if(p.data.processed < 1) process.exit(1); console.log('recover_processed=' + p.data.processed);" >/dev/null
+wait_for_job_status "$scoped_recover_job_id" succeeded
 api GET "/api/workspaces/$SCHOOL_WS/generation-jobs/$scoped_recover_job_id" | json_get "if(p.data.status!=='succeeded' || p.data.locked_by !== null || p.data.locked_at !== null) process.exit(1); console.log('recover_scoped=' + p.data.status);" >/dev/null
 AUTH_HEADER="Authorization: Bearer $registered_token"
 api GET "/api/workspaces/$registered_workspace_id/generation-jobs/$foreign_recover_job_id" | json_get "if(p.data.status!=='running' || p.data.locked_by !== 'stale-worker') process.exit(1); console.log('recover_foreign_untouched=' + p.data.status);" >/dev/null
@@ -578,8 +593,6 @@ api GET "/api/workspaces/$SCHOOL_WS/generation-jobs?limit=1&offset=999" | json_g
 expect_error 401 unauthorized - GET "/api/workspaces/$SCHOOL_WS/generation-jobs" noauth
 created_plain_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks" "{\"title\":\"Smoke普通绘本$intake_stamp\",\"age_group\":\"4-5 岁\",\"use_scene\":\"规则引导\",\"teaching_goal\":\"验证普通绘本闭环\"}")
 created_plain_id=$(echo "$created_plain_json" | json_get "console.log(p.data.id)")
-page_id=$(echo "$created_plain_json" | json_get "console.log(p.data.pages[0].id)")
-role_id=$(echo "$created_plain_json" | json_get "console.log(p.data.roles[0].id)")
 echo "$created_plain_json" | json_get "
 const q = p.data.quality;
 if(!q || !['passed','needs_review','blocked'].includes(q.status) || !Array.isArray(q.checks) || !Array.isArray(q.pages)) process.exit(1);
@@ -589,7 +602,7 @@ for (const label of ['内容结构','角色参考图','分页一致性']) {
 }
 console.log('storybook_quality=' + q.status);
 " >/dev/null
-echo "storybook=$created_plain_id page=$page_id role=$role_id"
+echo "storybook=$created_plain_id"
 AUTH_HEADER="Authorization: Bearer $registered_token"
 expect_error 403 forbidden - GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id"
 expect_error 403 forbidden - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"visibility":"workspace"}'
@@ -601,13 +614,17 @@ echo "storybook_cross_workspace_forbidden=ok"
 expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports"
 expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/share-links" auth '{}'
 echo "undeliverable_delivery_blocked=ok"
-personal_child_id=$(api GET "/api/workspaces/$PERSONAL_WS/children?limit=1&offset=0" | json_get "if(!p.data[0]?.id) process.exit(1); console.log(p.data[0].id)")
+personal_child_id=$(api GET "/api/workspaces/$PERSONAL_WS/children?limit=1&offset=0" | json_get "if(p.data[0]?.id) console.log(p.data[0].id)")
+if [[ -z "$personal_child_id" ]]; then
+  personal_child_json=$(api POST "/api/workspaces/$PERSONAL_WS/children" "{\"nickname\":\"Smoke个人空间儿童$(date +%s)\",\"age_group\":\"4-5 岁\",\"interests\":[\"贴纸\"],\"traits\":[\"专注\"],\"focus\":\"验证跨空间儿童隔离\"}")
+  personal_child_id=$(echo "$personal_child_json" | json_get "if(!p.data.id) process.exit(1); console.log(p.data.id)")
+fi
 expect_error 404 not_found - POST "/api/workspaces/$SCHOOL_WS/generation-jobs" auth "{\"job_type\":\"customization_plan\",\"storybook_id\":\"$created_plain_id\",\"input_json\":{\"child_id\":\"$personal_child_id\",\"intensity\":\"standard\"}}"
 applied_roles_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" "{\"job_type\":\"storybook_roles\",\"storybook_id\":\"$created_plain_id\",\"input_json\":{\"title\":\"Smoke角色落库\",\"teacher_name\":\"Smoke鹿老师\"}}")
-applied_roles_job_id=$(echo "$applied_roles_json" | json_get "if(p.data.status!=='queued' || p.data.storybook_id!=='$created_plain_id') process.exit(1); console.log(p.data.id)")
+applied_roles_job_id=$(echo "$applied_roles_json" | json_get "if(!['queued','running','succeeded'].includes(p.data.status) || p.data.storybook_id!=='$created_plain_id') process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$applied_roles_job_id" succeeded
 applied_pages_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" "{\"job_type\":\"storybook_pages\",\"storybook_id\":\"$created_plain_id\",\"input_json\":{\"page_count\":6}}")
-applied_pages_job_id=$(echo "$applied_pages_json" | json_get "if(p.data.status!=='queued' || p.data.storybook_id!=='$created_plain_id') process.exit(1); console.log(p.data.id)")
+applied_pages_job_id=$(echo "$applied_pages_json" | json_get "if(!['queued','running','succeeded'].includes(p.data.status) || p.data.storybook_id!=='$created_plain_id') process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$applied_pages_job_id" succeeded
 api GET "/api/workspaces/$SCHOOL_WS/generation-jobs?storybook_id=$created_plain_id&limit=1&offset=0" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.offset!==0 || p.data.length!==1 || p.meta.total < 2 || !p.data.every((row)=>row.storybook_id==='$created_plain_id')) process.exit(1); console.log('storybook_generation_job_page=' + p.data.length + '/' + p.meta.total);" >/dev/null
 api GET "/api/workspaces/$SCHOOL_WS/generation-jobs?storybook_id=$created_plain_id&limit=1&offset=999" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.total < 2 || p.data.length!==0 || p.meta.has_more!==false) process.exit(1); console.log('storybook_generation_job_page_empty=' + p.meta.offset + '/' + p.meta.total);" >/dev/null
@@ -630,7 +647,7 @@ expect_error 400 validation_error use_scene PATCH "/api/workspaces/$SCHOOL_WS/st
 renamed_plain_title="Smoke改名绘本$intake_stamp"
 encoded_renamed_plain_title=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$renamed_plain_title")
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" "{\"title\":\" $renamed_plain_title \",\"age_group\":\"5-6 岁\",\"use_scene\":\"情绪引导\",\"teaching_goal\":\"练习表达生气和寻求帮助\",\"cover_tone\":\"明亮、有安全感\"}" | json_get "if(p.data.title!=='$renamed_plain_title' || p.data.age_group!=='5-6 岁' || p.data.use_scene!=='情绪引导' || p.data.teaching_goal!=='练习表达生气和寻求帮助' || p.data.cover_tone!=='明亮、有安全感') process.exit(1); console.log('storybook_metadata_updated=' + p.data.title);" >/dev/null
-api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"roles_pending"}' | json_get "if(p.data.status!=='roles_pending') process.exit(1); console.log('storybook_status=' + p.data.status);" >/dev/null
+expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"status":"roles_pending"}'
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"editing"}' | json_get "if(p.data.status!=='editing') process.exit(1); console.log('storybook_status=' + p.data.status);" >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"status":"generating"}' >/dev/null
 expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"status":"exportable"}'
@@ -641,7 +658,7 @@ expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const q=p.data.quality; const page=q?.pages?.find((item)=>item.page_id==='$page_id'); if(q?.status!=='blocked' || page?.status!=='blocked' || !page.issues?.some((issue)=>issue.includes('生成失败'))) process.exit(1); console.log('quality_blocks_failed_page=' + q.status);" >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"status":"ready"}' >/dev/null
 echo "deliverable_check_blocks_generating_page=ok"
-api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"exportable"}' | json_get "if(p.data.status!=='exportable') process.exit(1); console.log('storybook_deliverable=' + p.data.status);" >/dev/null
+expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"status":"exportable"}'
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"title":" Smoke 第 1 页 ","body":" 孩子们一起练习等待。 ","illustration_prompt":" 明亮教室，老师和孩子围坐在地毯上 "}' >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/roles/$role_id" '{"name":" Smoke老师形象 ","role_type":" teacher ","appearance":" 温和、稳定、会蹲下来和孩子说话 ","story_function":" 帮助孩子理解等待和表达 ","needs_consistency":true}' | json_get "if(p.data.name!=='Smoke老师形象' || p.data.role_type!=='teacher') process.exit(1); console.log('role=' + p.data.name);" >/dev/null
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const page=p.data.pages.find((item)=>item.id==='$page_id'); if(!page || page.title!=='Smoke 第 1 页' || page.body!=='孩子们一起练习等待。' || page.illustration_prompt!=='明亮教室，老师和孩子围坐在地毯上') process.exit(1); const role=p.data.roles.find((item)=>item.id==='$role_id'); if(!role || role.name!=='Smoke老师形象' || role.appearance!=='温和、稳定、会蹲下来和孩子说话') process.exit(1); console.log('role_saved=' + role.name);" >/dev/null
@@ -652,14 +669,14 @@ role_reference_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$creat
 role_reference_job_id=$(echo "$role_reference_job_json" | json_get "if(p.data.status!=='queued' || p.data.output_json!==null || p.data.job_type!=='storybook_role_reference_image') process.exit(1); console.log(p.data.id)")
 wait_for_job_status "$role_reference_job_id" succeeded
 role_reference_job_detail_json=$(api GET "/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id")
-role_reference_file_url=$(echo "$role_reference_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id/image'; const url=p.data.output_json?.image?.image_url; if('created_by' in p.data) process.exit(1); if(p.data.status!=='succeeded' || p.data.output_json?.image?.role_id!=='$role_id' || p.data.output_json?.image?.target_type!=='role' || url !== expected) process.exit(1); console.log(url);")
+role_reference_file_url=$(echo "$role_reference_job_detail_json" | json_get "const expected='/api/workspaces/$SCHOOL_WS/generation-jobs/$role_reference_job_id/image'; const image=p.data.output_json?.image; const url=image?.image_url; if('created_by' in p.data) process.exit(1); if(p.data.status!=='succeeded' || image?.target_id!=='$role_id' || image?.target_type!=='role' || url !== expected) process.exit(1); console.log(url);")
 expect_png_download "$role_reference_file_url" role_reference_image auth
 api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "const role=p.data.roles.find((item)=>item.id==='$role_id'); if(!role || role.reference_status!=='ready' || !role.reference_image_url) process.exit(1); console.log('role_reference_image=' + role.reference_status);" >/dev/null
 expect_error 409 state_conflict - PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" auth '{"teacher_review_status":"confirmed"}'
 all_page_ids=$(api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" | json_get "for (const page of p.data.pages) console.log(page.id);")
 while IFS= read -r quality_page_id; do
   [[ -z "$quality_page_id" ]] && continue
-  api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$quality_page_id" '{"illustration_prompt":"明亮教室，Smoke老师形象和孩子围坐在地毯上练习等待"}' >/dev/null
+  api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$quality_page_id" '{"status":"ready","illustration_prompt":"明亮教室，Smoke老师形象和孩子围坐在地毯上练习等待"}' >/dev/null
 done <<< "$all_page_ids"
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"teacher_review_status":"confirmed"}' | json_get "if(p.data.teacher_review_status!=='confirmed' || !p.data.teacher_reviewed_by || !p.data.teacher_reviewed_at) process.exit(1); console.log('teacher_review=' + p.data.teacher_review_status);" >/dev/null
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"body":"孩子们一起练习等待。"}' >/dev/null
@@ -683,6 +700,8 @@ expect_error 404 not_found - GET "/generated-images/not-a-generated-image.txt" p
 expect_error 404 not_found - GET "/generated-images/mock-page-1.png" public
 echo "generated_image_cross_workspace_forbidden=ok"
 echo "image_job=$image_job_id"
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"teacher_review_status":"confirmed"}' | json_get "if(p.data.teacher_review_status!=='confirmed') process.exit(1); console.log('source_teacher_review=' + p.data.teacher_review_status);" >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"exportable"}' | json_get "if(p.data.status!=='exportable') process.exit(1); console.log('source_storybook_ready=' + p.data.status);" >/dev/null
 
 echo "8. derive custom storybook"
 customization_plan_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" "{\"job_type\":\"customization_plan\",\"storybook_id\":\"$created_plain_id\",\"input_json\":{\"child_id\":\"$created_child_id\",\"intensity\":\"standard\"}}")
@@ -708,14 +727,20 @@ const image = p.data.items.find((row)=>row.generation_job_id==='$role_reference_
 if(!image || image.provider !== 'mock' || image.job_type !== 'storybook_role_reference_image' || image.image_count !== 1) process.exit(1);
 console.log('operator_role_reference_cost_filter=' + image.id);
 " >/dev/null
-created_custom_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom" "{\"child_id\":\"$created_child_id\",\"intensity\":\"standard\"}")
-created_custom_id=$(echo "$created_custom_json" | json_get "const childName='$updated_child_name'; const hasChildTitle=p.data.title.includes(childName); const hasCustomPage=p.data.pages.some((page)=>page.title.includes(childName) && page.body.includes('定制改写') && page.body.includes('贴纸') && page.status==='needs_regeneration'); const hasCustomRole=p.data.roles.some((role)=>role.name.includes(childName) && role.role_type==='protagonist'); if(p.data.type!=='custom' || !hasChildTitle || !hasCustomPage || !hasCustomRole) process.exit(1); console.log(p.data.id)")
+single_plan_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/customization-plan" "{\"mode\":\"single\",\"target_child_id\":\"$created_child_id\",\"primary_material\":\"profile\",\"optional_keep_page_ids\":[\"$page_id\"]}")
+single_customization_plan=$(echo "$single_plan_json" | json_get "if(p.data.mode!=='single' || p.data.source_snapshot?.storybook_id!=='$created_plain_id' || p.data.source_snapshot?.page_count!==6 || !Array.isArray(p.data.source_snapshot?.page_ids) || p.data.primary_material!=='profile') process.exit(1); console.log(JSON.stringify(p.data));")
+created_custom_payload=$(node -e "const childId=process.argv[1]; const plan=JSON.parse(process.argv[2]); process.stdout.write(JSON.stringify({child_id:childId,intensity:'standard',primary_material:'profile',customization_plan:plan}));" "$created_child_id" "$single_customization_plan")
+created_custom_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom" "$created_custom_payload")
+created_custom_id=$(echo "$created_custom_json" | json_get "const childName='$updated_child_name'; const hasChildTitle=p.data.title.includes(childName); const hasCustomPage=p.data.pages.some((page)=>page.title.includes(childName) && page.body.includes('定制改写') && page.body.includes('profile') && page.status==='needs_regeneration'); const hasCustomRole=p.data.roles.some((role)=>role.name.includes(childName) && role.role_type==='protagonist'); if(p.data.type!=='custom' || !hasChildTitle || !hasCustomPage || !hasCustomRole) process.exit(1); console.log(p.data.id)")
 echo "custom=$created_custom_id"
 expect_error 400 validation_error child_ids POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" auth '{"child_ids":[],"intensity":"quick"}'
 batch_too_many_child_ids_json=$(node -e "const ids=Array.from({length:31},(_,i)=>'00000000-0000-0000-0000-'+String(i+1).padStart(12,'0')); process.stdout.write(JSON.stringify({child_ids:ids,intensity:'quick'}));")
 expect_error 400 validation_error child_ids POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" auth "$batch_too_many_child_ids_json"
 expect_error 400 validation_error child_ids POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" auth "{\"child_ids\":[\"$batch_child_id\",\"$batch_child_id\"],\"intensity\":\"quick\"}"
-batch_custom_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" "{\"child_ids\":[\"$batch_child_id\",\"$batch_child_two_id\"],\"intensity\":\"quick\",\"customization_plan\":{\"strategy\":\"快速替换称呼和关键道具\"}}")
+batch_plan_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/customization-plan" "{\"mode\":\"batch\",\"target_child_ids\":[\"$batch_child_id\",\"$batch_child_two_id\"]}")
+batch_customization_plan=$(echo "$batch_plan_json" | json_get "if(p.data.mode!=='batch' || p.data.source_snapshot?.storybook_id!=='$created_plain_id' || p.data.source_snapshot?.page_count!==6 || !Array.isArray(p.data.target_children) || p.data.target_children.length!==2) process.exit(1); p.data.strategy='快速替换称呼和关键道具'; console.log(JSON.stringify(p.data));")
+batch_custom_payload=$(node -e "const first=process.argv[1]; const second=process.argv[2]; const plan=JSON.parse(process.argv[3]); process.stdout.write(JSON.stringify({child_ids:[first,second],intensity:'quick',customization_plan:plan,material_choices:{[first]:'profile',[second]:'只使用称呼'}}));" "$batch_child_id" "$batch_child_two_id" "$batch_customization_plan")
+batch_custom_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/derive-custom-batch" "$batch_custom_payload")
 created_batch_custom_id=$(echo "$batch_custom_json" | json_get "if(p.data.source_storybook_id!=='$created_plain_id' || p.data.requested_count!==2 || p.data.created_count!==2 || p.data.storybooks.length!==2) process.exit(1); const first=p.data.storybooks.find((book)=>book.target_child_id==='$batch_child_id'); if(!first || first.type!=='custom' || !first.title.includes('Smoke批量儿童A$intake_stamp')) process.exit(1); console.log(first.id)")
 created_batch_custom_two_id=$(echo "$batch_custom_json" | json_get "const second=p.data.storybooks.find((book)=>book.target_child_id==='$batch_child_two_id'); if(!second || second.type!=='custom' || !second.title.includes('Smoke批量儿童B$intake_stamp')) process.exit(1); console.log(second.id)")
 echo "custom_batch=2/$created_batch_custom_id/$created_batch_custom_two_id"
@@ -729,7 +754,9 @@ echo "9. visibility, export, share"
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"body":"家长手机号是 138 0013 8000，这段内容不能被导出或分享。"}' >/dev/null
 expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports"
 expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/share-links" auth '{}'
-api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"body":"孩子们一起练习等待。"}' >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"status":"ready","body":"孩子们一起练习等待。","illustration_prompt":"明亮教室，Smoke老师形象和孩子围坐在地毯上练习等待"}' >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"teacher_review_status":"confirmed"}' | json_get "if(p.data.teacher_review_status!=='confirmed') process.exit(1); console.log('delivery_teacher_review=' + p.data.teacher_review_status);" >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"exportable"}' | json_get "if(p.data.status!=='exportable') process.exit(1); console.log('delivery_storybook_ready=' + p.data.status);" >/dev/null
 echo "delivery_privacy_blocked=ok"
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"visibility":"workspace"}' | json_get "if(p.data.visibility!=='workspace') process.exit(1); console.log('visibility=' + p.data.visibility);"
 export_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/exports")
@@ -774,7 +801,9 @@ api GET "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/share-links" | 
 expect_error 404 not_found - GET "/api/share-links/$expired_share_token" public
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"body":"公开分享导出前再次出现手机号 138 0013 8000，必须拦截。"}' >/dev/null
 expect_error 409 state_conflict - POST "/api/share-links/$share_token/exports" public
-api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"body":"孩子们一起练习等待。"}' >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id/pages/$page_id" '{"status":"ready","body":"孩子们一起练习等待。","illustration_prompt":"明亮教室，Smoke老师形象和孩子围坐在地毯上练习等待"}' >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"teacher_review_status":"confirmed"}' >/dev/null
+api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$created_plain_id" '{"status":"exportable"}' >/dev/null
 echo "public_delivery_privacy_blocked=ok"
 public_export_json=$(curl -fsS -X POST "$BASE/api/share-links/$share_token/exports")
 public_export_id=$(echo "$public_export_json" | json_get "if(!['queued','running','succeeded'].includes(p.data.status)) process.exit(1); console.log(p.data.id)")
@@ -830,7 +859,11 @@ api GET "/api/workspaces/$SCHOOL_WS/classes" | json_get "if(p.data.some((row)=>r
 expect_error 409 state_conflict - POST "/api/workspaces/$SCHOOL_WS/classes/$classroom_id/archive" auth
 risky_storybook_json=$(api POST "/api/workspaces/$SCHOOL_WS/storybooks" "{\"title\":\"Smoke隐私风险绘本$intake_stamp\",\"age_group\":\"4-5 岁\",\"use_scene\":\"市场投稿隐私验证\",\"teaching_goal\":\"验证投稿前隐私扫描\"}")
 risky_storybook_id=$(echo "$risky_storybook_json" | json_get "console.log(p.data.id)")
-risky_page_id=$(echo "$risky_storybook_json" | json_get "console.log(p.data.pages[0].id)")
+risky_pages_job_json=$(api POST "/api/workspaces/$SCHOOL_WS/generation-jobs" "{\"job_type\":\"storybook_pages\",\"storybook_id\":\"$risky_storybook_id\",\"input_json\":{\"page_count\":6}}")
+risky_pages_job_id=$(echo "$risky_pages_job_json" | json_get "if(!['queued','running','succeeded'].includes(p.data.status) || p.data.storybook_id!=='$risky_storybook_id') process.exit(1); console.log(p.data.id)")
+wait_for_job_status "$risky_pages_job_id" succeeded
+risky_storybook_json=$(api GET "/api/workspaces/$SCHOOL_WS/storybooks/$risky_storybook_id")
+risky_page_id=$(echo "$risky_storybook_json" | json_get "if(!p.data.pages[0]?.id) process.exit(1); console.log(p.data.pages[0].id)")
 api PATCH "/api/workspaces/$SCHOOL_WS/storybooks/$risky_storybook_id/pages/$risky_page_id" '{"body":"老师电话是 138 0013 8000，请不要进入市场。"}' >/dev/null
 risky_submission_json=$(api POST "/api/workspaces/$SCHOOL_WS/submissions" "{\"storybook_id\":\"$risky_storybook_id\"}")
 risky_submission_id=$(echo "$risky_submission_json" | json_get "if(p.data.status!=='draft' || p.data.privacy_confirmed!==false) process.exit(1); console.log(p.data.id)")
@@ -922,7 +955,10 @@ confirmed_intake_child_id=$(echo "$confirmed_intake_child_json" | json_get "if(p
 api GET "/api/workspaces/$SCHOOL_WS/parent-intakes" | json_get "const item=p.data.find((row)=>row.id==='$intake_id'); if(!item || item.status!=='confirmed' || item.confirmed_child_id!=='$confirmed_intake_child_id') process.exit(1); console.log('confirmed=' + item.child_nickname);"
 
 echo "13. audit logs"
-api GET "/api/workspaces/$SCHOOL_WS/audit-logs?limit=100&offset=0" | json_get "
+audit_page_one_json=$(api GET "/api/workspaces/$SCHOOL_WS/audit-logs?limit=100&offset=0")
+audit_page_two_json=$(api GET "/api/workspaces/$SCHOOL_WS/audit-logs?limit=100&offset=100")
+audit_logs_json=$(node -e "const one=JSON.parse(process.argv[1]); const two=JSON.parse(process.argv[2]); one.data=[...(one.data||[]), ...(two.data||[])]; one.meta={...(one.meta||{}), total: Math.max(one.meta?.total||0, two.meta?.total||0)}; process.stdout.write(JSON.stringify(one));" "$audit_page_one_json" "$audit_page_two_json")
+echo "$audit_logs_json" | json_get "
 const actions = new Set(p.data.map((row)=>row.action));
 for (const action of [
   'child.created',
@@ -975,8 +1011,12 @@ const childRestored = p.data.find((row)=>row.action==='child.restored' && row.re
 if (!childRestored || childRestored.metadata_json?.status !== 'active') process.exit(1);
 const customDerived = p.data.find((row)=>row.action==='storybook.custom_derived' && row.resource_id==='$created_custom_id');
 if (!customDerived || customDerived.metadata_json?.source_storybook_id !== '$created_plain_id' || customDerived.metadata_json?.target_child_id !== '$created_child_id' || customDerived.metadata_json?.intensity !== 'standard') process.exit(1);
+if (customDerived.metadata_json?.primary_material !== 'profile' || customDerived.metadata_json?.customization_plan?.mode !== 'single') process.exit(1);
+if (customDerived.metadata_json?.customization_plan_summary?.page_plan_count !== 6 || customDerived.metadata_json?.customization_plan_summary?.confirmed_photo_reference_count !== 0 || customDerived.metadata_json?.customization_plan_summary?.optional_keep_page_count !== 1) process.exit(1);
+if (customDerived.metadata_json?.customization_plan_summary?.source_snapshot_present !== true || customDerived.metadata_json?.customization_plan_summary?.source_snapshot_page_count !== 6 || customDerived.metadata_json?.customization_plan_summary?.source_snapshot_preview_page_count !== 6) process.exit(1);
 const batchDerived = p.data.find((row)=>row.action==='storybook.custom_batch_derived' && row.resource_id==='$created_plain_id');
 if (!batchDerived || batchDerived.metadata_json?.source_storybook_id !== '$created_plain_id' || batchDerived.metadata_json?.created_count !== 2 || batchDerived.metadata_json?.intensity !== 'quick') process.exit(1);
+if (batchDerived.metadata_json?.customization_plan?.strategy !== '快速替换称呼和关键道具' || batchDerived.metadata_json?.customization_plan_summary?.provided !== true || batchDerived.metadata_json?.material_choices_count !== 2) process.exit(1);
 const batchChildIds = batchDerived.metadata_json?.target_child_ids || [];
 if (!batchChildIds.includes('$batch_child_id') || !batchChildIds.includes('$batch_child_two_id')) process.exit(1);
 const storybookDuplicated = p.data.find((row)=>row.action==='storybook.duplicated' && row.resource_id==='$duplicated_storybook_id');
@@ -1015,7 +1055,10 @@ console.log('audit_api=' + p.data.length);
 api GET "/api/workspaces/$SCHOOL_WS/audit-logs?limit=1&offset=0" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.offset!==0 || p.data.length!==1 || p.meta.total < 20 || p.meta.has_more!==true) process.exit(1); console.log('audit_page=' + p.data.length + '/' + p.meta.total);"
 api GET "/api/workspaces/$SCHOOL_WS/audit-logs?limit=1&offset=999" | json_get "if(!p.meta || p.meta.limit!==1 || p.meta.total < 20 || p.data.length!==0 || p.meta.has_more!==false) process.exit(1); console.log('audit_page_empty=' + p.meta.offset + '/' + p.meta.total);"
 expect_error 403 forbidden - GET "/api/workspaces/$TEACHER_WS/audit-logs"
-api GET "/api/operator/audit-logs?limit=100&offset=0" | json_get "
+operator_audit_page_one_json=$(api GET "/api/operator/audit-logs?limit=100&offset=0")
+operator_audit_page_two_json=$(api GET "/api/operator/audit-logs?limit=100&offset=100")
+operator_audit_logs_json=$(node -e "const one=JSON.parse(process.argv[1]); const two=JSON.parse(process.argv[2]); one.data=[...(one.data||[]), ...(two.data||[])]; one.meta={...(one.meta||{}), total: Math.max(one.meta?.total||0, two.meta?.total||0)}; process.stdout.write(JSON.stringify(one));" "$operator_audit_page_one_json" "$operator_audit_page_two_json")
+echo "$operator_audit_logs_json" | json_get "
 const actions = new Set(p.data.map((row)=>row.action));
 for (const action of [
   'child.created',

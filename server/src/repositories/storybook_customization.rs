@@ -2,7 +2,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
-use crate::models::{DeriveCustomRequest, Storybook, StorybookType};
+use crate::models::{DeriveCustomRequest, Storybook, StorybookStatus, StorybookType};
 
 pub async fn derive_custom(
     db: &DatabaseConnection,
@@ -16,17 +16,27 @@ pub async fn derive_custom(
     if source.storybook_type != StorybookType::Plain {
         return Err(DbErr::Custom("只有普通绘本可以派生定制绘本".to_string()));
     }
+    ensure_source_ready_for_customization(&source)?;
     let child = child_profile_for_custom(db, workspace_id, payload.child_id).await?;
-    let plan_strategy = customization_strategy(payload.customization_plan.as_ref());
-    let customization =
-        build_custom_storybook_customization(&source, &child, &payload.intensity, plan_strategy);
+    let customization_plan = payload.customization_plan.clone();
+    let plan_strategy = customization_strategy(customization_plan.as_ref());
+    let primary_material = payload
+        .primary_material
+        .or_else(|| customization_primary_material(customization_plan.as_ref()));
+    let customization = build_custom_storybook_customization(
+        &source,
+        &child,
+        &payload.intensity,
+        plan_strategy,
+        primary_material.as_deref(),
+    );
     let new_id = Uuid::new_v4();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, customization_plan, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())
         "#,
         [
             new_id.into(),
@@ -34,6 +44,7 @@ pub async fn derive_custom(
             customization.source.into(),
             source_storybook_id.into(),
             payload.child_id.into(),
+            customization_plan.into(),
             customization.title.into(),
             customization.age_group.into(),
             customization.use_scene.into(),
@@ -46,8 +57,47 @@ pub async fn derive_custom(
     .await?;
     crate::repositories::storybook_factory::clone_pages_and_roles(db, source_storybook_id, new_id)
         .await?;
-    apply_child_customization(db, new_id, &child, &payload.intensity).await?;
+    apply_child_customization(
+        db,
+        new_id,
+        &child,
+        &payload.intensity,
+        primary_material.as_deref(),
+    )
+    .await?;
     crate::repositories::storybook_queries::find(db, workspace_id, new_id).await
+}
+
+pub(crate) fn ensure_source_ready_for_customization(source: &Storybook) -> Result<(), DbErr> {
+    if !matches!(
+        source.status,
+        StorybookStatus::Exportable | StorybookStatus::Listed
+    ) {
+        return Err(DbErr::Custom(
+            "普通绘本尚未完成验收，暂不能生成定制版本".to_string(),
+        ));
+    }
+    if source.pages.is_empty() || source.roles.is_empty() {
+        return Err(DbErr::Custom(
+            "普通绘本的分页或角色资料不完整，暂不能生成定制版本".to_string(),
+        ));
+    }
+    if source.pages.iter().any(|page| {
+        matches!(
+            page.status.as_str(),
+            "generating" | "failed" | "needs_regeneration"
+        )
+    }) {
+        return Err(DbErr::Custom(
+            "普通绘本仍有插图未完成或需要重绘，暂不能生成定制版本".to_string(),
+        ));
+    }
+    if source.quality.status == crate::models::StorybookQualityStatus::Blocked {
+        return Err(DbErr::Custom(
+            "普通绘本存在质量阻断项，修正后才能生成定制版本".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn build_custom_storybook_customization(
@@ -55,10 +105,14 @@ fn build_custom_storybook_customization(
     child: &CustomChildProfile,
     intensity: &str,
     plan_strategy: Option<String>,
+    primary_material: Option<&str>,
 ) -> CustomStorybookCustomization {
     let mut teaching_goal = source.teaching_goal.clone();
     if let Some(strategy) = plan_strategy {
         teaching_goal.push_str(&format!("；定制方案：{strategy}"));
+    }
+    if let Some(material) = primary_material.filter(|item| *item != "只使用称呼") {
+        teaching_goal.push_str(&format!("；确认素材：{material}"));
     }
 
     CustomStorybookCustomization {
@@ -69,6 +123,14 @@ fn build_custom_storybook_customization(
         teaching_goal,
         cover_tone: source.cover_tone.clone(),
     }
+}
+
+fn customization_primary_material(plan: Option<&JsonValue>) -> Option<String> {
+    plan.and_then(|value| value.get("primary_material"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn customization_strategy(plan: Option<&JsonValue>) -> Option<String> {
@@ -94,7 +156,6 @@ struct CustomStorybookCustomization {
 
 struct CustomChildProfile {
     nickname: String,
-    interests: Vec<String>,
     traits: Vec<String>,
     focus: String,
 }
@@ -108,7 +169,7 @@ async fn child_profile_for_custom(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-        select nickname, interests, traits, coalesce(focus, '') as focus
+        select nickname, traits, coalesce(focus, '') as focus
         from children
         where workspace_id = $1 and id = $2 and status = 'active'
         "#,
@@ -118,7 +179,6 @@ async fn child_profile_for_custom(
         .ok_or_else(|| DbErr::RecordNotFound("child".to_string()))?;
     Ok(CustomChildProfile {
         nickname: row.try_get("", "nickname")?,
-        interests: json_string_list(row.try_get("", "interests")?),
         traits: json_string_list(row.try_get("", "traits")?),
         focus: row.try_get("", "focus")?,
     })
@@ -129,14 +189,12 @@ async fn apply_child_customization(
     storybook_id: Uuid,
     child: &CustomChildProfile,
     intensity: &str,
+    primary_material: Option<&str>,
 ) -> Result<(), DbErr> {
-    let interest_text = child.interests.join("、");
     let trait_text = child.traits.join("、");
-    let first_interest = child
-        .interests
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "喜欢的活动".to_string());
+    let selected_material = primary_material
+        .filter(|value| !value.trim().is_empty() && *value != "只使用称呼")
+        .unwrap_or("");
     let focus = if child.focus.trim().is_empty() {
         "当前教学目标"
     } else {
@@ -164,16 +222,16 @@ async fn apply_child_customization(
             storybook_id.into(),
             child.nickname.clone().into(),
             format!(
-                "{}，带有孩子熟悉的兴趣元素：{}",
+                "{}，{}",
                 if trait_text.is_empty() {
                     "幼儿园孩子"
                 } else {
                     &trait_text
                 },
-                if interest_text.is_empty() {
-                    "日常游戏"
+                if selected_material.is_empty() {
+                    "不额外加入兴趣道具"
                 } else {
-                    &interest_text
+                    selected_material
                 }
             )
             .into(),
@@ -198,18 +256,22 @@ async fn apply_child_customization(
             format!(
                 "\n\n定制改写：这一版会称呼{}，结合{}，重点练习{}。",
                 child.nickname,
-                if interest_text.is_empty() {
-                    "孩子熟悉的生活经验"
+                if selected_material.is_empty() {
+                    "孩子自己的经历"
                 } else {
-                    &interest_text
+                    selected_material
                 },
                 focus
             )
             .into(),
-            format!(
-                "；定制版加入{}熟悉的{}元素，保持角色跨页一致",
-                child.nickname, first_interest
-            )
+            (if selected_material.is_empty() {
+                format!("；定制版只使用{}的称呼，保持角色跨页一致", child.nickname)
+            } else {
+                format!(
+                    "；定制版加入{}确认的{}元素，保持角色跨页一致",
+                    child.nickname, selected_material
+                )
+            })
             .into(),
         ],
     ))
@@ -230,10 +292,10 @@ async fn apply_child_customization(
             format!(
                 "定制给{}，融合{}",
                 child.nickname,
-                if interest_text.is_empty() {
-                    "孩子日常经验"
+                if selected_material.is_empty() {
+                    "仅使用称呼"
                 } else {
-                    &interest_text
+                    selected_material
                 }
             )
             .into(),
@@ -268,12 +330,12 @@ mod tests {
         let source = test_storybook();
         let child = CustomChildProfile {
             nickname: "乐乐".to_string(),
-            interests: vec!["积木车".to_string(), "唱歌".to_string()],
             traits: vec!["热情".to_string()],
             focus: "轮流和表达需求".to_string(),
         };
 
-        let customization = build_custom_storybook_customization(&source, &child, "balanced", None);
+        let customization =
+            build_custom_storybook_customization(&source, &child, "balanced", None, None);
 
         assert_eq!(customization.source, "derived:balanced");
         assert_eq!(customization.title, "乐乐的定制故事");
@@ -308,6 +370,9 @@ mod tests {
             source: "blank".to_string(),
             source_title: None,
             target_child_id: None,
+            customization_run_id: None,
+            customization_run_item_id: None,
+            customization_plan: None,
             creator_name: "林老师".to_string(),
             updated_at: "今天 09:00".to_string(),
             age_group: "4-5 岁".to_string(),
@@ -325,6 +390,9 @@ mod tests {
                 body: "内容".to_string(),
                 illustration_prompt: "提示".to_string(),
                 status: "ready".to_string(),
+                review_status: "unchecked".to_string(),
+                reviewed_by: None,
+                reviewed_at: None,
                 image_url: None,
                 selected_image_variant_id: None,
             }],

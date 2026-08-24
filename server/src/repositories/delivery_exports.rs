@@ -6,7 +6,9 @@ use crate::{
     models::{ExportJob, PaginationMeta, StorybookStatus},
     repositories::{
         delivery::{
-            ensure_storybook_delivery_privacy_clear, ensure_storybook_in_workspace, export_from_row,
+            ensure_storybook_custom_evidence_ready, ensure_storybook_delivery_privacy_clear,
+            ensure_storybook_direct_creation_evidence_ready, ensure_storybook_in_workspace,
+            export_from_row,
         },
         delivery_share_links::storybook_by_share_token,
         storybooks,
@@ -60,6 +62,10 @@ async fn enqueue_export(
     storybook_id: Uuid,
     created_by: Option<Uuid>,
 ) -> Result<ExportJob, DbErr> {
+    let storybook = storybooks::find_any(db, storybook_id).await?;
+    ensure_storybook_deliverable_now(&storybook)?;
+    ensure_storybook_custom_evidence_ready(db, &storybook).await?;
+    ensure_storybook_direct_creation_evidence_ready(&storybook).await?;
     ensure_storybook_delivery_privacy_clear(db, storybook_id).await?;
     let id = Uuid::new_v4();
     let row = db
@@ -119,6 +125,8 @@ async fn write_export_file(
 ) -> Result<String, DbErr> {
     let storybook = storybooks::find_any(db, storybook_id).await?;
     ensure_storybook_deliverable_now(&storybook)?;
+    ensure_storybook_custom_evidence_ready(db, &storybook).await?;
+    ensure_storybook_direct_creation_evidence_ready(&storybook).await?;
     ensure_storybook_delivery_privacy_clear(db, storybook_id).await?;
     let page_images = latest_storybook_image_paths(db, storybook_id).await?;
     let file_name = export_file_name(export_id);
@@ -457,6 +465,9 @@ mod tests {
             source: "blank".to_string(),
             source_title: None,
             target_child_id: None,
+            customization_run_id: None,
+            customization_run_item_id: None,
+            customization_plan: None,
             creator_name: "老师".to_string(),
             updated_at: "2026-08-12 10:00".to_string(),
             age_group: "4-5 岁".to_string(),

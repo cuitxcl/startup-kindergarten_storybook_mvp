@@ -11,9 +11,10 @@ use crate::{
     application,
     error::ApiError,
     models::{
-        CreateStorybookRequest, DeriveCustomBatchRequest, DeriveCustomBatchResponse,
-        DeriveCustomRequest, DuplicateStorybookRequest, Envelope, Storybook, StorybookListQuery,
-        StorybookPage, StorybookRole, UpdatePageRequest, UpdateRoleRequest, UpdateStorybookRequest,
+        BuildCustomizationPlanRequest, CreateStorybookRequest, DeriveCustomBatchRequest,
+        DeriveCustomBatchResponse, DeriveCustomRequest, DuplicateStorybookRequest, Envelope,
+        Storybook, StorybookCustomizationRun, StorybookListQuery, StorybookPage, StorybookRole,
+        UpdatePageRequest, UpdateRoleRequest, UpdateStorybookRequest,
     },
 };
 
@@ -46,8 +47,28 @@ pub fn routes() -> Routes {
             post(derive_custom),
         )
         .add(
+            "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/customization-plan",
+            post(build_customization_plan),
+        )
+        .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/derive-custom-batch",
             post(derive_custom_batch),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}",
+            get(get_customization_run),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}/cancel",
+            post(cancel_customization_run),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}/items/{item_id}/retry",
+            post(retry_customization_run_item),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}/items/{item_id}/abandon",
+            post(abandon_customization_run_item),
         )
 }
 
@@ -166,6 +187,23 @@ async fn derive_custom(
     Ok((StatusCode::CREATED, Json(Envelope::new(book))))
 }
 
+async fn build_customization_plan(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, storybook_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<BuildCustomizationPlanRequest>,
+) -> Result<Json<Envelope<serde_json::Value>>, ApiError> {
+    let plan = application::storybook_customization::build_customization_plan(
+        &ctx,
+        &headers,
+        workspace_id,
+        storybook_id,
+        payload,
+    )
+    .await?;
+    Ok(Json(Envelope::new(plan)))
+}
+
 async fn derive_custom_batch(
     State(ctx): State<AppContext>,
     headers: HeaderMap,
@@ -181,6 +219,68 @@ async fn derive_custom_batch(
     )
     .await?;
     Ok((StatusCode::CREATED, Json(Envelope::new(response))))
+}
+
+async fn get_customization_run(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, run_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Envelope<StorybookCustomizationRun>>, ApiError> {
+    let run = application::storybook_customization::get_customization_run(
+        &ctx,
+        &headers,
+        workspace_id,
+        run_id,
+    )
+    .await?;
+    Ok(Json(Envelope::new(run)))
+}
+
+async fn cancel_customization_run(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, run_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Envelope<StorybookCustomizationRun>>, ApiError> {
+    let run = application::storybook_customization::cancel_customization_run(
+        &ctx,
+        &headers,
+        workspace_id,
+        run_id,
+    )
+    .await?;
+    Ok(Json(Envelope::new(run)))
+}
+
+async fn retry_customization_run_item(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, run_id, item_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> Result<Json<Envelope<StorybookCustomizationRun>>, ApiError> {
+    let run = application::storybook_customization::retry_customization_run_item(
+        &ctx,
+        &headers,
+        workspace_id,
+        run_id,
+        item_id,
+    )
+    .await?;
+    Ok(Json(Envelope::new(run)))
+}
+
+async fn abandon_customization_run_item(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, run_id, item_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> Result<Json<Envelope<StorybookCustomizationRun>>, ApiError> {
+    let run = application::storybook_customization::abandon_customization_run_item(
+        &ctx,
+        &headers,
+        workspace_id,
+        run_id,
+        item_id,
+    )
+    .await?;
+    Ok(Json(Envelope::new(run)))
 }
 
 #[cfg(test)]
@@ -217,7 +317,22 @@ mod tests {
             )
         );
         assert!(uris.contains(
+            &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/customization-plan"
+        ));
+        assert!(uris.contains(
             &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/derive-custom-batch"
+        ));
+        assert!(
+            uris.contains(&"/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}")
+        );
+        assert!(uris.contains(
+            &"/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}/items/{item_id}/retry"
+        ));
+        assert!(uris.contains(
+            &"/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}/cancel"
+        ));
+        assert!(uris.contains(
+            &"/api/workspaces/{workspace_id}/storybook-customization-runs/{run_id}/items/{item_id}/abandon"
         ));
     }
 }

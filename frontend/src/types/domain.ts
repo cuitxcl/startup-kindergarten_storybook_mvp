@@ -64,6 +64,9 @@ export interface StorybookPage {
   body: string;
   illustrationPrompt: string;
   status: "draft" | "ready" | "needs_regeneration" | "generating" | "failed";
+  reviewStatus: "unchecked" | "satisfied" | "needs_changes";
+  reviewedBy?: string;
+  reviewedAt?: string;
   imageUrl?: string;
   selectedImageVariantId?: string;
 }
@@ -132,6 +135,9 @@ export interface Storybook {
   source: "blank" | "marketplace" | "derived" | "duplicate";
   sourceTitle?: string;
   targetChildId?: string;
+  customizationRunId?: string;
+  customizationRunItemId?: string;
+  customizationPlan?: unknown;
   creatorName: string;
   updatedAt: string;
   ageGroup: string;

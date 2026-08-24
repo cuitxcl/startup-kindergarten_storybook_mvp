@@ -2,9 +2,15 @@ use axum::http::HeaderMap;
 #[cfg(not(feature = "db"))]
 use chrono::Utc;
 use loco_rs::app::AppContext;
+#[cfg(feature = "db")]
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use uuid::Uuid;
 
-use crate::{domains::common, error::ApiError, models::GenerationJob};
+use crate::{
+    domains::common,
+    error::ApiError,
+    models::{GenerationJob, WorkspaceRole},
+};
 
 pub async fn generation_image_file(
     ctx: &AppContext,
@@ -18,6 +24,9 @@ pub async fn generation_image_file(
         let job = crate::repositories::generation::find_job(&ctx.db, workspace_id, job_id)
             .await
             .map_err(common::db_error)?;
+        if job.job_type == "storybook_visual_reference" {
+            ensure_visual_reference_image_viewer(ctx, headers, workspace_id, job_id).await?;
+        }
         return read_generation_image_file(&job);
     }
 
@@ -47,6 +56,44 @@ pub async fn generation_image_file(
             finished_at: Some(Utc::now()),
         };
         read_generation_image_file(&job)
+    }
+}
+
+#[cfg(feature = "db")]
+async fn ensure_visual_reference_image_viewer(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    job_id: Uuid,
+) -> Result<(), ApiError> {
+    let workspace = common::require_workspace_db(ctx, headers, workspace_id).await?;
+    let actor_id = common::actor_user_id(headers)?;
+    let row = ctx
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select s.created_by
+            from storybook_visual_references v
+            join storybook_asset_references r
+              on r.id = v.asset_reference_id and r.workspace_id = v.workspace_id
+            join storybook_creation_sessions s
+              on s.id = r.creation_session_id and s.workspace_id = r.workspace_id
+            where v.workspace_id = $1
+              and v.generation_job_id = $2
+              and v.is_active = true
+            limit 1
+            "#,
+            [workspace_id.into(), job_id.into()],
+        ))
+        .await
+        .map_err(common::db_error)?
+        .ok_or_else(|| ApiError::not_found("generated_image"))?;
+    let created_by: Uuid = row.try_get("", "created_by").map_err(common::db_error)?;
+    if created_by == actor_id || matches!(workspace.role, WorkspaceRole::SchoolAdmin) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("只能查看自己创建的专属绘本参考图"))
     }
 }
 
@@ -97,7 +144,10 @@ fn generation_image_download_url(workspace_id: Uuid, job_id: Uuid) -> String {
 fn is_downloadable_image_job(job_type: &str) -> bool {
     matches!(
         job_type,
-        "storybook_cover_image" | "storybook_page_image" | "storybook_role_reference_image"
+        "storybook_cover_image"
+            | "storybook_page_image"
+            | "storybook_role_reference_image"
+            | "storybook_visual_reference"
     )
 }
 

@@ -6,13 +6,17 @@ use uuid::Uuid;
 const DEFAULT_STORAGE_ROOT: &str = "tmp";
 const EXPORTS_CHILD_DIR: &str = "exports";
 const GENERATED_IMAGES_CHILD_DIR: &str = "generated-images";
+const STORYBOOK_ASSETS_CHILD_DIR: &str = "storybook-assets";
 const STORAGE_ROOT_ENV: &str = "KINDLEAF_STORAGE_ROOT";
 const EXPORTS_DIR_ENV: &str = "KINDLEAF_EXPORTS_DIR";
 const GENERATED_IMAGES_DIR_ENV: &str = "KINDLEAF_GENERATED_IMAGES_DIR";
+const STORYBOOK_ASSETS_DIR_ENV: &str = "KINDLEAF_STORYBOOK_ASSETS_DIR";
 const EXPORT_MAX_BYTES_ENV: &str = "KINDLEAF_EXPORT_MAX_BYTES";
 const GENERATED_IMAGE_MAX_BYTES_ENV: &str = "KINDLEAF_GENERATED_IMAGE_MAX_BYTES";
+const STORYBOOK_ASSET_MAX_BYTES_ENV: &str = "KINDLEAF_STORYBOOK_ASSET_MAX_BYTES";
 const DEFAULT_EXPORT_MAX_BYTES: usize = 50 * 1024 * 1024;
 const DEFAULT_GENERATED_IMAGE_MAX_BYTES: usize = 15 * 1024 * 1024;
+const DEFAULT_STORYBOOK_ASSET_MAX_BYTES: usize = 10 * 1024 * 1024;
 
 pub use crate::services::storage_quota_summary::{
     UserStorageQuotaSummary, WorkspaceStorageQuotaSummary, storage_quota_bytes_for_workspace_type,
@@ -25,8 +29,10 @@ pub struct StorageSummary {
     pub backend: String,
     pub exports_dir: String,
     pub generated_images_dir: String,
+    pub storybook_assets_dir: String,
     pub export_max_bytes: usize,
     pub generated_image_max_bytes: usize,
+    pub storybook_asset_max_bytes: usize,
     pub filename_validation: bool,
     pub size_limit_enabled: bool,
     pub download_strategy: String,
@@ -40,14 +46,19 @@ pub struct StorageSummary {
 pub fn storage_summary() -> StorageSummary {
     let export_max_bytes = export_max_bytes();
     let generated_image_max_bytes = generated_image_max_bytes();
+    let storybook_asset_max_bytes = storybook_asset_max_bytes();
     StorageSummary {
         backend: "local".to_string(),
         exports_dir: path_to_string(exports_dir()),
         generated_images_dir: path_to_string(generated_images_dir()),
+        storybook_assets_dir: path_to_string(storybook_assets_dir()),
         export_max_bytes,
         generated_image_max_bytes,
+        storybook_asset_max_bytes,
         filename_validation: true,
-        size_limit_enabled: export_max_bytes > 0 || generated_image_max_bytes > 0,
+        size_limit_enabled: export_max_bytes > 0
+            || generated_image_max_bytes > 0
+            || storybook_asset_max_bytes > 0,
         download_strategy: "authenticated_api".to_string(),
         public_direct_access: false,
         user_storage_quota_bytes: user_storage_quota_bytes(),
@@ -59,7 +70,8 @@ pub fn storage_summary() -> StorageSummary {
 
 pub fn check_storage_writable() -> Result<(), String> {
     check_dir_writable(exports_dir(), "PDF 目录")?;
-    check_dir_writable(generated_images_dir(), "插图目录")
+    check_dir_writable(generated_images_dir(), "插图目录")?;
+    check_dir_writable(storybook_assets_dir(), "专属照片目录")
 }
 
 fn path_to_string(path: PathBuf) -> String {
@@ -134,6 +146,23 @@ pub fn read_generated_image(file_name: &str) -> Result<Vec<u8>, String> {
         .map_err(|err| format!("读取图片失败：{err}"))
 }
 
+pub fn save_storybook_asset(file_name: &str, bytes: &[u8]) -> Result<String, String> {
+    validate_storybook_asset_file_name(file_name)?;
+    validate_size(bytes, storybook_asset_max_bytes(), "专属照片")?;
+    save_local_file(storybook_assets_dir(), file_name, bytes, "专属照片")
+        .map(|_| format!("/storybook-assets/{file_name}"))
+}
+
+pub fn read_storybook_asset(file_name: &str) -> Result<Vec<u8>, String> {
+    validate_storybook_asset_file_name(file_name)?;
+    fs::read(storybook_asset_path_unchecked(file_name))
+        .map_err(|err| format!("读取专属照片失败：{err}"))
+}
+
+pub fn storybook_asset_max_file_size() -> usize {
+    storybook_asset_max_bytes()
+}
+
 pub fn local_generated_image_path(file_name: &str) -> Result<PathBuf, String> {
     validate_generated_image_file_name(file_name)?;
     Ok(local_generated_image_path_unchecked(file_name))
@@ -141,6 +170,10 @@ pub fn local_generated_image_path(file_name: &str) -> Result<PathBuf, String> {
 
 fn local_generated_image_path_unchecked(file_name: &str) -> PathBuf {
     generated_images_dir().join(file_name)
+}
+
+fn storybook_asset_path_unchecked(file_name: &str) -> PathBuf {
+    storybook_assets_dir().join(file_name)
 }
 
 fn local_export_path(file_name: &str) -> PathBuf {
@@ -153,6 +186,10 @@ fn exports_dir() -> PathBuf {
 
 fn generated_images_dir() -> PathBuf {
     configured_dir(GENERATED_IMAGES_DIR_ENV, GENERATED_IMAGES_CHILD_DIR)
+}
+
+fn storybook_assets_dir() -> PathBuf {
+    configured_dir(STORYBOOK_ASSETS_DIR_ENV, STORYBOOK_ASSETS_CHILD_DIR)
 }
 
 fn configured_dir(override_env: &str, child_dir: &str) -> PathBuf {
@@ -182,6 +219,13 @@ fn generated_image_max_bytes() -> usize {
     configured_max_bytes(
         env::var(GENERATED_IMAGE_MAX_BYTES_ENV).ok().as_deref(),
         DEFAULT_GENERATED_IMAGE_MAX_BYTES,
+    )
+}
+
+fn storybook_asset_max_bytes() -> usize {
+    configured_max_bytes(
+        env::var(STORYBOOK_ASSET_MAX_BYTES_ENV).ok().as_deref(),
+        DEFAULT_STORYBOOK_ASSET_MAX_BYTES,
     )
 }
 
@@ -241,6 +285,29 @@ fn validate_generated_image_file_name(file_name: &str) -> Result<(), String> {
     Uuid::parse_str(id)
         .map(|_| ())
         .map_err(|_| "图片文件名必须使用合法 UUID".to_string())
+}
+
+fn validate_storybook_asset_file_name(file_name: &str) -> Result<(), String> {
+    validate_safe_file_name(file_name, "专属照片文件名")
+}
+
+fn validate_safe_file_name(file_name: &str, label: &str) -> Result<(), String> {
+    if file_name.is_empty()
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.contains("..")
+    {
+        return Err(format!("{label}不合法"));
+    }
+    let Some((id, extension)) = file_name.rsplit_once('.') else {
+        return Err(format!("{label}必须包含扩展名"));
+    };
+    if !matches!(extension, "jpg" | "jpeg" | "png" | "webp") {
+        return Err(format!("{label}只支持 jpg、jpeg、png 或 webp"));
+    }
+    Uuid::parse_str(id)
+        .map(|_| ())
+        .map_err(|_| format!("{label}必须使用 UUID 文件名"))
 }
 
 #[cfg(test)]

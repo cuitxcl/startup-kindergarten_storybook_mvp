@@ -489,53 +489,32 @@ async function main() {
 
   console.log("11. derive custom storybook");
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/${plainBookId}/customize?childId=${selectedChildId}`);
-  await waitForText("生成定制绘本");
-  await waitForText("当前儿童");
-  await expectWizardStepDisabled("档案检查");
-  await expectWizardStepDisabled("定制强度");
-  await expectWizardStepDisabled("定制方案");
-  await clickCardContaining("小雨");
-  await clickByText("确认孩子");
-  await waitForText("档案检查");
-  await expectWizardStepEnabled("档案检查");
-  await expectWizardStepDisabled("定制强度");
-  await clickByText("确认档案");
-  await waitForText("定制强度");
-  await expectWizardStepEnabled("定制强度");
-  await expectWizardStepDisabled("定制方案");
-  await clickByText("生成定制方案");
-  await waitForText("定制方案已生成");
-  await expectWizardStepEnabled("定制方案");
-  await clickByText("生成定制副本");
-  await waitForUrl("/storybooks/");
-  await waitForText("定制结果已展示");
-  await waitForText("编辑本页");
-  await clickByText("标记可交付");
-  await waitForText("绘本已标记可交付");
-  console.log(`custom=${await currentStorybookId()}`);
+  await waitForText("基于已有绘本创作专属版本");
+  await waitForText(plainTitle);
+  const singleCustomizeUrl = await currentUrl();
+  if (!singleCustomizeUrl.includes(`sourceStorybookId=${plainBookId}`) || !singleCustomizeUrl.includes(`childId=${selectedChildId}`)) {
+    throw new Error(`legacy customize redirect should preserve source and child query: ${singleCustomizeUrl}`);
+  }
+  await waitUntil(
+    async () => evaluate(`([...document.querySelectorAll('.recipient-card.selected')].some((item) => item.innerText.includes('小雨')))`) ,
+    "legacy customize child query should preselect child",
+  );
+  await waitForText("主素材");
+  await waitForText("确认主素材");
+  console.log(`custom_entry=${singleCustomizeUrl}`);
 
   console.log("11b. derive batch custom storybooks");
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/storybooks/${plainBookId}/customize`);
-  await waitForText("生成定制绘本");
-  await clickByText("批量生成");
-  await expectWizardStepDisabled("档案检查");
-  await waitForText("已选 0");
-  await waitForText("最多 30 个");
-  await clickCardContaining("小雨");
-  await waitForText("已选 1");
-  await clickCardContaining(childName);
-  await waitForText("已选 2");
-  await clickByText("确认孩子");
-  await waitForText("批量儿童：2 个");
-  await clickByText("确认档案");
-  await waitForText("定制强度");
-  await clickByText("生成定制方案");
-  await waitForText("定制方案已生成");
-  await clickByText("生成定制副本");
-  await waitForUrl("/storybooks/");
-  await waitForText("批量定制结果已展示");
-  await waitForText("编辑本页");
-  console.log(`batch_custom_first=${await currentStorybookId()}`);
+  await waitForText("基于已有绘本创作专属版本");
+  await waitForText(plainTitle);
+  const batchCustomizeUrl = await currentUrl();
+  if (!batchCustomizeUrl.includes(`sourceStorybookId=${plainBookId}`)) {
+    throw new Error(`legacy customize redirect should preserve source query for batch entry: ${batchCustomizeUrl}`);
+  }
+  await clickByText("为多人制作");
+  await waitForText("每位对象都要确认主素材或仅使用称呼");
+  await waitForText("确认对象与素材");
+  console.log(`batch_custom_entry=${batchCustomizeUrl}`);
 
   console.log("12. submit, approve, and copy from marketplace");
   await navigate(`${FRONTEND_BASE}/app/${schoolWorkspaceId}/admin/submissions`);

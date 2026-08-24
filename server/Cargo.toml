@@ -13,7 +13,7 @@ db = ["loco-rs/with-db"]
 
 [dependencies]
 argon2 = "0.5"
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 chrono = { version = "0.4", features = ["serde"] }
 loco-rs = { version = "0.16", default-features = false, features = ["cli"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

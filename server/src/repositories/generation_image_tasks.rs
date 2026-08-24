@@ -31,7 +31,10 @@ pub struct ImageJobTarget {
 pub fn is_image_job(job_type: &str) -> bool {
     matches!(
         job_type,
-        "storybook_page_image" | "storybook_role_reference_image" | "storybook_cover_image"
+        "storybook_page_image"
+            | "storybook_role_reference_image"
+            | "storybook_cover_image"
+            | "storybook_visual_reference"
     )
 }
 
@@ -83,6 +86,14 @@ pub async fn page_image_job_input(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(page_prompt);
     let mut reference_images = page_image_reference_images(db, storybook_id, &payload).await?;
+    for reference in page_visual_reference_images(db, workspace_id, storybook_id, page_id).await? {
+        if !reference_images
+            .iter()
+            .any(|item| item.url == reference.url)
+        {
+            reference_images.push(reference);
+        }
+    }
     // 第三档场景延续：上一页已有插图时，把它作为场景参考图带上；没有则静默降级。
     let scene_reference = previous_page_scene_reference(db, storybook_id, page_id).await?;
     let has_scene_reference = scene_reference.is_some();
@@ -268,7 +279,20 @@ async fn role_content_snapshot(
 }
 
 pub fn image_target_from_job(job: &GenerationJob) -> Result<ImageJobTarget, DbErr> {
-    if job.job_type == "storybook_role_reference_image" {
+    if job.job_type == "storybook_visual_reference" {
+        let target_id = job
+            .input_json
+            .get("target_id")
+            .or_else(|| job.input_json.get("asset_reference_id"))
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                DbErr::Custom("同画风参考任务缺少 asset_reference_id，无法执行".to_string())
+            })?;
+        Ok(ImageJobTarget {
+            target_id: target_id.to_string(),
+            target_type: "asset_reference",
+        })
+    } else if job.job_type == "storybook_role_reference_image" {
         let role_id = job
             .input_json
             .get("role_id")
@@ -596,6 +620,170 @@ async fn page_image_reference_images(
     }
 
     Ok(references)
+}
+
+async fn page_visual_reference_images(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    page_id: Uuid,
+) -> Result<Vec<ImageReference>, DbErr> {
+    let Some(plan) = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select s.customization_plan, p.page_number
+            from storybook_pages p
+            join storybooks s on s.id = p.storybook_id
+            where s.workspace_id = $1 and s.id = $2 and p.id = $3
+            limit 1
+            "#,
+            [workspace_id.into(), storybook_id.into(), page_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    let customization_plan: JsonValue = plan.try_get("", "customization_plan")?;
+    let page_number: i32 = plan.try_get("", "page_number")?;
+    let mut preview_urls = Vec::new();
+    let mut visual_reference_ids = Vec::new();
+
+    if let Some(page_evidence) = customization_plan
+        .get("page_evidence")
+        .and_then(JsonValue::as_array)
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("page_number")
+                    .and_then(JsonValue::as_i64)
+                    .is_some_and(|value| value == i64::from(page_number))
+            })
+        })
+    {
+        collect_visual_reference_inputs(
+            page_evidence,
+            &mut preview_urls,
+            &mut visual_reference_ids,
+        );
+    }
+
+    if let Some(references) = customization_plan
+        .get("confirmed_photo_references")
+        .and_then(JsonValue::as_array)
+    {
+        for reference in references {
+            let appears_on_page = reference
+                .get("planned_pages")
+                .and_then(JsonValue::as_array)
+                .is_some_and(|pages| {
+                    pages.iter().any(|page| {
+                        page.get("page_number")
+                            .and_then(JsonValue::as_i64)
+                            .is_some_and(|value| value == i64::from(page_number))
+                    })
+                });
+            if appears_on_page {
+                collect_visual_reference_inputs(
+                    reference,
+                    &mut preview_urls,
+                    &mut visual_reference_ids,
+                );
+            }
+        }
+    }
+
+    let mut references = Vec::new();
+    for url in preview_urls {
+        let Some(url) = resolve_stored_image_url(db, &url).await? else {
+            continue;
+        };
+        if references
+            .iter()
+            .any(|item: &ImageReference| item.url == url)
+        {
+            continue;
+        }
+        references.push(ImageReference {
+            url,
+            source: "storybook_visual_reference".to_string(),
+            role_id: None,
+            label: Some("已确认同画风参考".to_string()),
+        });
+    }
+
+    for visual_reference_id in visual_reference_ids {
+        let Some(row) = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r#"
+                select v.generation_job_id, r.display_name
+                from storybook_visual_references v
+                join storybook_asset_references r
+                  on r.id = v.asset_reference_id and r.workspace_id = v.workspace_id
+                where v.workspace_id = $1
+                  and v.id = $2
+                  and v.status = 'confirmed'
+                  and v.generation_job_id is not null
+                limit 1
+                "#,
+                [workspace_id.into(), visual_reference_id.into()],
+            ))
+            .await?
+        else {
+            continue;
+        };
+        let generation_job_id: Uuid = row.try_get("", "generation_job_id")?;
+        let url =
+            format!("/api/workspaces/{workspace_id}/generation-jobs/{generation_job_id}/image");
+        let Some(url) = resolve_stored_image_url(db, &url).await? else {
+            continue;
+        };
+        if references
+            .iter()
+            .any(|item: &ImageReference| item.url == url)
+        {
+            continue;
+        }
+        references.push(ImageReference {
+            url,
+            source: "storybook_visual_reference".to_string(),
+            role_id: None,
+            label: row.try_get("", "display_name").ok(),
+        });
+    }
+
+    Ok(references)
+}
+
+fn collect_visual_reference_inputs(
+    value: &JsonValue,
+    preview_urls: &mut Vec<String>,
+    visual_reference_ids: &mut Vec<Uuid>,
+) {
+    if let Some(url) = value
+        .get("visual_reference_preview_url")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if !preview_urls.iter().any(|item| item == url) {
+            preview_urls.push(url.to_string());
+        }
+    }
+    if let Some(id) = value
+        .get("visual_reference_id")
+        .and_then(JsonValue::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+    {
+        if !visual_reference_ids.contains(&id) {
+            visual_reference_ids.push(id);
+        }
+    }
+    if let Some(references) = value.get("asset_references").and_then(JsonValue::as_array) {
+        for reference in references {
+            collect_visual_reference_inputs(reference, preview_urls, visual_reference_ids);
+        }
+    }
 }
 
 fn normalize_image_mode(value: Option<&str>, has_reference_images: bool) -> ImageGenerationMode {
@@ -1108,7 +1296,14 @@ fn page_role_relation_clause(named_roles: &[PageNamedRole]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PageNamedRole, page_camera_priority_guard, page_role_relation_clause};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{
+        PageNamedRole, image_request_from_job, image_target_from_job, is_image_job,
+        page_camera_priority_guard, page_role_relation_clause,
+    };
+    use crate::models::GenerationJob;
 
     #[test]
     fn page_role_relation_clause_emphasizes_relationships_and_staging() {
@@ -1152,6 +1347,47 @@ mod tests {
             page_camera_priority_guard("儿童绘本插图，全景，老师弯腰看着孩子，孩子眼睛亮晶晶。");
         assert!(guard.contains("镜头优先级最高"));
         assert!(guard.contains("也不能把镜头推近"));
+    }
+
+    #[test]
+    fn visual_reference_jobs_are_executable_image_jobs() {
+        let asset_reference_id = Uuid::new_v4();
+        let job = GenerationJob {
+            id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            storybook_id: None,
+            created_by: None,
+            job_type: "storybook_visual_reference".to_string(),
+            status: "queued".to_string(),
+            input_json: json!({
+                "asset_reference_id": asset_reference_id,
+                "prompt": "生成同画风参考",
+                "image_mode": "reference_image",
+                "reference_images": [{
+                    "url": "/storybook-assets/source.png",
+                    "source": "storybook_asset",
+                    "role_id": null,
+                    "label": "爸爸"
+                }]
+            }),
+            output_json: None,
+            attempt_count: 0,
+            last_error: None,
+            next_run_at: None,
+            locked_by: None,
+            locked_at: None,
+            created_at: chrono::Utc::now(),
+            finished_at: None,
+        };
+
+        assert!(is_image_job("storybook_visual_reference"));
+        let target = image_target_from_job(&job).expect("target should parse");
+        assert_eq!(target.target_type, "asset_reference");
+        assert_eq!(target.target_id, asset_reference_id.to_string());
+        let request = image_request_from_job(&job).expect("request should parse");
+        assert_eq!(request.prompt, "生成同画风参考");
+        assert_eq!(request.reference_images.len(), 1);
+        assert_eq!(request.reference_images[0].source, "storybook_asset");
     }
 }
 

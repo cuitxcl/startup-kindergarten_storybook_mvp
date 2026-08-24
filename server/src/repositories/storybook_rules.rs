@@ -260,9 +260,9 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
             issues.push("插图仍在生成中。".to_string());
         } else if page.status == "failed" {
             issues.push("插图生成失败，需要重新生成。".to_string());
+        } else if page.status == "needs_regeneration" {
+            issues.push("插图需要重新生成，完成后才能交付。".to_string());
         }
-        // needs_regeneration 不再产出质量建议：页面已有"待重绘"徽章，
-        // 交付提醒里也已有统一说明，无需再作为"建议查看"条目重复打扰。
 
         let page_roles: Vec<_> = book
             .roles
@@ -338,6 +338,7 @@ pub fn storybook_quality_report(book: &Storybook) -> StorybookQualityReport {
         let status = if issues.iter().any(|issue| {
             issue.contains("没有明确带入")
                 || issue.contains("生成失败")
+                || issue.contains("需要重新生成")
                 || issue.contains("仍在生成中")
                 || issue.contains("未确认形象")
         }) {
@@ -726,6 +727,23 @@ mod tests {
     }
 
     #[test]
+    fn quality_report_blocks_page_needing_regeneration() {
+        let mut book = test_storybook();
+        align_quality_fixture(&mut book);
+        book.pages[0].status = "needs_regeneration".to_string();
+
+        let report = storybook_quality_report(&book);
+
+        assert_eq!(report.status, StorybookQualityStatus::Blocked);
+        assert!(
+            report.pages[0]
+                .issues
+                .iter()
+                .any(|issue| issue.contains("需要重新生成"))
+        );
+    }
+
+    #[test]
     fn teacher_review_check_rejects_blocked_quality() {
         let mut book = test_storybook();
         book.pages[0].body = "林老师带孩子练习轮流等待。".to_string();
@@ -765,6 +783,9 @@ mod tests {
             source: "blank".to_string(),
             source_title: None,
             target_child_id: None,
+            customization_run_id: None,
+            customization_run_item_id: None,
+            customization_plan: None,
             creator_name: "林老师".to_string(),
             updated_at: "今天 09:00".to_string(),
             age_group: "4-5 岁".to_string(),
@@ -782,6 +803,9 @@ mod tests {
                 body: "内容".to_string(),
                 illustration_prompt: "提示".to_string(),
                 status: "ready".to_string(),
+                review_status: "unchecked".to_string(),
+                reviewed_by: None,
+                reviewed_at: None,
                 image_url: None,
                 selected_image_variant_id: None,
             }],

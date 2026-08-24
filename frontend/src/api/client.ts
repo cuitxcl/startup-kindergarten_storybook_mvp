@@ -19,15 +19,23 @@ import type {
 
 type Envelope<T> = {
   data: T;
-  meta?: {
-    total: number;
-    limit: number;
-    offset: number;
-    has_more: boolean;
-  };
+  meta?: ResponseMeta;
 };
 
-export type PaginationMeta = NonNullable<Envelope<unknown>["meta"]>;
+export type ResponseMeta = {
+  total?: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
+  warnings?: ResponseWarning[];
+};
+
+export type PaginationMeta = {
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+};
 
 export type PaginatedResult<T> = {
   data: T[];
@@ -39,21 +47,31 @@ type ErrorEnvelope = {
     code?: string;
     message?: string;
     field?: string | null;
+    details?: unknown;
   };
+};
+
+export type ResponseWarning = {
+  code: string;
+  message: string;
+  asset_reference_ids?: string[];
+  next_action?: string | null;
 };
 
 export class ApiClientError extends Error {
   status: number;
   code: string;
   field?: string;
+  details?: unknown;
   payload: unknown;
 
-  constructor(status: number, code: string, message: string, field: string | undefined, payload: unknown) {
+  constructor(status: number, code: string, message: string, field: string | undefined, details: unknown, payload: unknown) {
     super(message);
     this.name = "ApiClientError";
     this.status = status;
     this.code = code;
     this.field = field;
+    this.details = details;
     this.payload = payload;
   }
 }
@@ -116,6 +134,9 @@ type ApiStorybookPage = {
   body: string;
   illustration_prompt: string;
   status: StorybookPage["status"];
+  review_status?: StorybookPage["reviewStatus"] | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
   image_url?: string | null;
   selected_image_variant_id?: string | null;
 };
@@ -184,6 +205,9 @@ type ApiStorybook = {
   source: string;
   source_title?: string | null;
   target_child_id?: string | null;
+  customization_run_id?: string | null;
+  customization_run_item_id?: string | null;
+  customization_plan?: unknown;
   creator_name: string;
   updated_at: string;
   age_group: string;
@@ -199,11 +223,226 @@ type ApiStorybook = {
   quality?: ApiStorybookQualityReport;
 };
 
+type ApiCreationMaterial = {
+  id: string;
+  label: string;
+  type: "character" | "object" | "scene" | "place" | "event" | "theme" | "emotion" | "custom";
+  source: "ai_extracted" | "user_added" | "asset_reference" | "system";
+  confidence?: number | null;
+  locked: boolean;
+};
+
+type ApiStorybookAssetSummary = {
+  id: string;
+  status: string;
+  processing_message?: string | null;
+  content_type: string;
+  byte_size: number;
+  width?: number | null;
+  height?: number | null;
+  visibility_scope: string;
+  retention_policy: string;
+};
+
+type ApiStorybookVisualReference = {
+  id: string;
+  status: string;
+  generation_job_id?: string | null;
+  preview_url?: string | null;
+  failure_reason?: string | null;
+  confirmed_at?: string | null;
+  confirmed_by?: string | null;
+};
+
+type ApiStorybookAssetReference = {
+  id: string;
+  asset_id: string;
+  asset: ApiStorybookAssetSummary;
+  kind: "person" | "object" | "scene";
+  display_name: string;
+  usage?: string | null;
+  status: string;
+  material_id?: string | null;
+  preview_url?: string | null;
+  visual_reference?: ApiStorybookVisualReference | null;
+  revoked_at?: string | null;
+  revoked_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ApiStorybookAssetReferenceResponse = {
+  asset_reference: ApiStorybookAssetReference;
+  remaining_slots: number;
+};
+
+type ApiStorybookVisualReferenceResponse = {
+  visual_reference: ApiStorybookVisualReference;
+  next_action: string;
+};
+
+type ApiStorybookAssetUploadPolicy = {
+  max_files: number;
+  remaining_slots: number;
+  max_file_size_bytes: number;
+  accepted_content_types: string[];
+};
+
+type ApiStoryDirection = {
+  id: string;
+  title: string;
+  summary: string;
+  fit_reason?: string | null;
+  personal_hook?: string | null;
+  material_ids: string[];
+  tone?: string | null;
+};
+
+type ApiCreationOutlinePage = {
+  page_number: number;
+  summary: string;
+  material_ids: string[];
+};
+
+type ApiCreationOutline = {
+  summary: string;
+  pages: ApiCreationOutlinePage[];
+  review_points: string[];
+};
+
+type ApiVisualPreferences = {
+  style: string;
+  page_aspect_ratio: Storybook["pageAspectRatio"];
+  visual_complexity: "simple" | "standard" | "rich";
+  character_consistency: "auto" | "speed" | "confirm_character";
+};
+
+type ApiCreationGenerationSummary = {
+  text_generation_status: string;
+  image_generation_status: string;
+  quality_notice?: string | null;
+  recoverable_actions: string[];
+};
+
+type ApiStorybookCreationSession = {
+  id: string;
+  workspace_id: string;
+  entry_type?: string | null;
+  source_storybook_id?: string | null;
+  status: string;
+  quick_idea: string;
+  use_scene: string;
+  age_group: string;
+  page_count: number;
+  understanding: {
+    summary: string;
+    target_user?: string | null;
+    goal?: string | null;
+    tone?: string | null;
+    scene?: string | null;
+    age_group?: string | null;
+  };
+  materials: ApiCreationMaterial[];
+  asset_references?: ApiStorybookAssetReference[];
+  directions: ApiStoryDirection[];
+  selected_direction_id?: string | null;
+  outline?: ApiCreationOutline | null;
+  visual_preferences: ApiVisualPreferences;
+  storybook_id?: string | null;
+  last_job_id?: string | null;
+  idempotency_key?: string | null;
+  generation_summary: ApiCreationGenerationSummary;
+  requires_understanding_refresh: boolean;
+  requires_direction_refresh: boolean;
+  requires_outline_refresh: boolean;
+  next_action?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type ApiDeriveCustomBatchResponse = {
   source_storybook_id: string;
+  run_id?: string | null;
   requested_count: number;
   created_count: number;
   storybooks: ApiStorybook[];
+  items?: { child_id: string; run_item_id?: string | null; status: string; storybook?: ApiStorybook; failure_reason?: string }[];
+};
+
+type ApiStorybookCustomizationRun = {
+  id: string;
+  workspace_id: string;
+  source_storybook_id: string;
+  created_by: string;
+  entry_type: string;
+  mode: "single" | "batch" | string;
+  status: string;
+  customization_plan?: unknown;
+  source_snapshot?: unknown;
+  requested_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  failure_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  items: ApiStorybookCustomizationRunItem[];
+};
+
+type ApiStorybookCustomizationRunItem = {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  source_storybook_id: string;
+  target_child_id: string;
+  target_child_nickname?: string | null;
+  output_storybook_id?: string | null;
+  output_storybook_title?: string | null;
+  primary_material?: string | null;
+  status: string;
+  generation_input_snapshot: unknown;
+  failure_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+};
+
+export type StorybookCustomizationRun = {
+  id: string;
+  workspaceId: string;
+  sourceStorybookId: string;
+  createdBy: string;
+  entryType: string;
+  mode: string;
+  status: string;
+  customizationPlan?: unknown;
+  sourceSnapshot?: unknown;
+  requestedCount: number;
+  succeededCount: number;
+  failedCount: number;
+  failureReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  items: StorybookCustomizationRunItem[];
+};
+
+export type StorybookCustomizationRunItem = {
+  id: string;
+  workspaceId: string;
+  runId: string;
+  sourceStorybookId: string;
+  targetChildId: string;
+  targetChildNickname?: string;
+  outputStorybookId?: string;
+  outputStorybookTitle?: string;
+  primaryMaterial?: string;
+  status: string;
+  generationInputSnapshot: unknown;
+  failureReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 };
 
 type ApiExportJob = {
@@ -590,6 +829,127 @@ export type GenerationJob = {
   finishedAt?: string;
 };
 
+export type CreationMaterial = {
+  id: string;
+  label: string;
+  type: ApiCreationMaterial["type"];
+  source: ApiCreationMaterial["source"];
+  confidence?: number;
+  locked: boolean;
+};
+
+export type StoryDirection = {
+  id: string;
+  title: string;
+  summary: string;
+  fitReason?: string;
+  personalHook?: string;
+  materialIds: string[];
+  tone?: string;
+};
+
+export type StoryDirectionList = StoryDirection[] & {
+  warnings?: ResponseWarning[];
+};
+
+export type CreationOutline = {
+  summary: string;
+  pages: { pageNumber: number; summary: string; materialIds: string[] }[];
+  reviewPoints: string[];
+  warnings?: ResponseWarning[];
+};
+
+export type StorybookAssetSummary = {
+  id: string;
+  status: string;
+  processingMessage?: string;
+  contentType: string;
+  byteSize: number;
+  width?: number;
+  height?: number;
+  visibilityScope: string;
+  retentionPolicy: string;
+};
+
+export type StorybookVisualReference = {
+  id: string;
+  status: string;
+  generationJobId?: string;
+  previewUrl?: string;
+  failureReason?: string;
+  confirmedAt?: string;
+  confirmedBy?: string;
+};
+
+export type StorybookAssetReference = {
+  id: string;
+  assetId: string;
+  asset: StorybookAssetSummary;
+  kind: ApiStorybookAssetReference["kind"];
+  displayName: string;
+  usage?: string;
+  status: string;
+  materialId?: string;
+  previewUrl?: string;
+  visualReference?: StorybookVisualReference;
+  revokedAt?: string;
+  revokedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StorybookAssetUploadPolicy = {
+  maxFiles: number;
+  remainingSlots: number;
+  maxFileSizeBytes: number;
+  acceptedContentTypes: string[];
+};
+
+export type StorybookCreationSession = {
+  id: string;
+  workspaceId: string;
+  entryType: string;
+  sourceStorybookId?: string;
+  status: string;
+  quickIdea: string;
+  useScene: string;
+  ageGroup: string;
+  pageCount: number;
+  understanding: {
+    summary: string;
+    targetUser?: string;
+    goal?: string;
+    tone?: string;
+    scene?: string;
+    ageGroup?: string;
+  };
+  materials: CreationMaterial[];
+  assetReferences: StorybookAssetReference[];
+  directions: StoryDirection[];
+  selectedDirectionId?: string;
+  outline?: CreationOutline;
+  visualPreferences: {
+    style: string;
+    pageAspectRatio: Storybook["pageAspectRatio"];
+    visualComplexity: "simple" | "standard" | "rich";
+    characterConsistency: "auto" | "speed" | "confirm_character";
+  };
+  storybookId?: string;
+  lastJobId?: string;
+  generationSummary: {
+    textStatus: string;
+    imageStatus: string;
+    qualityNotice?: string;
+    recoverableActions: string[];
+  };
+  requiresUnderstandingRefresh: boolean;
+  requiresDirectionRefresh: boolean;
+  requiresOutlineRefresh: boolean;
+  nextAction?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type GenerationCostLog = {
   id: string;
   workspaceId: string;
@@ -655,10 +1015,11 @@ function handleAuthFailure(status: number) {
 
 async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
   const authToken = token();
+  const isFormData = init.body instanceof FormData;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...init.headers,
     },
@@ -670,7 +1031,21 @@ async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise
     const message = errorPayload?.error?.message || "请求失败，请稍后重试";
     const code = errorPayload?.error?.code || "request_failed";
     const field = errorPayload?.error?.field || undefined;
-    throw new ApiClientError(response.status, code, message, field, payload);
+    const details = errorPayload?.error?.details;
+    throw new ApiClientError(response.status, code, message, field, details, payload);
+  }
+  if (response.status === 204) {
+    return {} as Envelope<T>;
+  }
+  if (!payload || typeof payload !== "object" || !("data" in payload)) {
+    throw new ApiClientError(
+      response.status,
+      "invalid_response",
+      "服务返回异常，请刷新页面后重试。",
+      undefined,
+      undefined,
+      payload,
+    );
   }
   return payload as Envelope<T>;
 }
@@ -680,8 +1055,20 @@ async function request<T>(path: string, init: RequestInit = {}) {
 }
 
 async function requestBlob(path: string, init: RequestInit = {}) {
+  return requestBlobUrl(`${API_BASE_URL}${path}`, init);
+}
+
+export async function requestProtectedResourceBlob(pathOrUrl: string, init: RequestInit = {}) {
+  const url = apiResourceUrl(pathOrUrl);
+  if (!url) {
+    throw new ApiClientError(0, "resource_url_missing", "图片地址无效，请刷新后重试。", undefined, undefined, null);
+  }
+  return requestBlobUrl(url, init);
+}
+
+async function requestBlobUrl(url: string, init: RequestInit = {}) {
   const authToken = token();
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(url, {
     ...init,
     headers: {
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -695,7 +1082,8 @@ async function requestBlob(path: string, init: RequestInit = {}) {
     const message = errorPayload?.error?.message || "文件下载失败，请稍后重试";
     const code = errorPayload?.error?.code || "download_failed";
     const field = errorPayload?.error?.field || undefined;
-    throw new ApiClientError(response.status, code, message, field, payload);
+    const details = errorPayload?.error?.details;
+    throw new ApiClientError(response.status, code, message, field, details, payload);
   }
   return response.blob();
 }
@@ -720,11 +1108,11 @@ function queryString(query: Record<string, string | number | boolean | undefined
 }
 
 function pageMeta<T>(envelope: Envelope<T[]>): PaginationMeta {
-  return envelope.meta || {
-    total: envelope.data.length,
-    limit: envelope.data.length,
-    offset: 0,
-    has_more: false,
+  return {
+    total: envelope.meta?.total ?? envelope.data.length,
+    limit: envelope.meta?.limit ?? envelope.data.length,
+    offset: envelope.meta?.offset ?? 0,
+    has_more: envelope.meta?.has_more ?? false,
   };
 }
 
@@ -977,9 +1365,282 @@ export async function createStorybook(
   return mapStorybook(response);
 }
 
+export async function getLatestStorybookCreationSession(workspaceId: string): Promise<StorybookCreationSession | null> {
+  const response = await request<ApiStorybookCreationSession | null>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/latest`,
+  );
+  return response ? mapStorybookCreationSession(response) : null;
+}
+
+export async function getStorybookCreationSession(workspaceId: string, sessionId: string): Promise<StorybookCreationSession> {
+  const response = await request<ApiStorybookCreationSession>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}`,
+  );
+  return mapStorybookCreationSession(response);
+}
+
+export async function createStorybookCreationSession(
+  workspaceId: string,
+  payload: { quickIdea: string; entryType?: string; sourceStorybookId?: string; useScene?: string; ageGroup?: string; pageCount?: number },
+): Promise<StorybookCreationSession> {
+  const response = await request<ApiStorybookCreationSession>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        quick_idea: payload.quickIdea,
+        entry_type: payload.entryType,
+        source_storybook_id: payload.sourceStorybookId,
+        use_scene: payload.useScene,
+        age_group: payload.ageGroup,
+        page_count: payload.pageCount,
+      }),
+    },
+  );
+  return mapStorybookCreationSession(response);
+}
+
+export async function updateStorybookCreationSession(
+  workspaceId: string,
+  sessionId: string,
+  payload: { quickIdea?: string; useScene?: string; ageGroup?: string; pageCount?: number },
+): Promise<void> {
+  await request<{ id: string }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        quick_idea: optionalText(payload.quickIdea),
+        use_scene: optionalText(payload.useScene),
+        age_group: optionalText(payload.ageGroup),
+        page_count: payload.pageCount,
+      }),
+    },
+  );
+}
+
+export async function refreshStorybookCreationUnderstanding(workspaceId: string, sessionId: string): Promise<StorybookCreationSession> {
+  const response = await request<ApiStorybookCreationSession>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/understanding:refresh`,
+    { method: "POST", body: JSON.stringify({ preserve_user_materials: true }) },
+  );
+  return mapStorybookCreationSession(response);
+}
+
+export async function patchStorybookCreationMaterials(
+  workspaceId: string,
+  sessionId: string,
+  operations: { op: "add" | "update" | "remove"; id?: string; label?: string; type?: CreationMaterial["type"]; locked?: boolean }[],
+): Promise<{ materials: CreationMaterial[]; status: string }> {
+  const response = await request<{ materials: ApiCreationMaterial[]; status: string }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/materials`,
+    { method: "PATCH", body: JSON.stringify({ operations }) },
+  );
+  return { materials: response.materials.map(mapCreationMaterial), status: response.status };
+}
+
+export async function getStorybookAssetUploadPolicy(
+  workspaceId: string,
+  sessionId: string,
+): Promise<StorybookAssetUploadPolicy> {
+  const response = await request<ApiStorybookAssetUploadPolicy>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/asset-upload-policy`,
+  );
+  return {
+    maxFiles: response.max_files,
+    remainingSlots: response.remaining_slots,
+    maxFileSizeBytes: response.max_file_size_bytes,
+    acceptedContentTypes: response.accepted_content_types,
+  };
+}
+
+export async function uploadStorybookCreationAsset(
+  workspaceId: string,
+  sessionId: string,
+  payload: { file: File; kind: StorybookAssetReference["kind"]; idempotencyKey: string },
+): Promise<{ assetReference: StorybookAssetReference; remainingSlots: number }> {
+  const form = new FormData();
+  form.append("file", payload.file);
+  form.append("kind", payload.kind);
+  form.append("idempotency_key", payload.idempotencyKey);
+  const response = await request<ApiStorybookAssetReferenceResponse>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/assets`,
+    { method: "POST", body: form },
+  );
+  return {
+    assetReference: mapStorybookAssetReference(response.asset_reference),
+    remainingSlots: response.remaining_slots,
+  };
+}
+
+export async function updateStorybookAssetReference(
+  workspaceId: string,
+  sessionId: string,
+  assetReferenceId: string,
+  payload: { kind?: StorybookAssetReference["kind"]; displayName?: string; usage?: string },
+): Promise<{ assetReference: StorybookAssetReference; remainingSlots: number }> {
+  const response = await request<ApiStorybookAssetReferenceResponse>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/asset-references/${assetReferenceId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        kind: payload.kind,
+        display_name: optionalText(payload.displayName),
+        usage: payload.usage,
+      }),
+    },
+  );
+  return {
+    assetReference: mapStorybookAssetReference(response.asset_reference),
+    remainingSlots: response.remaining_slots,
+  };
+}
+
+export async function generateStorybookVisualReference(
+  workspaceId: string,
+  sessionId: string,
+  assetReferenceId: string,
+  idempotencyKey: string,
+): Promise<{ visualReference: StorybookVisualReference; nextAction: string }> {
+  const response = await request<ApiStorybookVisualReferenceResponse>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/asset-references/${assetReferenceId}/visual-reference:generate`,
+    { method: "POST", body: JSON.stringify({ idempotency_key: idempotencyKey }) },
+  );
+  return {
+    visualReference: mapStorybookVisualReference(response.visual_reference),
+    nextAction: response.next_action,
+  };
+}
+
+export async function confirmStorybookVisualReference(
+  workspaceId: string,
+  sessionId: string,
+  visualReferenceId: string,
+): Promise<{ assetReference: StorybookAssetReference; remainingSlots: number }> {
+  const response = await request<ApiStorybookAssetReferenceResponse>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/visual-references/${visualReferenceId}/confirm`,
+    { method: "POST" },
+  );
+  return {
+    assetReference: mapStorybookAssetReference(response.asset_reference),
+    remainingSlots: response.remaining_slots,
+  };
+}
+
+export async function revokeStorybookAssetReference(
+  workspaceId: string,
+  sessionId: string,
+  assetReferenceId: string,
+): Promise<void> {
+  await request(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/asset-references/${assetReferenceId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function generateStorybookDirections(workspaceId: string, sessionId: string, refreshReason = "initial"): Promise<StoryDirectionList> {
+  const envelope = await requestEnvelope<{ directions: ApiStoryDirection[] }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/directions:generate`,
+    { method: "POST", body: JSON.stringify({ direction_count: 3, refresh_reason: refreshReason }) },
+  );
+  const directions: StoryDirectionList = envelope.data.directions.map(mapStoryDirection);
+  directions.warnings = envelope.meta?.warnings || [];
+  return directions;
+}
+
+export async function selectStorybookCreationDirection(workspaceId: string, sessionId: string, directionId: string): Promise<StoryDirection> {
+  const response = await request<{ selected_direction: ApiStoryDirection }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/direction`,
+    { method: "POST", body: JSON.stringify({ direction_id: directionId }) },
+  );
+  return mapStoryDirection(response.selected_direction);
+}
+
+export async function generateStorybookCreationOutline(workspaceId: string, sessionId: string): Promise<CreationOutline> {
+  const envelope = await requestEnvelope<{ outline: ApiCreationOutline }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/outline:generate`,
+    { method: "POST", body: JSON.stringify({ page_count: 6 }) },
+  );
+  const outline = mapCreationOutline(envelope.data.outline);
+  outline.warnings = envelope.meta?.warnings || [];
+  return outline;
+}
+
+export async function updateStorybookCreationOutlinePage(
+  workspaceId: string,
+  sessionId: string,
+  pageNumber: number,
+  instruction: string,
+): Promise<{ pageNumber: number; summary: string; materialIds: string[] }> {
+  const response = await request<{ page: ApiCreationOutlinePage }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/outline/pages/${pageNumber}`,
+    { method: "PATCH", body: JSON.stringify({ instruction }) },
+  );
+  return mapCreationOutlinePage(response.page);
+}
+
+export async function generateStorybookFromCreationSession(
+  workspaceId: string,
+  sessionId: string,
+  idempotencyKey: string,
+): Promise<{ status: string; storybookId?: string; jobId?: string }> {
+  const response = await request<{ status: string; storybook_id?: string | null; job_id?: string | null }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/storybook:generate`,
+    { method: "POST", body: JSON.stringify({ generation_mode: "full_draft", include_images: true, idempotency_key: idempotencyKey }) },
+  );
+  return { status: response.status, storybookId: response.storybook_id || undefined, jobId: response.job_id || undefined };
+}
+
+export async function abandonStorybookCreationSession(workspaceId: string, sessionId: string) {
+  return request<{ status: string }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/abandon`,
+    { method: "POST" },
+  );
+}
+
 export async function getStorybook(workspaceId: string, storybookId: string) {
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}`);
   return mapStorybook(response);
+}
+
+export async function getStorybookCustomizationRun(workspaceId: string, runId: string): Promise<StorybookCustomizationRun> {
+  const response = await request<ApiStorybookCustomizationRun>(`/api/workspaces/${workspaceId}/storybook-customization-runs/${runId}`);
+  return mapStorybookCustomizationRun(response);
+}
+
+export async function cancelStorybookCustomizationRun(
+  workspaceId: string,
+  runId: string,
+): Promise<StorybookCustomizationRun> {
+  const response = await request<ApiStorybookCustomizationRun>(
+    `/api/workspaces/${workspaceId}/storybook-customization-runs/${runId}/cancel`,
+    { method: "POST" },
+  );
+  return mapStorybookCustomizationRun(response);
+}
+
+export async function retryStorybookCustomizationRunItem(
+  workspaceId: string,
+  runId: string,
+  itemId: string,
+): Promise<StorybookCustomizationRun> {
+  const response = await request<ApiStorybookCustomizationRun>(
+    `/api/workspaces/${workspaceId}/storybook-customization-runs/${runId}/items/${itemId}/retry`,
+    { method: "POST" },
+  );
+  return mapStorybookCustomizationRun(response);
+}
+
+export async function abandonStorybookCustomizationRunItem(
+  workspaceId: string,
+  runId: string,
+  itemId: string,
+): Promise<StorybookCustomizationRun> {
+  const response = await request<ApiStorybookCustomizationRun>(
+    `/api/workspaces/${workspaceId}/storybook-customization-runs/${runId}/items/${itemId}/abandon`,
+    { method: "POST" },
+  );
+  return mapStorybookCustomizationRun(response);
 }
 
 export async function updateStorybook(
@@ -1033,7 +1694,7 @@ export async function updateStorybookPage(
   workspaceId: string,
   storybookId: string,
   pageId: string,
-  payload: { title?: string; body?: string; illustrationPrompt?: string; status?: string },
+  payload: { title?: string; body?: string; illustrationPrompt?: string; status?: string; reviewStatus?: StorybookPage["reviewStatus"] },
 ) {
   const response = await request<ApiStorybookPage>(
     `/api/workspaces/${workspaceId}/storybooks/${storybookId}/pages/${pageId}`,
@@ -1044,6 +1705,7 @@ export async function updateStorybookPage(
         body: optionalText(payload.body),
         illustration_prompt: optionalText(payload.illustrationPrompt),
         status: payload.status,
+        review_status: payload.reviewStatus,
       }),
     },
   );
@@ -1624,23 +2286,49 @@ export async function confirmParentIntake(
 export async function deriveCustomStorybook(
   workspaceId: string,
   storybookId: string,
-  payload: { childId: string; intensity: "quick" | "standard"; customizationPlan?: unknown },
+  payload: { childId: string; intensity: "quick" | "standard"; primaryMaterial: string; customizationPlan?: unknown },
 ) {
   const response = await request<ApiStorybook>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}/derive-custom`, {
     method: "POST",
     body: JSON.stringify({
       child_id: payload.childId,
       intensity: payload.intensity,
+      primary_material: payload.primaryMaterial,
       customization_plan: payload.customizationPlan,
     }),
   });
   return mapStorybook(response);
 }
 
+export async function buildStorybookCustomizationPlan(
+  workspaceId: string,
+  storybookId: string,
+  payload: {
+    mode: "single" | "batch";
+    targetChildId?: string;
+    targetChildIds?: string[];
+    primaryMaterial?: string;
+    optionalKeepPageIds?: string[];
+    confirmedPhotoReferenceIds?: string[];
+  },
+): Promise<unknown> {
+  return request<unknown>(`/api/workspaces/${workspaceId}/storybooks/${storybookId}/customization-plan`, {
+    method: "POST",
+    body: JSON.stringify({
+      mode: payload.mode,
+      target_child_id: payload.targetChildId,
+      target_child_ids: payload.targetChildIds || [],
+      primary_material: payload.primaryMaterial,
+      optional_keep_page_ids: payload.optionalKeepPageIds || [],
+      confirmed_photo_reference_ids: payload.confirmedPhotoReferenceIds || [],
+    }),
+  });
+}
+
 export async function deriveCustomStorybooksBatch(
   workspaceId: string,
   storybookId: string,
-  payload: { childIds: string[]; intensity: "quick" | "standard"; customizationPlan?: unknown },
+  payload: { childIds: string[]; intensity: "quick" | "standard"; customizationPlan?: unknown; materialChoices: Record<string, string> },
 ) {
   const response = await request<ApiDeriveCustomBatchResponse>(
     `/api/workspaces/${workspaceId}/storybooks/${storybookId}/derive-custom-batch`,
@@ -1650,14 +2338,23 @@ export async function deriveCustomStorybooksBatch(
         child_ids: payload.childIds,
         intensity: payload.intensity,
         customization_plan: payload.customizationPlan,
+        material_choices: payload.materialChoices,
       }),
     },
   );
   return {
     sourceStorybookId: response.source_storybook_id,
+    runId: response.run_id || undefined,
     requestedCount: response.requested_count,
     createdCount: response.created_count,
     storybooks: response.storybooks.map(mapStorybook),
+    items: (response.items || response.storybooks.map((storybook) => ({ child_id: storybook.target_child_id || "", run_item_id: undefined, status: "created" as const, storybook, failure_reason: undefined }))).map((item) => ({
+      childId: item.child_id,
+      runItemId: item.run_item_id || undefined,
+      status: item.status,
+      storybook: item.storybook ? mapStorybook(item.storybook) : undefined,
+      failureReason: item.failure_reason,
+    })),
   };
 }
 
@@ -1785,11 +2482,11 @@ export async function listOperatorGenerationCostsPage(
   const envelope = await requestEnvelope<ApiGenerationCostReport>(`/api/operator/generation-costs${suffix}`);
   return {
     data: mapGenerationCostReport(envelope.data),
-    meta: envelope.meta || {
-      total: envelope.data.items.length,
-      limit: envelope.data.items.length,
-      offset: 0,
-      has_more: false,
+    meta: {
+      total: envelope.meta?.total ?? envelope.data.items.length,
+      limit: envelope.meta?.limit ?? envelope.data.items.length,
+      offset: envelope.meta?.offset ?? 0,
+      has_more: envelope.meta?.has_more ?? false,
     },
   };
 }
@@ -1936,6 +2633,9 @@ function mapStorybook(book: ApiStorybook): Storybook {
           : "blank",
     sourceTitle: book.source_title || undefined,
     targetChildId: book.target_child_id || undefined,
+    customizationRunId: book.customization_run_id || undefined,
+    customizationRunItemId: book.customization_run_item_id || undefined,
+    customizationPlan: book.customization_plan,
     creatorName: book.creator_name,
     updatedAt: book.updated_at,
     ageGroup: book.age_group,
@@ -1949,6 +2649,175 @@ function mapStorybook(book: ApiStorybook): Storybook {
     pages: book.pages.map(mapStorybookPage),
     roles: book.roles.map(mapStorybookRole),
     quality: book.quality ? mapStorybookQuality(book.quality) : undefined,
+  };
+}
+
+function mapStorybookCustomizationRun(run: ApiStorybookCustomizationRun): StorybookCustomizationRun {
+  return {
+    id: run.id,
+    workspaceId: run.workspace_id,
+    sourceStorybookId: run.source_storybook_id,
+    createdBy: run.created_by,
+    entryType: run.entry_type,
+    mode: run.mode,
+    status: run.status,
+    customizationPlan: run.customization_plan,
+    sourceSnapshot: run.source_snapshot,
+    requestedCount: run.requested_count,
+    succeededCount: run.succeeded_count,
+    failedCount: run.failed_count,
+    failureReason: run.failure_reason || undefined,
+    createdAt: run.created_at,
+    updatedAt: run.updated_at,
+    completedAt: run.completed_at || undefined,
+    items: run.items.map(mapStorybookCustomizationRunItem),
+  };
+}
+
+function mapStorybookCustomizationRunItem(item: ApiStorybookCustomizationRunItem): StorybookCustomizationRunItem {
+  return {
+    id: item.id,
+    workspaceId: item.workspace_id,
+    runId: item.run_id,
+    sourceStorybookId: item.source_storybook_id,
+    targetChildId: item.target_child_id,
+    targetChildNickname: item.target_child_nickname || undefined,
+    outputStorybookId: item.output_storybook_id || undefined,
+    outputStorybookTitle: item.output_storybook_title || undefined,
+    primaryMaterial: item.primary_material || undefined,
+    status: item.status,
+    generationInputSnapshot: item.generation_input_snapshot,
+    failureReason: item.failure_reason || undefined,
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+    completedAt: item.completed_at || undefined,
+  };
+}
+
+function mapCreationMaterial(material: ApiCreationMaterial): CreationMaterial {
+  return {
+    id: material.id,
+    label: material.label,
+    type: material.type,
+    source: material.source,
+    confidence: material.confidence || undefined,
+    locked: material.locked,
+  };
+}
+
+function mapStoryDirection(direction: ApiStoryDirection): StoryDirection {
+  return {
+    id: direction.id,
+    title: direction.title,
+    summary: direction.summary,
+    fitReason: direction.fit_reason || undefined,
+    personalHook: direction.personal_hook || undefined,
+    materialIds: direction.material_ids,
+    tone: direction.tone || undefined,
+  };
+}
+
+function mapCreationOutlinePage(page: ApiCreationOutlinePage) {
+  return { pageNumber: page.page_number, summary: page.summary, materialIds: page.material_ids };
+}
+
+function mapCreationOutline(outline: ApiCreationOutline): CreationOutline {
+  return {
+    summary: outline.summary,
+    pages: outline.pages.map(mapCreationOutlinePage),
+    reviewPoints: outline.review_points,
+  };
+}
+
+function mapStorybookAssetSummary(asset: ApiStorybookAssetSummary): StorybookAssetSummary {
+  return {
+    id: asset.id,
+    status: asset.status,
+    processingMessage: asset.processing_message || undefined,
+    contentType: asset.content_type,
+    byteSize: asset.byte_size,
+    width: asset.width || undefined,
+    height: asset.height || undefined,
+    visibilityScope: asset.visibility_scope,
+    retentionPolicy: asset.retention_policy,
+  };
+}
+
+function mapStorybookVisualReference(reference: ApiStorybookVisualReference): StorybookVisualReference {
+  return {
+    id: reference.id,
+    status: reference.status,
+    generationJobId: reference.generation_job_id || undefined,
+    previewUrl: apiResourceUrl(reference.preview_url),
+    failureReason: reference.failure_reason || undefined,
+    confirmedAt: reference.confirmed_at || undefined,
+    confirmedBy: reference.confirmed_by || undefined,
+  };
+}
+
+function mapStorybookAssetReference(reference: ApiStorybookAssetReference): StorybookAssetReference {
+  return {
+    id: reference.id,
+    assetId: reference.asset_id,
+    asset: mapStorybookAssetSummary(reference.asset),
+    kind: reference.kind,
+    displayName: reference.display_name,
+    usage: reference.usage || undefined,
+    status: reference.status,
+    materialId: reference.material_id || undefined,
+    previewUrl: apiResourceUrl(reference.preview_url),
+    visualReference: reference.visual_reference ? mapStorybookVisualReference(reference.visual_reference) : undefined,
+    revokedAt: reference.revoked_at || undefined,
+    revokedBy: reference.revoked_by || undefined,
+    createdAt: reference.created_at,
+    updatedAt: reference.updated_at,
+  };
+}
+
+function mapStorybookCreationSession(session: ApiStorybookCreationSession): StorybookCreationSession {
+  return {
+    id: session.id,
+    workspaceId: session.workspace_id,
+    entryType: session.entry_type || "direct_create",
+    sourceStorybookId: session.source_storybook_id || undefined,
+    status: session.status,
+    quickIdea: session.quick_idea,
+    useScene: session.use_scene,
+    ageGroup: session.age_group,
+    pageCount: session.page_count,
+    understanding: {
+      summary: session.understanding.summary,
+      targetUser: session.understanding.target_user || undefined,
+      goal: session.understanding.goal || undefined,
+      tone: session.understanding.tone || undefined,
+      scene: session.understanding.scene || undefined,
+      ageGroup: session.understanding.age_group || undefined,
+    },
+    materials: session.materials.map(mapCreationMaterial),
+    assetReferences: (session.asset_references || []).map(mapStorybookAssetReference),
+    directions: session.directions.map(mapStoryDirection),
+    selectedDirectionId: session.selected_direction_id || undefined,
+    outline: session.outline ? mapCreationOutline(session.outline) : undefined,
+    visualPreferences: {
+      style: session.visual_preferences.style,
+      pageAspectRatio: session.visual_preferences.page_aspect_ratio,
+      visualComplexity: session.visual_preferences.visual_complexity,
+      characterConsistency: session.visual_preferences.character_consistency,
+    },
+    storybookId: session.storybook_id || undefined,
+    lastJobId: session.last_job_id || undefined,
+    generationSummary: {
+      textStatus: session.generation_summary.text_generation_status,
+      imageStatus: session.generation_summary.image_generation_status,
+      qualityNotice: session.generation_summary.quality_notice || undefined,
+      recoverableActions: session.generation_summary.recoverable_actions,
+    },
+    requiresUnderstandingRefresh: session.requires_understanding_refresh,
+    requiresDirectionRefresh: session.requires_direction_refresh,
+    requiresOutlineRefresh: session.requires_outline_refresh,
+    nextAction: session.next_action || undefined,
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
   };
 }
 
@@ -1980,6 +2849,9 @@ function mapStorybookPage(page: ApiStorybookPage): StorybookPage {
     body: page.body,
     illustrationPrompt: page.illustration_prompt,
     status: page.status,
+    reviewStatus: page.review_status || "unchecked",
+    reviewedBy: page.reviewed_by || undefined,
+    reviewedAt: page.reviewed_at || undefined,
     imageUrl: apiResourceUrl(page.image_url),
     selectedImageVariantId: page.selected_image_variant_id || undefined,
   };

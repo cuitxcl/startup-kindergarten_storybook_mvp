@@ -271,15 +271,15 @@ export function StorybookListPage() {
                             <Link className="button primary" to={continueTargetForList(book)}>继续完成</Link>
                           ) : (
                             <>
-                              <Link className="button primary" to={`${book.id}/customize`}>生成定制版</Link>
+                              <Link className="button primary" to={`${book.id}/customize`}>创作专属版本</Link>
                               <Link className="button secondary" to={book.id}>查看详情</Link>
                             </>
                           )}
                         </>
                       ) : exportBlocker ? (
-                        <Link className="button primary" to={book.id}>继续编辑</Link>
+                        <Link className="button primary" to={`${book.id}/review`}>继续编辑</Link>
                       ) : (
-                        <Link className="button primary" to={book.id}>导出或分享</Link>
+                        <Link className="button primary" to={`${book.id}/review`}>导出或分享</Link>
                       )}
                     </div>
                   </div>
@@ -321,7 +321,7 @@ function exportBlockerForList(book: Storybook, jobs: GenerationJob[]) {
   if (failedPages.length) return `仍有 ${failedPages.length} 页插图生成失败，请先处理`;
 
   const generatingPages = book.pages.filter((page) => page.status === "generating");
-  if (generatingPages.length) return "仍有分页插图正在生成，请完成后再生成定制版";
+  if (generatingPages.length) return "仍有分页插图正在生成，请完成后再创作专属版本";
 
   const redrawPages = book.pages.filter((page) => page.status === "needs_regeneration");
   if (redrawPages.length) return `仍有 ${redrawPages.length} 页需要重绘，请先完成普通绘本`;

@@ -97,7 +97,7 @@ export function generationPrivacyAuditSummary(output: unknown) {
 }
 
 export function storybookNextAction(book: Storybook) {
-  if (book.status === "exportable") return "可导出 PDF，也可继续生成定制副本";
+  if (book.status === "exportable") return "可导出 PDF，也可继续创作专属版本";
   if (book.status === "submitted") return "等待审核，重点确认隐私和投稿信息";
   if (book.status === "image_pending") return "继续生成或重绘插图";
   if (book.status === "roles_pending") return "确认主角和重复出现的配角";

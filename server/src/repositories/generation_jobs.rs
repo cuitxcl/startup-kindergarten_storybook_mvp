@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::models::{GenerationJob, PaginationMeta};
 
 pub async fn enqueue_job(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     workspace_id: Uuid,
     storybook_id: Option<Uuid>,
     created_by: Uuid,
@@ -185,7 +185,7 @@ pub async fn cancel_job(
                 finished_at = now()
             where workspace_id = $1
               and id = $2
-              and status in ('queued', 'failed')
+              and status in ('queued', 'running', 'failed')
             returning
               id, workspace_id, storybook_id, created_by, job_type, status, input_json, output_json,
               attempt_count, last_error, next_run_at, locked_by, locked_at, created_at, finished_at

@@ -446,7 +446,7 @@ export function ChildrenPage() {
               <Badge tone="warn">家长提交</Badge>
               <h2>待老师确认的儿童资料</h2>
               <p>
-                确认后会写入当前园所空间的儿童档案，之后可用于生成定制绘本。
+                确认后会写入当前园所空间的儿童档案，之后可用于创作专属绘本。
                 {classroomFilter ? ` 当前只看 ${classroomFilter}。` : ""}
                 {intakeMeta ? ` 已显示 ${intakes.length} / 共 ${intakeMeta.total} 条。` : ""}
               </p>

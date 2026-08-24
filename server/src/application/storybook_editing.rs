@@ -7,7 +7,8 @@ use serde_json::json;
 
 use crate::{
     application::storybook_inputs::{
-        clean_optional, clean_page_status, clean_reference_status, page_status_name,
+        clean_optional, clean_page_review_status, clean_page_status, clean_reference_status,
+        page_status_name,
     },
     domains::common,
     error::ApiError,
@@ -25,6 +26,7 @@ pub async fn update_page(
     #[cfg(feature = "db")]
     {
         common::require_editor_db(ctx, headers, workspace_id).await?;
+        let actor_id = common::actor_user_id(headers)?;
         let payload = UpdatePageRequest {
             title: clean_optional(payload.title, "title")?,
             body: clean_optional(payload.body, "body")?,
@@ -33,6 +35,7 @@ pub async fn update_page(
                 "illustration_prompt",
             )?,
             status: clean_page_status(payload.status)?,
+            review_status: clean_page_review_status(payload.review_status)?,
         };
         let page = crate::repositories::storybooks::update_page(
             &ctx.db,
@@ -40,13 +43,14 @@ pub async fn update_page(
             storybook_id,
             page_id,
             payload,
+            actor_id,
         )
         .await
         .map_err(common::db_error)?;
         crate::repositories::audit::log(
             &ctx.db,
             Some(workspace_id),
-            Some(common::actor_user_id(headers)?),
+            Some(actor_id),
             "storybook.page_updated",
             "storybook_page",
             Some(page.id),
@@ -54,6 +58,7 @@ pub async fn update_page(
                 "storybook_id": storybook_id,
                 "page_number": page.page_number,
                 "status": page_status_name(&page.status),
+                "review_status": page.review_status,
             }),
         )
         .await
@@ -76,17 +81,31 @@ pub async fn update_page(
             .iter_mut()
             .find(|item| item.id == page_id)
             .ok_or_else(|| ApiError::not_found("page"))?;
+        let mut content_changed = false;
         if let Some(value) = payload.title {
             page.title = common::required(value, "title")?;
+            content_changed = true;
         }
         if let Some(value) = payload.body {
             page.body = common::required(value, "body")?;
+            content_changed = true;
         }
         if let Some(value) = payload.illustration_prompt {
             page.illustration_prompt = common::required(value, "illustration_prompt")?;
+            content_changed = true;
         }
         if let Some(value) = payload.status {
             page.status = value;
+            content_changed = true;
+        }
+        if let Some(value) = payload.review_status {
+            page.review_status = value;
+            page.reviewed_by = None;
+            page.reviewed_at = Some("刚刚".to_string());
+        } else if content_changed {
+            page.review_status = "unchecked".to_string();
+            page.reviewed_by = None;
+            page.reviewed_at = None;
         }
         let page = page.clone();
         book.teacher_review_status = "pending".to_string();

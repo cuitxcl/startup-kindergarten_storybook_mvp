@@ -6,14 +6,16 @@ use uuid::Uuid;
 use crate::models::{
     CreateGenerationJobRequest, CreateStorybookRequest, CreationGenerationSummary,
     CreationMaterial, CreationOutline, CreationUnderstanding, GenerationJob, PaginationMeta,
-    StoryDirection, StorybookCreationSession, StorybookCreationSessionListItem,
-    StorybookCreationSessionListQuery, VisualPreferences,
+    StoryDirection, StorybookAssetReference, StorybookCreationSession,
+    StorybookCreationSessionListItem, StorybookCreationSessionListQuery, VisualPreferences,
 };
 
 pub async fn create(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     created_by: Uuid,
+    entry_type: String,
+    source_storybook_id: Option<Uuid>,
     quick_idea: String,
     use_scene: String,
     age_group: String,
@@ -27,15 +29,17 @@ pub async fn create(
         DbBackend::Postgres,
         r#"
         insert into storybook_creation_sessions
-          (id, workspace_id, created_by, status, quick_idea, use_scene, age_group, page_count,
+          (id, workspace_id, created_by, entry_type, source_storybook_id, status, quick_idea, use_scene, age_group, page_count,
            understanding_json, materials_json, directions_json, visual_preferences_json,
            created_at, updated_at)
-        values ($1, $2, $3, 'understanding_ready', $4, $5, $6, $7, $8, $9, '[]'::jsonb, $10, now(), now())
+        values ($1, $2, $3, $4, $5, 'understanding_ready', $6, $7, $8, $9, $10, $11, '[]'::jsonb, $12, now(), now())
         "#,
         [
             id.into(),
             workspace_id.into(),
             created_by.into(),
+            entry_type.into(),
+            source_storybook_id.into(),
             quick_idea.into(),
             use_scene.into(),
             age_group.into(),
@@ -81,6 +85,7 @@ pub async fn list(
               and ($2::uuid is null or created_by = $2)
               and ($3::text is null or status = $3)
               and ($4::boolean = false or status not in ('storybook_ready', 'abandoned'))
+              and entry_type = 'direct_create'
             "#,
             [
                 workspace_id.into(),
@@ -104,6 +109,7 @@ pub async fn list(
               and ($2::uuid is null or created_by = $2)
               and ($3::text is null or status = $3)
               and ($4::boolean = false or status not in ('storybook_ready', 'abandoned'))
+              and entry_type = 'direct_create'
             order by updated_at desc
             limit $5 offset $6
             "#,
@@ -173,13 +179,50 @@ pub async fn latest_active(
             where workspace_id = $1
               and created_by = $2
               and status not in ('storybook_ready', 'abandoned')
+              and entry_type = 'direct_create'
             order by updated_at desc
             limit 1
             "#,
             [workspace_id.into(), created_by.into()],
         ))
         .await?;
-    row.map(session_from_row).transpose()
+    match row.map(session_from_row).transpose()? {
+        Some(session) => attach_asset_references(db, session).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+pub async fn latest_source_asset_session(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    created_by: Uuid,
+    source_storybook_id: Uuid,
+) -> Result<Option<StorybookCreationSession>, DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+            select *
+            from storybook_creation_sessions
+            where workspace_id = $1
+              and created_by = $2
+              and source_storybook_id = $3
+              and entry_type = 'from_storybook_assets'
+              and status not in ('storybook_ready', 'abandoned')
+            order by updated_at desc
+            limit 1
+            "#,
+            [
+                workspace_id.into(),
+                created_by.into(),
+                source_storybook_id.into(),
+            ],
+        ))
+        .await?;
+    match row.map(session_from_row).transpose()? {
+        Some(session) => attach_asset_references(db, session).await.map(Some),
+        None => Ok(None),
+    }
 }
 
 pub async fn find(
@@ -195,7 +238,7 @@ pub async fn find(
         ))
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("storybook_creation_session".to_string()))?;
-    session_from_row(row)
+    attach_asset_references(db, session_from_row(row)?).await
 }
 
 pub async fn find_for_update(
@@ -450,6 +493,59 @@ pub async fn replace_storybook_content(
     Ok(())
 }
 
+pub async fn bind_confirmed_person_reference_images(
+    db: &impl ConnectionTrait,
+    storybook_id: Uuid,
+    workspace_id: Uuid,
+    asset_references: &[StorybookAssetReference],
+) -> Result<(), DbErr> {
+    let mut updated = false;
+    for reference in asset_references {
+        let Some(visual_reference) = reference.visual_reference.as_ref() else {
+            continue;
+        };
+        let Some(generation_job_id) = visual_reference.generation_job_id else {
+            continue;
+        };
+        if reference.kind != "person"
+            || reference.status != "ready"
+            || visual_reference.status != "confirmed"
+            || reference.display_name.trim().is_empty()
+        {
+            continue;
+        }
+        let result = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r#"
+                update storybook_roles
+                set reference_image_url = $3,
+                    reference_image_prompt = $4,
+                    reference_status = 'ready'
+                where storybook_id = $1
+                  and btrim(name) = btrim($2)
+                  and reference_image_url is null
+                "#,
+                [
+                    storybook_id.into(),
+                    reference.display_name.clone().into(),
+                    format!(
+                        "/api/workspaces/{workspace_id}/generation-jobs/{generation_job_id}/image"
+                    )
+                    .into(),
+                    format!("已确认的人物同画风参考：{}", reference.display_name.trim()).into(),
+                ],
+            ))
+            .await?;
+        updated |= result.rows_affected() > 0;
+    }
+    if updated {
+        crate::repositories::storybook_lifecycle::mark_storybook_content_changed(db, storybook_id)
+            .await?;
+    }
+    Ok(())
+}
+
 pub async fn create_storybook_shell_in_tx(
     db: &impl ConnectionTrait,
     workspace_id: Uuid,
@@ -601,6 +697,10 @@ fn session_from_row(row: sea_orm::QueryResult) -> Result<StorybookCreationSessio
         id: row.try_get("", "id")?,
         workspace_id: row.try_get("", "workspace_id")?,
         created_by: row.try_get("", "created_by")?,
+        entry_type: row
+            .try_get("", "entry_type")
+            .unwrap_or_else(|_| "direct_create".to_string()),
+        source_storybook_id: row.try_get("", "source_storybook_id").unwrap_or(None),
         status: status.clone(),
         quick_idea: row.try_get("", "quick_idea")?,
         use_scene: row.try_get("", "use_scene")?,
@@ -610,6 +710,7 @@ fn session_from_row(row: sea_orm::QueryResult) -> Result<StorybookCreationSessio
             .map_err(|err| DbErr::Custom(format!("understanding_json 格式错误：{err}")))?,
         materials: serde_json::from_value(row.try_get::<JsonValue>("", "materials_json")?)
             .map_err(|err| DbErr::Custom(format!("materials_json 格式错误：{err}")))?,
+        asset_references: Vec::new(),
         directions: serde_json::from_value(row.try_get::<JsonValue>("", "directions_json")?)
             .map_err(|err| DbErr::Custom(format!("directions_json 格式错误：{err}")))?,
         selected_direction_id: row.try_get("", "selected_direction_id")?,
@@ -637,6 +738,27 @@ fn session_from_row(row: sea_orm::QueryResult) -> Result<StorybookCreationSessio
         created_at: row.try_get::<DateTime<Utc>>("", "created_at")?,
         updated_at: row.try_get::<DateTime<Utc>>("", "updated_at")?,
     })
+}
+
+async fn attach_asset_references(
+    db: &DatabaseConnection,
+    mut session: StorybookCreationSession,
+) -> Result<StorybookCreationSession, DbErr> {
+    session.asset_references = crate::repositories::storybook_creation_assets::list_for_session(
+        db,
+        session.workspace_id,
+        session.id,
+    )
+    .await
+    .or_else(|err| match err {
+        DbErr::Exec(sea_orm::RuntimeErr::SqlxError(error))
+            if error.to_string().contains("storybook_asset_references") =>
+        {
+            Ok::<Vec<StorybookAssetReference>, DbErr>(Vec::new())
+        }
+        other => Err(other),
+    })?;
+    Ok(session)
 }
 
 fn default_generation_summary_for_status(status: &str) -> CreationGenerationSummary {

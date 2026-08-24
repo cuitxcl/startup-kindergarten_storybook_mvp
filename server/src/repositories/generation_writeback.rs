@@ -41,6 +41,9 @@ pub async fn apply_completed_generation(
     if job.status != "succeeded" {
         return Ok(());
     }
+    if job.job_type == "storybook_visual_reference" {
+        return apply_storybook_visual_reference(db, job).await;
+    }
     let Some(storybook_id) = job.storybook_id else {
         return Ok(());
     };
@@ -82,6 +85,30 @@ pub async fn apply_completed_generation(
     }
 }
 
+async fn apply_storybook_visual_reference(
+    db: &impl ConnectionTrait,
+    job: &GenerationJob,
+) -> Result<(), DbErr> {
+    let output = job
+        .output_json
+        .as_ref()
+        .ok_or_else(|| DbErr::Custom("同画风参考任务缺少输出，无法写回".to_string()))?;
+    let image_url = output
+        .get("image")
+        .and_then(|value| value.get("image_url"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| DbErr::Custom("同画风参考输出缺少 image_url".to_string()))?;
+    crate::repositories::storybook_creation_assets::mark_visual_reference_awaiting_confirmation_by_job(
+        db,
+        job.workspace_id,
+        job.id,
+        image_url.to_string(),
+    )
+    .await
+}
+
 async fn apply_creation_storybook_generate(
     db: &impl ConnectionTrait,
     storybook_id: Uuid,
@@ -101,6 +128,7 @@ async fn apply_creation_storybook_generate(
     {
         replace_pages_from_generation(db, storybook_id, output).await?;
     }
+    freeze_creation_storybook_evidence(db, storybook_id, job).await?;
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
@@ -120,6 +148,44 @@ async fn apply_creation_storybook_generate(
         &creation_generation_summary(output),
     )
     .await
+}
+
+async fn freeze_creation_storybook_evidence(
+    db: &impl ConnectionTrait,
+    storybook_id: Uuid,
+    job: &GenerationJob,
+) -> Result<(), DbErr> {
+    let evidence = creation_storybook_evidence_json(job);
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        update storybooks
+        set customization_plan = $2,
+            updated_at = now()
+        where id = $1
+        "#,
+        [storybook_id.into(), evidence.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+fn creation_storybook_evidence_json(job: &GenerationJob) -> JsonValue {
+    serde_json::json!({
+        "entry_type": "direct_create",
+        "creation_session_id": job.input_json.get("creation_session_id"),
+        "generation_job_id": job.id,
+        "quick_idea": job.input_json.get("quick_idea"),
+        "understanding": job.input_json.get("understanding"),
+        "materials": job.input_json.get("materials"),
+        "selected_direction": job.input_json.get("selected_direction"),
+        "outline": job.input_json.get("outline"),
+        "page_evidence": job.input_json.get("page_evidence"),
+        "asset_references": job.input_json.get("asset_references"),
+        "visual_preferences": job.input_json.get("visual_preferences"),
+        "generation_mode": job.input_json.get("generation_mode"),
+        "include_images": job.input_json.get("include_images"),
+    })
 }
 
 fn creation_generation_summary(output: &JsonValue) -> CreationGenerationSummary {
@@ -484,4 +550,76 @@ fn normalized_role_type(value: &str) -> String {
 
 fn default_needs_consistency(role_type: &str) -> bool {
     matches!(role_type, "protagonist" | "teacher")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::GenerationJob;
+    use chrono::Utc;
+    use serde_json::json;
+
+    #[test]
+    fn direct_creation_evidence_freezes_generation_input_for_storybook_review() {
+        let job = GenerationJob {
+            id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            storybook_id: Some(Uuid::new_v4()),
+            created_by: Some(Uuid::new_v4()),
+            job_type: "creation_storybook_generate".to_string(),
+            status: "succeeded".to_string(),
+            input_json: json!({
+                "creation_session_id": Uuid::new_v4(),
+                "quick_idea": "给乐乐做一本和小汽车过桥的故事。",
+                "outline": {
+                    "pages": [
+                        { "page_number": 1, "material_ids": ["m1"] }
+                    ]
+                },
+                "page_evidence": [
+                    {
+                        "page_number": 1,
+                        "asset_reference_ids": ["asset-ref-1"],
+                        "asset_references": [
+                            {
+                                "asset_reference_id": "asset-ref-1",
+                                "visual_reference_id": "visual-ref-1"
+                            }
+                        ]
+                    }
+                ],
+                "asset_references": [
+                    {
+                        "id": "asset-ref-1",
+                        "usage": "story_object"
+                    }
+                ],
+                "visual_preferences": {
+                    "style": "watercolor"
+                },
+                "generation_mode": "full_draft",
+                "include_images": false
+            }),
+            output_json: None,
+            attempt_count: 1,
+            last_error: None,
+            next_run_at: None,
+            locked_by: None,
+            locked_at: None,
+            created_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+        };
+
+        let evidence = creation_storybook_evidence_json(&job);
+
+        assert_eq!(evidence["entry_type"], "direct_create");
+        assert_eq!(evidence["generation_job_id"], job.id.to_string());
+        assert_eq!(evidence["page_evidence"][0]["page_number"], 1);
+        assert_eq!(
+            evidence["page_evidence"][0]["asset_references"][0]["visual_reference_id"],
+            "visual-ref-1"
+        );
+        assert_eq!(evidence["asset_references"][0]["id"], "asset-ref-1");
+        assert_eq!(evidence["visual_preferences"]["style"], "watercolor");
+    }
 }

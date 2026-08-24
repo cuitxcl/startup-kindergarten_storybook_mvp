@@ -1,5 +1,6 @@
 import { ArrowRight, CheckCircle2, Copy, Download, MoreHorizontal, Pencil, Send } from "lucide-react";
 import { ChangeEvent, FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   cancelGenerationJob,
@@ -15,6 +16,8 @@ import {
   duplicateStorybook,
   getStorybookExport,
   getStorybook,
+  getStorybookCustomizationRun,
+  isApiClientError,
   listStorybookImageVariants,
   listShareLinksPage,
   listStorybookGenerationJobs,
@@ -28,9 +31,10 @@ import {
   type ExportJob,
   type GenerationJob,
   type ShareLink,
+  type StorybookCustomizationRun,
 } from "../../api/client";
 import { ActionButton, Badge, Card, ImageLightbox, Modal, Notice, PageHeader, SkeletonBlock, Toast, statusTone } from "../../components/ui";
-import type { Storybook, StorybookImageVariant, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
+import type { Storybook, StorybookImageVariant, StorybookPage, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
 import { absoluteAppUrl, copyText } from "../../utils/clipboard";
 import { cacheImagePreview, getCachedImagePreview } from "../../utils/imagePreviewCache";
 import { pageAspectCssRatio, pageAspectLabel } from "../../utils/pageAspect";
@@ -88,6 +92,68 @@ import {
 } from "./detail/helpers";
 
 const COVER_PAGE_ID = "__cover__";
+type CustomizationPagePlanItem = {
+  source_page_id?: string;
+  page_number?: number;
+  decision?: string;
+  title?: string;
+};
+
+type CustomizationPlanSummary = {
+  pagePlan: CustomizationPagePlanItem[];
+  mode?: string;
+  primaryMaterial?: string;
+  targetChildId?: string;
+  sourceTitle?: string;
+  targetNickname?: string;
+  sourceSnapshot?: {
+    title?: string;
+    status?: string;
+    updatedAt?: string;
+    pageCount?: number;
+    previewPageCount?: number;
+  };
+};
+
+type RunPageEvidenceItem = {
+  source_page_id?: string;
+  page_number?: number;
+  title?: string;
+  decision?: string;
+  reason?: string;
+  requires_redraw?: boolean;
+  asset_reference_ids?: string[];
+  evidence_source?: string;
+};
+
+type RunPhotoReferenceItem = {
+  asset_reference_id?: string;
+  visual_reference_id?: string;
+  display_name?: string;
+  usage?: string;
+  reference_type?: string;
+};
+
+type DirectAssetReferenceItem = {
+  id?: string;
+  display_name?: string;
+  usage?: string;
+  kind?: string;
+  visual_reference?: {
+    id?: string;
+    status?: string;
+  };
+};
+
+type DirectCreationEvidenceSummary = {
+  creationSessionId?: string;
+  generationJobId?: string;
+  selectedDirectionTitle?: string;
+  outlinePageCount: number;
+  assetReferences: DirectAssetReferenceItem[];
+  pageEvidence: RunPageEvidenceItem[];
+};
+
 type BulkImageStep = {
   id: string;
   label: string;
@@ -97,12 +163,171 @@ type BulkImageStep = {
   error?: string;
 };
 
+function customizationPlanSummary(plan: unknown): CustomizationPlanSummary | null {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return null;
+  const record = plan as Record<string, unknown>;
+  const pagePlan = Array.isArray(record.page_plan)
+    ? record.page_plan.filter((item): item is CustomizationPagePlanItem => Boolean(item && typeof item === "object"))
+    : [];
+  if (!pagePlan.length) return null;
+  const sourceSnapshotRecord = record.source_snapshot && typeof record.source_snapshot === "object" && !Array.isArray(record.source_snapshot)
+    ? record.source_snapshot as Record<string, unknown>
+    : null;
+  return {
+    pagePlan,
+    mode: typeof record.mode === "string" ? record.mode : undefined,
+    primaryMaterial: typeof record.primary_material === "string" ? record.primary_material : undefined,
+    targetChildId: typeof record.target_child_id === "string" ? record.target_child_id : undefined,
+    sourceTitle: typeof record.source_storybook_title === "string" ? record.source_storybook_title : undefined,
+    targetNickname: typeof record.target_child_nickname === "string" ? record.target_child_nickname : undefined,
+    sourceSnapshot: sourceSnapshotRecord ? {
+      title: typeof sourceSnapshotRecord.title === "string" ? sourceSnapshotRecord.title : undefined,
+      status: typeof sourceSnapshotRecord.status === "string" ? sourceSnapshotRecord.status : undefined,
+      updatedAt: typeof sourceSnapshotRecord.updated_at === "string" ? sourceSnapshotRecord.updated_at : undefined,
+      pageCount: typeof sourceSnapshotRecord.page_count === "number" ? sourceSnapshotRecord.page_count : undefined,
+      previewPageCount: Array.isArray(sourceSnapshotRecord.preview_pages) ? sourceSnapshotRecord.preview_pages.length : undefined,
+    } : undefined,
+  };
+}
+
+function customizationDecisionLabel(decision?: string) {
+  if (decision === "keep") return "保持";
+  if (decision === "prefer_keep") return "尽量保持";
+  if (decision === "redraw_required") return "必须重绘";
+  if (decision === "personalize") return "变成对象版本";
+  return "待确认";
+}
+
+function customizationDecisionTone(decision?: string) {
+  if (decision === "keep" || decision === "prefer_keep") return "good" as const;
+  if (decision === "redraw_required") return "warn" as const;
+  if (decision === "personalize") return "info" as const;
+  return "neutral" as const;
+}
+
+function deliveryGateErrorCopy(error: unknown) {
+  if (isApiClientError(error) && error.code === "custom_evidence_missing") {
+    return evidenceMissingCopy(
+      error.details,
+      "本次定制绘本缺少运行证据，请先刷新修改与交付页；如果仍未恢复，请重新制作这本专属绘本后再导出或分享。",
+    );
+  }
+  if (isApiClientError(error) && error.code === "direct_creation_evidence_missing") {
+    return evidenceMissingCopy(
+      error.details,
+      "这本专属绘本缺少生成证据，请先回到修改与交付页检查或重新制作后再导出或分享。",
+    );
+  }
+  return error instanceof Error ? error.message : "请稍后重试";
+}
+
+function evidenceMissingCopy(details: unknown, fallback: string) {
+  if (!details || typeof details !== "object") return fallback;
+  const record = details as Record<string, unknown>;
+  const missing = Array.isArray(record.missing)
+    ? record.missing.filter((item): item is string => typeof item === "string")
+    : [];
+  const missingPages = Array.isArray(record.missing_pages)
+    ? record.missing_pages.filter((item): item is number => typeof item === "number")
+    : [];
+  const parts = [];
+  if (missingPages.length) {
+    parts.push(`缺少第 ${missingPages.join("、")} 页的证据`);
+  }
+  if (missing.length) {
+    parts.push(`缺失字段：${missing.map(evidenceFieldLabel).join("、")}`);
+  }
+  if (!parts.length) return fallback;
+  return `${parts.join("；")}。请回到修改与交付页定位对应页面，刷新证据或重新制作后再导出或分享。`;
+}
+
+function evidenceFieldLabel(field: string) {
+  const labels: Record<string, string> = {
+    customization_run_id: "制作运行",
+    customization_run_item_id: "运行项",
+    customization_run_item: "运行项快照",
+    page_evidence: "页级证据",
+    page_evidence_pages: "部分页面证据",
+    succeeded_run_item: "成功运行项",
+    matching_output_storybook_id: "输出绘本关联",
+    direct_creation_evidence: "直接创作证据",
+  };
+  return labels[field] || field;
+}
+
+function pageReviewStatusLabel(status?: StorybookPage["reviewStatus"]) {
+  if (status === "satisfied") return "已满意";
+  if (status === "needs_changes") return "继续处理";
+  return "未检查";
+}
+
+function pageReviewStatusTone(status?: StorybookPage["reviewStatus"]) {
+  if (status === "satisfied") return "good" as const;
+  if (status === "needs_changes") return "warn" as const;
+  return "neutral" as const;
+}
+
+function pageEvidenceFromSnapshot(snapshot: unknown): RunPageEvidenceItem[] {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return [];
+  const evidence = (snapshot as Record<string, unknown>).page_evidence;
+  if (!Array.isArray(evidence)) return [];
+  return evidence.filter((item): item is RunPageEvidenceItem => Boolean(item && typeof item === "object"));
+}
+
+function photoReferencesFromSnapshot(snapshot: unknown): RunPhotoReferenceItem[] {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return [];
+  const references = (snapshot as Record<string, unknown>).confirmed_photo_references;
+  if (!Array.isArray(references)) return [];
+  return references.filter((item): item is RunPhotoReferenceItem => Boolean(item && typeof item === "object"));
+}
+
+function photoReferenceLabel(reference: RunPhotoReferenceItem) {
+  const name = reference.display_name || "照片参考";
+  const type = reference.reference_type || "照片参考";
+  return `${name} · ${type}`;
+}
+
+function directCreationEvidenceSummary(plan: unknown): DirectCreationEvidenceSummary | null {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return null;
+  const record = plan as Record<string, unknown>;
+  if (record.entry_type !== "direct_create") return null;
+  const selectedDirection = record.selected_direction && typeof record.selected_direction === "object" && !Array.isArray(record.selected_direction)
+    ? record.selected_direction as Record<string, unknown>
+    : null;
+  const outline = record.outline && typeof record.outline === "object" && !Array.isArray(record.outline)
+    ? record.outline as Record<string, unknown>
+    : null;
+  const outlinePages = Array.isArray(outline?.pages) ? outline.pages : [];
+  const assetReferences = Array.isArray(record.asset_references)
+    ? record.asset_references.filter((item): item is DirectAssetReferenceItem => Boolean(item && typeof item === "object"))
+    : [];
+  const pageEvidence = pageEvidenceFromSnapshot(record);
+  return {
+    creationSessionId: typeof record.creation_session_id === "string" ? record.creation_session_id : undefined,
+    generationJobId: typeof record.generation_job_id === "string" ? record.generation_job_id : undefined,
+    selectedDirectionTitle: typeof selectedDirection?.title === "string" ? selectedDirection.title : undefined,
+    outlinePageCount: outlinePages.length,
+    assetReferences,
+    pageEvidence,
+  };
+}
+
+function generationInputRecord(snapshot: unknown): Record<string, unknown> | null {
+  return snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+    ? snapshot as Record<string, unknown>
+    : null;
+}
+
 export function StorybookDetailPage() {
   const { workspace } = useOutletContext<{ workspace: Workspace }>();
   const { storybookId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const isReviewRoute = location.pathname.endsWith("/review");
+  const searchParams = new URLSearchParams(location.search);
+  const explicitDetailView = searchParams.get("view") === "detail";
   const [remoteBook, setRemoteBook] = useState<Storybook | null>(null);
+  const [customizationRun, setCustomizationRun] = useState<StorybookCustomizationRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const book = remoteBook;
@@ -116,6 +341,7 @@ export function StorybookDetailPage() {
   const [zoomedImage, setZoomedImage] = useState<{ src: string; alt: string } | null>(null);
   const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
+  const [deliveryRecordMount, setDeliveryRecordMount] = useState<HTMLDivElement | null>(null);
   const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
   const [shareSaving, setShareSaving] = useState(false);
   const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
@@ -130,6 +356,7 @@ export function StorybookDetailPage() {
   const [duplicateTitle, setDuplicateTitle] = useState("");
   const [deliverySaving, setDeliverySaving] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [pageReviewSaving, setPageReviewSaving] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaForm, setMetaForm] = useState({
@@ -182,6 +409,7 @@ export function StorybookDetailPage() {
       || pageForm.body !== selectedPage.body
       || pageForm.illustrationPrompt !== selectedPage.illustrationPrompt
     : false;
+  const quality = book ? book.quality || buildLocalStorybookQuality(book) : undefined;
   const deliveryBlockers = book ? [
     ...(book.pages.length ? [] : ["至少需要一个分页"]),
     ...(book.roles.length ? [] : ["至少需要一个角色或道具设定"]),
@@ -189,13 +417,15 @@ export function StorybookDetailPage() {
     ...(book.pages.some((page) => page.status === "draft") ? ["仍有分页插图未生成"] : []),
     ...(book.pages.some((page) => page.status === "failed") ? ["存在插图生成失败的分页"] : []),
     ...(book.pages.some((page) => page.status === "needs_regeneration") ? ["存在待重新生成插图的分页"] : []),
+    ...(book.pages.some((page) => page.reviewStatus !== "satisfied") ? ["还有分页未确认满意"] : []),
+    ...(book.teacherReviewStatus !== "confirmed" ? ["请先确认已人工复核"] : []),
+    ...(quality?.status === "blocked" ? ["生成质量检查存在阻断项"] : []),
   ] : [];
   const deliveryWarnings: string[] = [];
   const canDeliver =
     Boolean(book && book.id === storybookId && (book.status === "exportable" || book.status === "listed"));
   const canMarkDeliverable =
     Boolean(book && book.id === storybookId && (book.status === "editing" || book.status === "image_pending") && deliveryBlockers.length === 0);
-  const quality = book ? book.quality || buildLocalStorybookQuality(book) : undefined;
   const reviewDeliveryReminder = book && book.teacherReviewStatus !== "confirmed"
     ? "这本绘本还没有人工复核记录，建议先确认已复核后再导出或分享。"
     : "";
@@ -206,6 +436,13 @@ export function StorybookDetailPage() {
   const canStartDelivery = canDeliver && !qualityDeliveryBlocker;
   const customizationBlocker = book ? customizationBlockerFor(book, quality) : "请等待当前绘本加载完成";
   const canCreateCustomVersion = book?.type === "plain" && !customizationBlocker;
+  const customizationRunItem = book?.customizationRunItemId
+    ? customizationRun?.items.find((item) => item.id === book.customizationRunItemId)
+    : customizationRun?.items.find((item) => item.outputStorybookId === book?.id);
+  const runPageEvidence = pageEvidenceFromSnapshot(customizationRunItem?.generationInputSnapshot);
+  const runPhotoReferences = photoReferencesFromSnapshot(customizationRunItem?.generationInputSnapshot);
+  const runPhotoReferenceById = new Map(runPhotoReferences.map((reference) => [reference.asset_reference_id, reference]));
+  const runInput = generationInputRecord(customizationRunItem?.generationInputSnapshot);
   const selectedPageQuality = selectedPage && !selectedViewIsCover && quality
     ? quality.pages.find((page) => page.pageId === selectedPage.id)
     : undefined;
@@ -230,6 +467,11 @@ export function StorybookDetailPage() {
   const shouldShowBulkImageAction = Boolean(book?.pages.length && (book.status === "editing" || book.status === "image_pending"));
 
   useEffect(() => {
+    if (!book || isReviewRoute || explicitDetailView || book.type !== "custom") return;
+    navigate(`/app/${workspace.id}/storybooks/${book.id}/review${location.search}`, { replace: true });
+  }, [book, explicitDetailView, isReviewRoute, location.search, navigate, workspace.id]);
+
+  useEffect(() => {
     workspaceMainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [selectedPageId]);
 
@@ -238,6 +480,7 @@ export function StorybookDetailPage() {
     let mounted = true;
     setLoading(true);
     setRemoteBook(null);
+    setCustomizationRun(null);
     setShareLinks([]);
     setExportJobs([]);
     setGenerationJobs([]);
@@ -279,6 +522,29 @@ export function StorybookDetailPage() {
       mounted = false;
     };
   }, [storybookId, workspace.id]);
+
+  useEffect(() => {
+    const runId = book?.customizationRunId;
+    if (!runId) {
+      setCustomizationRun(null);
+      return;
+    }
+    let active = true;
+    const refreshRun = () => getStorybookCustomizationRun(workspace.id, runId)
+      .then((run) => {
+        if (active) setCustomizationRun(run);
+      })
+      .catch(() => {
+        if (active) setCustomizationRun(null);
+      });
+    refreshRun();
+    const isActiveRun = ["queued", "running"].includes(customizationRun?.status || "");
+    const timer = isActiveRun ? window.setInterval(refreshRun, 2500) : undefined;
+    return () => {
+      active = false;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [book?.customizationRunId, customizationRun?.status, workspace.id]);
 
   useEffect(() => {
     if (selectedViewIsCover || !book?.id || !selectedPage?.id) {
@@ -510,20 +776,48 @@ export function StorybookDetailPage() {
   const activeAnyImageJob = Boolean(activeCoverImageJob || activePageImageJobs > 0);
   const readyPageCount = book?.pages.filter((page) => page.status === "ready").length || 0;
   const issuePageCount = book?.pages.filter((page) => page.status === "failed" || page.status === "needs_regeneration").length || 0;
-  const reviewMaterialLabels = book ? [
-    book.useScene,
-    book.ageGroup,
-    book.teachingGoal,
-    ...book.roles.slice(0, 3).map((role) => role.name),
-  ].filter(Boolean) : [];
-  const reviewPanelStatus = canDeliver
+  const satisfiedPageCount = book?.pages.filter((page) => page.reviewStatus === "satisfied").length || 0;
+  const allPagesReviewed = Boolean(book?.pages.length && satisfiedPageCount >= book.pages.length);
+  const customizationPlan = book?.type === "custom" ? customizationPlanSummary(book.customizationPlan) : null;
+  const directCreationEvidence = book ? directCreationEvidenceSummary(book.customizationPlan) : null;
+  const directAssetReferenceById = new Map(directCreationEvidence?.assetReferences.map((reference) => [reference.id, reference]) || []);
+  const deliveryEvidenceIssueCount = book && canDeliver
+    ? book.type === "custom"
+      ? [
+        !book.customizationRunId,
+        book.customizationRunId && !customizationRunItem,
+        customizationRunItem && !runInput?.source_snapshot,
+        customizationRunItem && !runInput?.page_plan,
+        customizationRunItem && runPageEvidence.length < book.pages.length,
+      ].filter(Boolean).length
+      : book.customizationPlan && directCreationEvidence
+        ? [
+          !directCreationEvidence.creationSessionId,
+          !directCreationEvidence.generationJobId,
+          !directCreationEvidence.selectedDirectionTitle,
+          directCreationEvidence.outlinePageCount === 0,
+          directCreationEvidence.pageEvidence.length < book.pages.length,
+        ].filter(Boolean).length
+        : 0
+    : 0;
+  const canStartExport = canStartDelivery && deliveryEvidenceIssueCount === 0;
+  const customizationPlanCounts = customizationPlan?.pagePlan.reduce<Record<string, number>>((counts, item) => {
+    const key = item.decision || "unknown";
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {}) || {};
+  const reviewPanelStatus = deliveryEvidenceIssueCount > 0
+    ? "需处理"
+    : canDeliver
     ? "作品完成"
     : shouldShowBulkImageAction && bulkImageTotal > 0
       ? "待补插图"
       : issuePageCount > 0
         ? "需处理"
         : "验收中";
-  const reviewPanelTone = canDeliver
+  const reviewPanelTone = deliveryEvidenceIssueCount > 0
+    ? "warn"
+    : canDeliver
     ? "good"
     : issuePageCount > 0
       ? "warn"
@@ -744,6 +1038,27 @@ export function StorybookDetailPage() {
       setRetryImageJob(null);
     } catch (err) {
       setNotice({ title: "保存失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+    }
+  }
+
+  async function savePageReviewStatus(reviewStatus: StorybookPage["reviewStatus"]) {
+    if (!selectedPage || !storybookId) return;
+    setPageReviewSaving(true);
+    try {
+      const updated = await updateStorybookPage(workspace.id, storybookId, selectedPage.id, {
+        reviewStatus,
+      });
+      await refreshStorybook(storybookId);
+      setNotice({
+        title: reviewStatus === "satisfied" ? "已记录本页满意" : "已记录继续处理",
+        copy: `第 ${updated.pageNumber} 页当前状态：${pageReviewStatusLabel(updated.reviewStatus)}。`,
+        tone: reviewStatus === "satisfied" ? "good" : "info",
+      });
+      setRetryImageJob(null);
+    } catch (err) {
+      setNotice({ title: "记录失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+    } finally {
+      setPageReviewSaving(false);
     }
   }
 
@@ -1240,7 +1555,7 @@ export function StorybookDetailPage() {
       });
       setRetryImageJob(null);
     } catch (err) {
-      setNotice({ title: "导出失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+      setNotice({ title: "导出失败", copy: deliveryGateErrorCopy(err), tone: "info" });
     } finally {
       setExporting(false);
     }
@@ -1382,7 +1697,7 @@ export function StorybookDetailPage() {
       setNotice({ title: "分享链接已创建", copy: `链接：${link.url}。${shareExpiryLabel(link.expiresAt)}。收到这个链接的人可以直接打开家庭分享页。${reviewDeliveryReminder ? ` ${reviewDeliveryReminder}` : ""}`, tone: "good" });
       setRetryImageJob(null);
     } catch (err) {
-      setNotice({ title: "分享失败", copy: err instanceof Error ? err.message : "请稍后重试", tone: "info" });
+      setNotice({ title: "分享失败", copy: deliveryGateErrorCopy(err), tone: "info" });
     } finally {
       setShareSaving(false);
     }
@@ -1444,6 +1759,11 @@ export function StorybookDetailPage() {
   const scrollToWorkspace = () => {
     document.getElementById("page-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  const scrollToDeliveryEvidence = () => {
+    const evidence = document.getElementById("delivery-evidence");
+    if (evidence instanceof HTMLDetailsElement) evidence.open = true;
+    (evidence || document.getElementById("page-workspace"))?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const retryImageJobActionLabel = retryImageJob?.jobType === "storybook_cover_image"
     ? "重新生成封面图"
     : retryImageJob?.jobType === "storybook_role_reference_image"
@@ -1453,9 +1773,11 @@ export function StorybookDetailPage() {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow={book.type === "plain" ? "专属故事验收" : "定制故事验收"}
+        eyebrow={isReviewRoute ? "修改与交付" : book.type === "plain" ? "普通绘本详情" : "定制绘本详情"}
         title={book.title}
-        copy={`浏览整本作品，只编辑或重画不满意的页面。${storybookSourceLabel(book)}。归属：${workspace.name}`}
+        copy={isReviewRoute
+          ? "从封面开始检查，满意的页面可逐页确认；需要调整时直接修改或重绘。"
+          : "浏览整本作品，只编辑或重画不满意的页面。"}
         actionClassName="storybook-detail-actions"
         className="storybook-detail-header"
         actions={
@@ -1465,18 +1787,20 @@ export function StorybookDetailPage() {
               <ActionButton className="button primary" disabled={bulkImageGenerating || imageGenerating || activeAnyImageJob} disabledHint={activeAnyImageJob ? "已有插图正在生成，请稍候" : undefined} onClick={generateAllImages}>
                 {bulkImageGenerating ? "生成插图中..." : `一键生成插图${bulkImageTotal ? `（${bulkImageTotal} 张）` : ""}`}
               </ActionButton>
+            ) : deliveryEvidenceIssueCount > 0 ? (
+              <button className="button primary" type="button" onClick={scrollToDeliveryEvidence}>先处理 {deliveryEvidenceIssueCount} 个问题</button>
+            ) : (book.status === "editing" || book.status === "image_pending") && !allPagesReviewed ? (
+              <button className="button primary" type="button" onClick={scrollToWorkspace}>{satisfiedPageCount > 0 ? "继续检查" : "开始检查"}</button>
             ) : canDeliver ? (
-              <ActionButton className="button primary" disabled={exporting || !canStartDelivery} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || (exporting ? "导出进行中" : undefined)} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</ActionButton>
+              <ActionButton className="button primary" disabled={exporting || !canStartExport} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || (exporting ? "导出进行中" : undefined)} onClick={exportPdf}><Download size={16} />{exporting ? "导出中..." : "导出 PDF"}</ActionButton>
             ) : (book.status === "editing" || book.status === "image_pending") ? (
-              <ActionButton className="button primary" disabled={deliverySaving || !canMarkDeliverable} disabledHint={deliveryBlockers.join("；") || "请等待当前绘本加载完成"} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "全部看过，完成作品"}</ActionButton>
+              <ActionButton className="button primary" disabled={deliverySaving || !canMarkDeliverable} disabledHint={deliveryBlockers.join("；") || "请等待当前绘本加载完成"} onClick={markDeliverable}><CheckCircle2 size={16} />{deliverySaving ? "确认中..." : "完成验收"}</ActionButton>
             ) : (
               <button className="button primary" type="button" onClick={scrollToWorkspace}>继续验收</button>
             )}
             {/* 次操作 */}
             {canDeliver ? (
-              <ActionButton className="button secondary" disabled={!canStartDelivery} disabledHint={qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享链接</ActionButton>
-            ) : (book.status === "editing" || book.status === "image_pending") ? (
-              <button className="button secondary" type="button" onClick={scrollToWorkspace}>逐页检查</button>
+              <ActionButton className="button secondary" disabled={!canStartExport} disabledHint={deliveryEvidenceIssueCount > 0 ? "先处理证据缺失问题" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享链接</ActionButton>
             ) : null}
             {/* 其余操作收敛进更多菜单 */}
             <div className="more-menu">
@@ -1485,8 +1809,11 @@ export function StorybookDetailPage() {
                 <>
                   <button className="menu-overlay" type="button" aria-label="关闭菜单" onClick={() => setMoreMenuOpen(false)} />
                   <div className="more-menu-pop">
+                    {isReviewRoute && (
+                      <Link to={`/app/${workspace.id}/storybooks/${book.id}?view=detail`} onClick={() => setMoreMenuOpen(false)}>普通详情<ArrowRight size={14} /></Link>
+                    )}
                     {book.type === "plain" && canCreateCustomVersion && (
-                      <Link to="customize" onClick={() => setMoreMenuOpen(false)}>生成定制版<ArrowRight size={14} /></Link>
+                      <Link to="customize" onClick={() => setMoreMenuOpen(false)}>创作专属版本<ArrowRight size={14} /></Link>
                     )}
                     <button type="button" onClick={() => { setMoreMenuOpen(false); setRoleManagerOpen(true); }}><Pencil size={14} />管理角色</button>
                     <button type="button" onClick={() => { setMoreMenuOpen(false); setMetaOpen(true); }}><Pencil size={14} />编辑信息</button>
@@ -1653,22 +1980,24 @@ export function StorybookDetailPage() {
         </Modal>
       )}
 
-      <Card className="completion-review-panel">
+      {deliveryRecordMount && createPortal(
+        <>
+      <Card className="completion-review-panel delivery-review-panel">
         <div className="completion-review-head">
           <div>
             <Badge tone={reviewPanelTone}>{reviewPanelStatus}</Badge>
-            <h2>{canDeliver ? "作品已准备好预览、导出或分享" : "浏览整本作品，只处理不满意的页面"}</h2>
-            <p>建议至少预览封面和第 1 页，再完成作品、导出或分享。</p>
+            <h2>{canDeliver ? "交付前确认" : "完成检查后可交付"}</h2>
+            <p>{canDeliver ? "确认老师复核后，可继续导出或分享。" : "逐页确认满意后，再完成验收。"}</p>
           </div>
         </div>
         <div className="completion-review-stats">
           <div>
-            <span>插图完成</span>
-            <strong>{readyPageCount} / {book.pages.length} 页</strong>
-          </div>
-          <div>
             <span>待处理</span>
             <strong>{bulkImageTotal + issuePageCount} 项</strong>
+          </div>
+          <div>
+            <span>已满意</span>
+            <strong>{satisfiedPageCount} / {book.pages.length} 页</strong>
           </div>
           <div>
             <span>人工复核</span>
@@ -1676,12 +2005,7 @@ export function StorybookDetailPage() {
           </div>
         </div>
         <div className="completion-review-footer">
-          <div className="completion-review-materials" aria-label="故事素材">
-            <span>这本故事使用了</span>
-            {reviewMaterialLabels.slice(0, 6).map((label) => (
-              <Badge key={label} tone="neutral">{label}</Badge>
-            ))}
-          </div>
+          <span className="form-helper">插图完成 {readyPageCount} / {book.pages.length} 页</span>
           {book.teacherReviewStatus !== "confirmed" && (
             <ActionButton className="button secondary" disabled={reviewSaving || quality?.status === "blocked"} disabledHint={quality?.status === "blocked" ? "质量检查仍有阻断项，请先修正" : undefined} onClick={() => saveTeacherReview("confirmed")}>
               <CheckCircle2 size={16} />{reviewSaving ? "记录中..." : "确认已人工复核"}
@@ -1690,12 +2014,245 @@ export function StorybookDetailPage() {
         </div>
       </Card>
 
-      <div className="workspace-section-head">
+      {directCreationEvidence && (
+        <details id="delivery-evidence" className="creation-record">
+          <summary>
+            <div>
+              <strong>创作记录</strong>
+              <span>查看本次故事方向、页数和照片参考。</span>
+            </div>
+            <Badge tone="good">直接创作</Badge>
+          </summary>
+          <div className="creation-record-body">
+          <div className="customization-source-snapshot">
+            <div>
+              <span>故事方向</span>
+              <strong>{directCreationEvidence.selectedDirectionTitle || "已记录"}</strong>
+            </div>
+            <div>
+              <span>故事页数</span>
+              <strong>{directCreationEvidence.outlinePageCount || directCreationEvidence.pageEvidence.length} 页</strong>
+            </div>
+          </div>
+          {directCreationEvidence.assetReferences.length > 0 && (
+            <div className="customization-plan-list" aria-label="直接创作照片证据">
+              <div className="customization-plan-row">
+                <Badge tone="good">照片素材</Badge>
+                <strong>{directCreationEvidence.assetReferences.length} 张</strong>
+                <span>照片只作为本次创作的绘本视觉参考，不作为原图贴图。</span>
+              </div>
+              {directCreationEvidence.assetReferences.slice(0, 5).map((reference, index) => (
+                <div className="customization-plan-row" key={reference.id || index}>
+                  <Badge tone={reference.visual_reference?.id ? "good" : "neutral"}>{reference.visual_reference?.id ? "视觉参考" : reference.usage || "素材"}</Badge>
+                  <strong>{reference.display_name || reference.id || "照片素材"}</strong>
+                  <span>{reference.visual_reference?.id ? "已用于保持故事画面一致" : reference.kind || "已记录用途"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {directCreationEvidence.pageEvidence.length > 0 && (
+            <div className="customization-plan-list" aria-label="直接创作页级证据">
+              <div className="customization-plan-row">
+                <Badge tone="info">页级证据</Badge>
+                <strong>{directCreationEvidence.pageEvidence.length} 页</strong>
+                <span>记录每页文本、画面和照片素材在故事中的落点。</span>
+              </div>
+              {directCreationEvidence.pageEvidence.slice(0, 6).map((item, index) => (
+                <div className="customization-plan-row" key={`${item.source_page_id || item.page_number || index}`}>
+                  <Badge tone="neutral">第 {item.page_number || index + 1} 页</Badge>
+                  <strong>{item.title || "页面证据"}</strong>
+                  <span>
+                    {item.asset_reference_ids?.length
+                      ? `照片：${item.asset_reference_ids
+                        .map((id) => directAssetReferenceById.get(id))
+                        .filter((reference): reference is DirectAssetReferenceItem => Boolean(reference))
+                        .map((reference) => reference.display_name || reference.id || "照片素材")
+                        .join("、")}`
+                      : "无照片素材落点"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          </div>
+        </details>
+      )}
+
+      {book.customizationRunId && (
+        <Card id="delivery-evidence" className="customization-plan-panel run-record">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">本次制作运行</p>
+              <h2>{customizationRun ? "已关联服务端运行记录" : "正在读取运行记录"}</h2>
+              <p>制作、刷新恢复和后续证据追踪都以这条运行记录为准。</p>
+            </div>
+            <Badge tone={customizationRun?.status === "succeeded" ? "good" : customizationRun?.status === "failed" ? "danger" : "info"}>
+              {customizationRun?.status || "读取中"}
+            </Badge>
+          </div>
+          <div className="customization-source-snapshot">
+            <div>
+              <span>Run ID</span>
+              <strong>{book.customizationRunId}</strong>
+            </div>
+            <div>
+              <span>Run Item</span>
+              <strong>{book.customizationRunItemId || customizationRunItem?.id || "未记录"}</strong>
+            </div>
+            <div>
+              <span>运行模式</span>
+              <strong>{customizationRun?.mode === "batch" ? "批量定制" : customizationRun?.mode === "single" ? "单人定制" : "读取中"}</strong>
+            </div>
+            <div>
+              <span>当前项</span>
+              <strong>{customizationRunItem?.status || "读取中"}</strong>
+            </div>
+          </div>
+          {customizationRunItem && (
+            <div className="customization-source-snapshot">
+              <div>
+                <span>对象快照</span>
+                <strong>{customizationRunItem.targetChildNickname || customizationRunItem.targetChildId}</strong>
+              </div>
+              <div>
+                <span>主素材</span>
+                <strong>{customizationRunItem.primaryMaterial === "name_only" ? "仅使用称呼" : customizationRunItem.primaryMaterial || "已冻结"}</strong>
+              </div>
+              <div>
+                <span>输出绘本</span>
+                <strong>{customizationRunItem.outputStorybookTitle || book.title}</strong>
+              </div>
+              <div>
+                <span>冻结输入</span>
+                <strong>{customizationRunItem.generationInputSnapshot ? "已记录" : "缺失"}</strong>
+              </div>
+            </div>
+          )}
+          {runPhotoReferences.length > 0 && (
+            <div className="customization-plan-list" aria-label="照片参考证据">
+              <div className="customization-plan-row">
+                <Badge tone="good">照片参考</Badge>
+                <strong>{runPhotoReferences.length} 张</strong>
+                <span>已冻结到本次运行，后续页级证据会按照片引用追踪素材落点。</span>
+              </div>
+              {runPhotoReferences.slice(0, 5).map((reference, index) => (
+                <div className="customization-plan-row" key={reference.asset_reference_id || index}>
+                  <Badge tone={reference.visual_reference_id ? "good" : "warn"}>{reference.visual_reference_id ? "视觉参考" : "待补证据"}</Badge>
+                  <strong>{photoReferenceLabel(reference)}</strong>
+                  <span>{reference.visual_reference_id ? `参考 ID：${reference.visual_reference_id}` : "缺少同画风视觉参考记录"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {runPageEvidence.length > 0 && (
+            <div className="customization-plan-list" aria-label="页级运行证据">
+              <div className="customization-plan-row">
+                <Badge tone="info">页级证据</Badge>
+                <strong>{runPageEvidence.length} 页</strong>
+                <span>来自本次运行冻结输入，记录每页保持、变化或重绘原因。</span>
+              </div>
+              {runPageEvidence.slice(0, 6).map((item, index) => (
+                <div className="customization-plan-row" key={`${item.source_page_id || item.page_number || index}`}>
+                  <Badge tone={customizationDecisionTone(item.decision)}>{customizationDecisionLabel(item.decision)}</Badge>
+                  <strong>第 {item.page_number || index + 1} 页</strong>
+                  <span>
+                    {item.title || (item.requires_redraw ? "需要重绘或个性化" : "保持原页")}
+                    {item.reason ? ` · ${item.reason}` : ""}
+                    {item.asset_reference_ids?.length
+                      ? ` · 照片：${item.asset_reference_ids
+                        .map((id) => runPhotoReferenceById.get(id))
+                        .filter((reference): reference is RunPhotoReferenceItem => Boolean(reference))
+                        .map((reference) => reference.display_name || reference.asset_reference_id || "照片参考")
+                        .join("、")}`
+                      : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {customizationPlan && (
+        <Card className="customization-plan-panel change-record">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">本次定制计划</p>
+              <h2>{customizationPlan.targetNickname ? `${customizationPlan.targetNickname} 的变化范围` : "本次变化范围"}</h2>
+              <p>{customizationPlan.sourceTitle ? `来源：《${customizationPlan.sourceTitle}》。` : ""}检查哪些页保持、哪些页变化，再处理不满意的页面。</p>
+            </div>
+            <Badge tone="info">{customizationPlan.pagePlan.length} 页计划</Badge>
+          </div>
+          <div className="customization-plan-stats">
+            <div><span>保持</span><strong>{customizationPlanCounts.keep || 0}</strong></div>
+            <div><span>尽量保持</span><strong>{customizationPlanCounts.prefer_keep || 0}</strong></div>
+            <div><span>对象版本</span><strong>{customizationPlanCounts.personalize || 0}</strong></div>
+            <div><span>必须重绘</span><strong>{customizationPlanCounts.redraw_required || 0}</strong></div>
+          </div>
+          {(customizationPlan.mode || customizationPlan.primaryMaterial || customizationPlan.targetChildId) && (
+            <div className="customization-source-snapshot">
+              <div>
+                <span>制作模式</span>
+                <strong>{customizationPlan.mode === "batch" ? "批量定制" : "单人定制"}</strong>
+              </div>
+              <div>
+                <span>主素材</span>
+                <strong>{customizationPlan.primaryMaterial === "name_only" ? "仅使用称呼" : customizationPlan.primaryMaterial || "已记录"}</strong>
+              </div>
+              <div>
+                <span>对象快照</span>
+                <strong>{customizationPlan.targetNickname || "已冻结"}</strong>
+              </div>
+              <div>
+                <span>对象 ID</span>
+                <strong>{customizationPlan.targetChildId || "未记录"}</strong>
+              </div>
+            </div>
+          )}
+          {customizationPlan.sourceSnapshot && (
+            <div className="customization-source-snapshot">
+              <div>
+                <span>来源快照</span>
+                <strong>{customizationPlan.sourceSnapshot.title || customizationPlan.sourceTitle || "来源绘本"}</strong>
+              </div>
+              <div>
+                <span>来源状态</span>
+                <strong>{customizationPlan.sourceSnapshot.status || "已记录"}</strong>
+              </div>
+              <div>
+                <span>冻结页数</span>
+                <strong>{customizationPlan.sourceSnapshot.pageCount || customizationPlan.pagePlan.length} 页</strong>
+              </div>
+              <div>
+                <span>预览页</span>
+                <strong>{customizationPlan.sourceSnapshot.previewPageCount || customizationPlan.pagePlan.length} 页</strong>
+              </div>
+              {customizationPlan.sourceSnapshot.updatedAt && (
+                <p>基于来源书 {new Date(customizationPlan.sourceSnapshot.updatedAt).toLocaleString()} 的内容状态生成。</p>
+              )}
+            </div>
+          )}
+          <div className="customization-plan-list" aria-label="页级定制计划">
+            {customizationPlan.pagePlan.slice(0, 8).map((item, index) => (
+              <div className="customization-plan-row" key={`${item.source_page_id || item.page_number || index}`}>
+                <Badge tone={customizationDecisionTone(item.decision)}>{customizationDecisionLabel(item.decision)}</Badge>
+                <strong>第 {item.page_number || index + 1} 页</strong>
+                <span>{item.title || "页面内容"}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+        </>,
+        deliveryRecordMount,
+      )}
+
+      <div className="workspace-section-head review-workspace-heading">
         <p className="eyebrow">验收工作台</p>
         <h2>逐页检查与调整</h2>
       </div>
       {(bulkImageSteps.length > 0 || (shouldShowBulkImageAction && bulkImageTotal > 0)) && (
-        <Card className="bulk-image-progress-card">
+        <Card className="bulk-image-progress-card review-image-progress">
           <div className="bulk-image-progress-head">
             <div>
               <Badge tone={bulkImageGenerating ? "info" : bulkImageSteps.some((step) => step.status === "failed") ? "danger" : bulkImageTotal > 0 ? "neutral" : "good"}>
@@ -1722,7 +2279,7 @@ export function StorybookDetailPage() {
           )}
         </Card>
       )}
-      <section className="detail-layout" id="page-workspace">
+      <section className="detail-layout review-workspace" id="page-workspace">
         <aside className="page-strip">
           <h2>页面</h2>
           <button type="button" className={`page-thumb cover-thumb ${selectedViewIsCover ? "active" : ""}`} onClick={() => setSelectedPageId(COVER_PAGE_ID)}>
@@ -1937,6 +2494,34 @@ export function StorybookDetailPage() {
                 <h2>当前页检查</h2>
                 <p>只处理本页需要复核或重绘的内容。</p>
               </div>
+              <Badge tone={pageReviewStatusTone(selectedPage.reviewStatus)}>
+                {pageReviewStatusLabel(selectedPage.reviewStatus)}
+              </Badge>
+            </div>
+            <div className="reference-guard-callout">
+              <Badge tone={pageReviewStatusTone(selectedPage.reviewStatus)}>人工检查</Badge>
+              <div>
+                <strong>{selectedPage.reviewStatus === "satisfied" ? "这页已记录满意" : selectedPage.reviewStatus === "needs_changes" ? "这页还要继续处理" : "这页还没有记录满意状态"}</strong>
+                <span>{selectedPage.reviewedAt ? `上次记录：${selectedPage.reviewedAt}。` : "满意状态会保存到后端，刷新后仍可恢复。"}</span>
+              </div>
+              <span className="inline-actions">
+                <button
+                  className="button secondary compact"
+                  type="button"
+                  disabled={pageReviewSaving || selectedPage.reviewStatus === "satisfied"}
+                  onClick={() => savePageReviewStatus("satisfied")}
+                >
+                  {pageReviewSaving ? "记录中..." : "这页满意"}
+                </button>
+                <button
+                  className="button ghost compact"
+                  type="button"
+                  disabled={pageReviewSaving || selectedPage.reviewStatus === "needs_changes"}
+                  onClick={() => savePageReviewStatus("needs_changes")}
+                >
+                  继续处理
+                </button>
+              </span>
             </div>
             {selectedPageQuality && selectedPageQuality.status !== "passed" && (
               <div className="quality-focus-callout">
@@ -2006,6 +2591,7 @@ export function StorybookDetailPage() {
           )}
         </div>
       </section>
+      <div className="delivery-record-mount" ref={setDeliveryRecordMount} />
 
       {shareOpen && (
         <ShareLinksModal

@@ -30,7 +30,7 @@ export function ChildDetailPage() {
     .find((item) => item.status === "exportable")
     || remoteSourceBooks.find((item) => item.workspaceId === workspace.id && item.type === "plain");
   const customizeTarget = preferredSource ? `/app/${workspace.id}/storybooks/${preferredSource.id}/customize?childId=${child?.id || ""}` : `/app/${workspace.id}/storybooks`;
-  const customizeActionLabel = preferredSource ? `从《${preferredSource.title}》生成定制绘本` : "先选择普通绘本";
+  const customizeActionLabel = preferredSource ? `从《${preferredSource.title}》创作专属版本` : "先选择普通绘本";
   const [form, setForm] = useState({
     nickname: "",
     ageGroup: "3-4 岁",
@@ -169,7 +169,7 @@ export function ChildDetailPage() {
           <h2>相关定制绘本</h2>
           {related.length === 0 ? (
             <>
-              <p>还没有为这个孩子生成定制绘本。可以先从一本文字和插图都稳定的普通绘本开始。</p>
+              <p>还没有为这个孩子创作专属版本。可以先从一本文字和插图都稳定的普通绘本开始。</p>
               <Link className="button primary" to={customizeTarget}>{customizeActionLabel}</Link>
             </>
           ) : (

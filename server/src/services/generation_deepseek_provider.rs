@@ -527,13 +527,13 @@ pub(crate) fn prompt_for(job_type: &str) -> String {
                 .to_string()
         }
         "storybook_pages" => {
-            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。如果 input.creation_context 存在，说明这是“专属故事共创”的最终成品生成：必须优先服务用户的被理解、参与感和私人定制感；正文要承接 input.creation_context.quick_idea、understanding、selected_direction、materials、visual_preferences，不能只泛泛扩写 outline。input.creation_context.materials 中 locked=true 的素材，其 label 必须至少一次原样出现在某一页 title、body 或最终插图描述中；如果素材较难自然进入正文，也要用原 label 放入画面道具、场景细节或角色称呼里，避免只做语义暗示。\n\n必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。每页正文应像正式儿童绘本文案：简短、有画面、有情绪推进，避免说教，避免把大纲句原样复制成正文。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
+            format!("根据已确认方案和角色生成分页图文，每页包含标题、正文和插图设定。如果 input.creation_context 存在，说明这是“专属绘本创作”的最终成品生成：必须优先服务用户的被理解、参与感和私人定制感；正文要承接 input.creation_context.quick_idea、understanding、selected_direction、materials、visual_preferences，不能只泛泛扩写 outline。\n\n专属素材规则：input.creation_context.materials 中 locked=true 的素材，其 label 必须至少一次原样出现在某一页 title、body 或最终插图描述中；如果素材较难自然进入正文，也要用原 label 放入画面道具、场景细节或角色称呼里，避免只做语义暗示。如果 input.creation_context.asset_references 或 confirmed_photo_references 非空，这些是用户已确认的真实照片同画风视觉参考：必须使用 display_name 原名，并按 usage/kind 把它写成角色、道具或场景约束；不要把原始照片当贴图、不要承诺像不像、不要凭空识别人脸身份。每个已确认照片参考必须落到 input.creation_context.page_evidence 指定的页；没有页级落点时，在 quality_notice 里用用户语言提示需要重新预览。\n\n必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。每页正文应像正式儿童绘本文案：简短、有画面、有情绪推进，避免说教，避免把大纲句原样复制成正文。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
         }
         "storybook_page_prompt" => {
             format!("根据 input.page 的标题（title）和正文（body），为这一页重新创作插图设定，替换现有插图描述。正文必须忠于 input.page.body，不要改动剧情。必须严格沿用 input.confirmed_roles 中的完整角色姓名、身份、外观和关键道具；正文、标题和插图槽位里只要点名角色，就必须使用 confirmed_roles.name 的完整名称，不要把“兔老师”简称为“小兔”、把“小狐狸图图”改成“小狐狸”或创造任何昵称；不得把人类角色改成动物或新增替代主角。\n\ninput.neighbor_pages 包含前后相邻页的插图描述（可能为空）：本页必须与相邻页保持场景连续，相邻页出现的人群在本页必须仍在场（可以退到后排或让出画面中心，但不能消失）；如果剧情确实让人群散去了，必须在 crowd 槽位写明人群去了哪里。\n\n{COMPACT_ILLUSTRATION_SLOT_GUIDE}")
         }
         "customization_plan" => {
-            "基于普通绘本和儿童档案生成定制方案，只输出可审核的改写点和风险检查。"
+            "基于已有普通绘本和目标对象生成“专属绘本创作”的定制计划，只输出可审核的计划 JSON，不写正文、不改源书。\n\n产品硬约束：来源绘本永远只读；必须保留来源书主线、页数和阅读节奏，只规划哪些页保持、哪些页变成目标对象版本、哪些页因为图文冲突必须重绘、哪些页可选重绘。新增文字或照片素材只能影响目标对象、被选变化页和服务端判定必须重绘的关键页，不能默认重写整本书。若输入包含 source_snapshot，必须基于其 page_count、pages、updated_at 判断计划；若输入包含 confirmed_photo_references，它们是已确认同画风视觉参考，必须按 display_name、usage、reference_type 规划 planned_pages；不能把原始照片当贴图，不能承诺自动判断像不像。\n\n隐私与职责边界：不要输出儿童 id、儿童真实姓名、来源绘本 id、页面 UUID、asset_reference_id、visual_reference_id 或任何后端内部 id；即使输入里出现 opaque id，也不要复述。模型只负责内容计划、页码、变化原因和风险提示；后端负责把 source_storybook_id、source_page_id、target_child_id、asset_reference_id、visual_reference_id 冻结进 snapshot 和 evidence。\n\n输出字段必须便于后端门禁：source_snapshot 只保留标题、状态、更新时间、页数和页码摘要；page_plan 每页包含 page_number、decision（keep/personalize/redraw_optional/redraw_required）、requires_redraw、reason、material_labels、photo_display_names；confirmed_photo_references 按 display_name 返回参考类型、usage 和 planned_pages；unplaced_materials 说明无法自然落页的素材；risk_checks 用用户可理解语言指出需要重新预览或补素材的风险。"
                 .to_string()
         }
         "creation_understanding" => {
@@ -610,11 +610,30 @@ pub(crate) fn response_schema_for(job_type: &str) -> JsonValue {
             "provider": "string",
             "mode": "customization_plan",
             "message": "string",
-            "customization": {
-                "child_id": "string",
-                "intensity": "string",
+            "customization_plan": {
+                "source_snapshot": {
+                    "title": "string",
+                    "status": "string",
+                    "updated_at": "string",
+                    "page_count": "number",
+                    "pages": [{"page_number": "number", "title": "string", "summary": "string"}]
+                },
                 "strategy": "string",
-                "rewrite_points": [{"scope": "string", "action": "string"}],
+                "page_plan": [{
+                    "page_number": "number",
+                    "decision": "keep | personalize | redraw_optional | redraw_required",
+                    "requires_redraw": "boolean",
+                    "reason": "string",
+                    "material_labels": ["string"],
+                    "photo_display_names": ["string"]
+                }],
+                "confirmed_photo_references": [{
+                    "display_name": "string",
+                    "usage": "string",
+                    "reference_type": "角色参考 | 道具参考 | 场景参考",
+                    "planned_pages": [{"page_number": "number", "reason": "string"}]
+                }],
+                "unplaced_materials": [{"display_name": "string", "reason": "string"}],
                 "risk_checks": ["string"]
             }
         }),

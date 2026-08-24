@@ -75,7 +75,7 @@ export function HomePage() {
               <div className="product-toolbar"><span>星星幼儿园</span><span>老师协作</span></div>
               <div className="product-launch">
                 <div><BookOpen size={22} /><strong>创建普通绘本</strong><small>从教学目标生成班级共读绘本</small></div>
-                <div><UsersRound size={22} /><strong>生成定制绘本</strong><small>选择孩子并生成独立副本</small></div>
+                <div><UsersRound size={22} /><strong>创作专属版本</strong><small>选择孩子并生成独立副本</small></div>
               </div>
               <div className="product-book">
                 <span>第 1 页</span>
