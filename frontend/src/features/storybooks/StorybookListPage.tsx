@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { Link, useOutletContext } from "react-router-dom";
 import {
   clearFailedGenerationJobs,
@@ -8,7 +9,7 @@ import {
   type GenerationJob,
   type PaginationMeta,
 } from "../../api/client";
-import { Badge, Card, EmptyState, Notice, PageHeader, SkeletonBlock, Toast, statusTone } from "../../components/ui";
+import { Badge, Card, EmptyState, Modal, Notice, PageHeader, SkeletonBlock, Toast, statusTone } from "../../components/ui";
 import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
 import { generationJobStatusLabel, generationJobTypeLabel, storybookNextAction, storybookSourceLabel, storybookStatusLabel } from "../../utils/labels";
 import { useDebouncedValue } from "../../utils/useDebouncedValue";
@@ -27,7 +28,8 @@ export function StorybookListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Storybook | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmingClearFailed, setConfirmingClearFailed] = useState(false);
   const [clearingFailed, setClearingFailed] = useState(false);
@@ -68,27 +70,36 @@ export function StorybookListPage() {
 
   const handleDelete = async (book: Storybook) => {
     setDeletingId(book.id);
+    setDeleteError("");
     setError("");
     try {
       await deleteStorybook(workspace.id, book.id);
+      setRemoteBooks((current) => current.filter((item) => item.id !== book.id));
+      setGenerationJobs((current) => current.filter((job) => job.storybookId !== book.id));
+      setPageMeta((current) => current ? { ...current, total: Math.max(0, current.total - 1) } : current);
+      setDeleteTarget(null);
+      setNotice(`《${book.title}》已删除。`);
+
       const type = filter === "plain" || filter === "custom" ? filter : undefined;
       const status = filter === "exportable" ? "exportable" : undefined;
-      const refreshed = await listStorybooksPage(workspace.id, {
-        type,
-        status,
-        q: debouncedQuery,
-        limit: Math.max(PAGE_SIZE, remoteBooks.length),
-        offset: 0,
-      });
-      setRemoteBooks(refreshed.data);
-      setPageMeta(refreshed.meta);
-      setOffset(0);
-      setNotice(`《${book.title}》已删除。`);
+      try {
+        const refreshed = await listStorybooksPage(workspace.id, {
+          type,
+          status,
+          q: debouncedQuery,
+          limit: Math.max(PAGE_SIZE, remoteBooks.length),
+          offset: 0,
+        });
+        setRemoteBooks(refreshed.data);
+        setPageMeta(refreshed.meta);
+        setOffset(0);
+      } catch {
+        setNotice(`《${book.title}》已删除。列表刷新失败，可刷新页面确认最新结果。`);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败，请稍后重试");
+      setDeleteError(err instanceof Error ? err.message : "删除失败，请稍后重试");
     } finally {
       setDeletingId(null);
-      setConfirmingDeleteId(null);
     }
   };
 
@@ -231,26 +242,7 @@ export function StorybookListPage() {
               return (
                 <article className="storybook-card" key={book.id}>
                   <div className="cover-art"><span>{book.coverTone}</span><strong>{book.title.slice(0, 2)}</strong></div>
-                  <div className="storybook-card-menu more-menu">
-                    <button className="button card-menu-trigger" type="button" aria-label="更多操作" onClick={() => { setNotice(""); setConfirmingDeleteId(confirmingDeleteId === book.id ? null : book.id); }}>⋯</button>
-                    {confirmingDeleteId === book.id && (
-                      <>
-                        <button className="menu-overlay" type="button" aria-label="关闭菜单" onClick={() => setConfirmingDeleteId(null)} />
-                        <div className="more-menu-pop">
-                          <button
-                            type="button"
-                            className="danger"
-                            disabled={deletingId === book.id}
-                            title="删除后不可恢复，分页、角色和生成记录会一并移除"
-                            onClick={() => void handleDelete(book)}
-                          >
-                            {deletingId === book.id ? "删除中..." : "确认删除这本绘本"}
-                          </button>
-                          <button type="button" disabled={deletingId === book.id} onClick={() => setConfirmingDeleteId(null)}>取消</button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                  <button className="icon-button storybook-card-delete" type="button" aria-label={`删除《${book.title}》`} title="删除绘本" onClick={() => { setDeleteError(""); setDeleteTarget(book); }}><Trash2 size={17} aria-hidden="true" /></button>
                   <div className="storybook-card-body">
                     <div className="card-line"><Badge tone={book.type === "plain" ? "info" : "good"}>{book.type === "plain" ? "普通绘本" : "定制绘本"}</Badge><Badge tone={statusTone(book.status)}>{storybookStatusLabel[book.status]}</Badge></div>
                     <h3>{book.title}</h3>
@@ -291,6 +283,16 @@ export function StorybookListPage() {
             ))}
           </section>
         </>
+      )}
+      {deleteTarget && (
+        <Modal title={`删除《${deleteTarget.title}》？`} onClose={() => { if (!deletingId) { setDeleteError(""); setDeleteTarget(null); } }}>
+          <p>删除后不可恢复：分页、角色、生成记录、分享链接和导出记录会一并移除。</p>
+          {deleteError && <p className="form-helper warn" role="alert">{deleteError}</p>}
+          <div className="modal-actions">
+            <button className="button secondary" type="button" disabled={Boolean(deletingId)} onClick={() => { setDeleteError(""); setDeleteTarget(null); }}>保留绘本</button>
+            <button className="button danger" type="button" disabled={Boolean(deletingId)} onClick={() => void handleDelete(deleteTarget)}>{deletingId ? "删除中..." : "确认删除"}</button>
+          </div>
+        </Modal>
       )}
     </div>
   );

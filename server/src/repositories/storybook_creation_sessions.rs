@@ -23,6 +23,9 @@ pub async fn create(
     understanding: CreationUnderstanding,
     materials: Vec<CreationMaterial>,
     visual_preferences: VisualPreferences,
+    story_style_id: String,
+    visual_style_id: String,
+    visual_style_version: i32,
 ) -> Result<StorybookCreationSession, DbErr> {
     let id = Uuid::new_v4();
     db.execute(Statement::from_sql_and_values(
@@ -30,9 +33,9 @@ pub async fn create(
         r#"
         insert into storybook_creation_sessions
           (id, workspace_id, created_by, entry_type, source_storybook_id, status, quick_idea, use_scene, age_group, page_count,
-           understanding_json, materials_json, directions_json, visual_preferences_json,
+           understanding_json, materials_json, directions_json, visual_preferences_json, story_style_id, visual_style_id, visual_style_version,
            created_at, updated_at)
-        values ($1, $2, $3, $4, $5, 'understanding_ready', $6, $7, $8, $9, $10, $11, '[]'::jsonb, $12, now(), now())
+        values ($1, $2, $3, $4, $5, 'understanding_ready', $6, $7, $8, $9, $10, $11, '[]'::jsonb, $12, $13, $14, $15, now(), now())
         "#,
         [
             id.into(),
@@ -47,6 +50,9 @@ pub async fn create(
             json!(understanding).into(),
             json!(materials).into(),
             json!(visual_preferences).into(),
+            story_style_id.into(),
+            visual_style_id.into(),
+            visual_style_version.into(),
         ],
     ))
     .await?;
@@ -178,7 +184,7 @@ pub async fn latest_active(
             from storybook_creation_sessions
             where workspace_id = $1
               and created_by = $2
-              and status not in ('storybook_ready', 'abandoned')
+              and status <> 'abandoned'
               and entry_type = 'direct_create'
             order by updated_at desc
             limit 1
@@ -281,13 +287,16 @@ pub async fn save(
             selected_direction_id = $11,
             outline_json = $12,
             visual_preferences_json = $13,
-            storybook_id = $14,
-            last_job_id = $15,
-            idempotency_key = $16,
-            generation_summary_json = $17,
-            requires_understanding_refresh = $18,
-            requires_direction_refresh = $19,
-            requires_outline_refresh = $20,
+            story_style_id = $14,
+            visual_style_id = $15,
+            visual_style_version = $16,
+            storybook_id = $17,
+            last_job_id = $18,
+            idempotency_key = $19,
+            generation_summary_json = $20,
+            requires_understanding_refresh = $21,
+            requires_direction_refresh = $22,
+            requires_outline_refresh = $23,
             updated_at = now()
         where workspace_id = $1 and id = $2
         "#,
@@ -305,6 +314,9 @@ pub async fn save(
             session.selected_direction_id.clone().into(),
             session.outline.as_ref().map(|value| json!(value)).into(),
             json!(session.visual_preferences).into(),
+            session.story_style_id.clone().into(),
+            session.visual_style_id.clone().into(),
+            session.visual_style_version.into(),
             session.storybook_id.into(),
             session.last_job_id.into(),
             session.idempotency_key.clone().into(),
@@ -337,13 +349,16 @@ pub async fn save_in_tx(
             selected_direction_id = $11,
             outline_json = $12,
             visual_preferences_json = $13,
-            storybook_id = $14,
-            last_job_id = $15,
-            idempotency_key = $16,
-            generation_summary_json = $17,
-            requires_understanding_refresh = $18,
-            requires_direction_refresh = $19,
-            requires_outline_refresh = $20,
+            story_style_id = $14,
+            visual_style_id = $15,
+            visual_style_version = $16,
+            storybook_id = $17,
+            last_job_id = $18,
+            idempotency_key = $19,
+            generation_summary_json = $20,
+            requires_understanding_refresh = $21,
+            requires_direction_refresh = $22,
+            requires_outline_refresh = $23,
             updated_at = now()
         where workspace_id = $1 and id = $2
         "#,
@@ -361,6 +376,9 @@ pub async fn save_in_tx(
             session.selected_direction_id.clone().into(),
             session.outline.as_ref().map(|value| json!(value)).into(),
             json!(session.visual_preferences).into(),
+            session.story_style_id.clone().into(),
+            session.visual_style_id.clone().into(),
+            session.visual_style_version.into(),
             session.storybook_id.into(),
             session.last_job_id.into(),
             session.idempotency_key.clone().into(),
@@ -558,8 +576,8 @@ pub async fn create_storybook_shell_in_tx(
         r#"
         insert into storybooks
           (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene,
-           teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'plan_pending', 'private', 'creation_session', $3, $4, $5, $6, $7, $8, $9, now(), now())
+           teaching_goal, cover_tone, story_style_id, visual_style_id, visual_style_version, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, 'plain', 'plan_pending', 'private', 'creation_session', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
         "#,
         [
             storybook_id.into(),
@@ -573,6 +591,9 @@ pub async fn create_storybook_shell_in_tx(
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "温暖、清楚".to_string())
                 .into(),
+            payload.story_style_id.into(),
+            payload.visual_style_id.into(),
+            payload.visual_style_version.into(),
             crate::page_aspect::normalize_page_aspect_ratio(payload.page_aspect_ratio.as_deref())
                 .into(),
             creator_id.into(),
@@ -723,6 +744,9 @@ fn session_from_row(row: sea_orm::QueryResult) -> Result<StorybookCreationSessio
             row.try_get::<JsonValue>("", "visual_preferences_json")?,
         )
         .map_err(|err| DbErr::Custom(format!("visual_preferences_json 格式错误：{err}")))?,
+        story_style_id: row.try_get("", "story_style_id").unwrap_or_else(|_| "daily_warmth".to_string()),
+        visual_style_id: row.try_get("", "visual_style_id").unwrap_or_else(|_| "watercolor_book".to_string()),
+        visual_style_version: row.try_get("", "visual_style_version").unwrap_or(1),
         storybook_id: row.try_get("", "storybook_id")?,
         last_job_id: row.try_get("", "last_job_id")?,
         idempotency_key: row.try_get("", "idempotency_key")?,

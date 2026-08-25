@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Archive, Pencil, RotateCcw } from "lucide-react";
 import { Link, useOutletContext, useParams } from "react-router-dom";
 import { archiveChild, getChild, listStorybooksPage, restoreChild, updateChild } from "../../api/client";
-import { Badge, Card, Modal, Notice, PageHeader } from "../../components/ui";
+import { Badge, Card, Modal, Notice, OverflowMenu, PageHeader } from "../../components/ui";
 import type { ChildProfile, Storybook, Workspace } from "../../types/domain";
 
 function splitTags(value: string) {
@@ -145,14 +146,15 @@ export function ChildDetailPage() {
         copy={`${child.ageGroup} · ${child.focus}`}
         actions={
           <>
-            <Link className="button secondary" to={`/app/${workspace.id}/storybooks`}>回到绘本列表</Link>
             {child.status !== "archived" && <Link className="button primary" to={customizeTarget}>{customizeActionLabel}</Link>}
-            <button className="button secondary" type="button" onClick={() => setOpen(true)}>编辑资料</button>
-            {child.status === "archived" ? (
-              <button className="button primary" type="button" disabled={restoring} onClick={restoreCurrentChild}>{restoring ? "恢复中" : "恢复资料"}</button>
-            ) : (
-              <button className="button secondary" type="button" disabled={archiving} onClick={archiveCurrentChild}>{archiving ? "归档中" : "归档资料"}</button>
-            )}
+            <OverflowMenu label="孩子资料操作">
+              {(close) => <>
+                <button type="button" onClick={() => { close(); setOpen(true); }}><Pencil size={16} />编辑资料</button>
+                {child.status === "archived"
+                  ? <button type="button" disabled={restoring} onClick={() => { close(); void restoreCurrentChild(); }}><RotateCcw size={16} />{restoring ? "恢复中..." : "恢复资料"}</button>
+                  : <button type="button" className="danger" disabled={archiving} onClick={() => { close(); void archiveCurrentChild(); }}><Archive size={16} />{archiving ? "归档中..." : "归档资料"}</button>}
+              </>}
+            </OverflowMenu>
           </>
         }
       />

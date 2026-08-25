@@ -1347,6 +1347,50 @@ fn synchronize_photo_reference_placements(
     Some(plan)
 }
 
+#[cfg(feature = "db")]
+async fn attach_source_creation_settings(
+    db: &sea_orm::DatabaseConnection,
+    workspace_id: Uuid,
+    actor_id: Uuid,
+    source_storybook_id: Uuid,
+    customization_plan: Option<serde_json::Value>,
+    creation_session_id: Option<Uuid>,
+) -> Result<Option<serde_json::Value>, ApiError> {
+    let Some(session_id) = creation_session_id else {
+        return Ok(customization_plan);
+    };
+    let session = crate::repositories::storybook_creation_sessions::find(db, workspace_id, session_id)
+        .await
+        .map_err(common::db_error)?;
+    if session.created_by != actor_id
+        || session.entry_type != "from_storybook_assets"
+        || session.source_storybook_id != Some(source_storybook_id)
+    {
+        return Err(ApiError::state_conflict_with_code(
+            "invalid_source_creation_session",
+            "本次制作使用的照片素材会话与来源绘本不匹配，请返回上一步重新确认。",
+        ));
+    }
+
+    let mut plan = customization_plan.unwrap_or_else(|| json!({}));
+    let plan_object = plan
+        .as_object_mut()
+        .ok_or_else(|| ApiError::validation("customization_plan", "定制计划必须是对象"))?;
+    plan_object.insert(
+        "creative_settings".to_string(),
+        json!({
+            "creation_session_id": session.id,
+            "story_style_id": session.story_style_id,
+            "visual_style_id": session.visual_style_id,
+            "visual_style_version": session.visual_style_version,
+            "page_aspect_ratio": session.visual_preferences.page_aspect_ratio,
+            "visual_complexity": session.visual_preferences.visual_complexity,
+            "character_consistency": session.visual_preferences.character_consistency,
+        }),
+    );
+    Ok(Some(plan))
+}
+
 pub async fn derive_custom_batch(
     ctx: &AppContext,
     headers: &HeaderMap,
@@ -1404,6 +1448,16 @@ pub async fn derive_custom_batch(
         .await?;
         let run_customization_plan =
             synchronize_photo_reference_placements(submitted_plan, &confirmed_photo_references);
+        let actor_id = common::actor_user_id(headers)?;
+        let run_customization_plan = attach_source_creation_settings(
+            &ctx.db,
+            workspace_id,
+            actor_id,
+            storybook_id,
+            run_customization_plan,
+            payload.creation_session_id,
+        )
+        .await?;
         let single_target_plan = payload.child_ids.len() == 1
             && run_customization_plan
                 .as_ref()
@@ -1429,7 +1483,6 @@ pub async fn derive_custom_batch(
 
         let storybooks = Vec::new();
         let mut items = Vec::with_capacity(payload.child_ids.len());
-        let actor_id = common::actor_user_id(headers)?;
         if let Some(existing_run) =
             crate::repositories::storybook_customization_runs::find_matching_run(
                 &ctx.db,
@@ -2606,6 +2659,9 @@ mod tests {
             use_scene: "规则引导".to_string(),
             teaching_goal: "学习轮流与分享".to_string(),
             cover_tone: "温暖、清楚".to_string(),
+            story_style_id: Some("daily_warmth".to_string()),
+            visual_style_id: Some("watercolor_book".to_string()),
+            visual_style_version: Some(1),
             page_aspect_ratio: "portrait_4_5".to_string(),
             teacher_review_status: "confirmed".to_string(),
             teacher_reviewed_by: Some(Uuid::new_v4()),
@@ -2688,6 +2744,8 @@ mod tests {
                 failure_reason: None,
                 confirmed_at: None,
                 confirmed_by: Some(Uuid::new_v4()),
+                style_id: Some("watercolor_book".to_string()),
+                style_version: Some(1),
             }),
             revoked_at: None,
             revoked_by: None,

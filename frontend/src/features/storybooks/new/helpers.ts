@@ -1,5 +1,6 @@
 import type { StorybookPage, StorybookRole } from "../../../types/domain";
 import type { EditablePage, EditablePlan, EditableRole, StorybookRequestForm } from "./types";
+import { STORY_STYLE_PRESETS, STYLE_PRESETS } from "./presets";
 
 export function linesFromRows(value: string) {
   return value.split(/\n+/).map((item) => item.trim()).filter(Boolean);
@@ -67,12 +68,10 @@ export function generationInputFor(
     age_group: form.ageGroup,
     page_count: form.pageCount,
     use_scene: optionalTrimmed(form.useScene),
-    style: form.style,
+    visual_style_id: STYLE_PRESETS.find((preset) => preset.value === form.style)?.styleId || "watercolor_book",
     page_aspect_ratio: form.pageAspectRatio,
   };
-  if (form.storyStyle?.trim()) {
-    base.story_style = form.storyStyle.trim();
-  }
+  base.story_style_id = STORY_STYLE_PRESETS.find((preset) => preset.value === form.storyStyle)?.storyStyleId || "daily_warmth";
   if (form.storyFramework?.trim()) {
     base.story_framework = form.storyFramework.trim();
   }
@@ -102,7 +101,7 @@ export function generationInputFor(
     return {
       ...base,
       plan: planPayload(plan, form),
-      confirmed_roles: roles.map((role) => rolePayload(role, form.style)),
+      confirmed_roles: roles.map(rolePayload),
       confirmed_pages: pages.length ? pages.map(pagePayload) : undefined,
     };
   }
@@ -125,21 +124,6 @@ function optionalTrimmed(value: string) {
   return trimmed || undefined;
 }
 
-function roleReferenceStyle(style: string) {
-  const trimmed = style.trim().replace(/。+$/, "");
-  if (!trimmed) return "柔和水彩绘本风格，圆润饱满造型，大而富有表现力的眼睛";
-  if (trimmed.includes("皮克斯") || trimmed.includes("3D")) {
-    return `${trimmed}，高质量3D动画电影质感，立体圆润角色，柔和棚拍光，细腻材质，真实体积感`;
-  }
-  return trimmed;
-}
-
-function hasConflictingDefaultStyle(prompt: string, style: string) {
-  const trimmedStyle = style.trim();
-  if (!trimmedStyle) return false;
-  return prompt.includes("柔和水彩绘本风格") && !trimmedStyle.includes("水彩");
-}
-
 function isLimbFreeRole(role: Pick<EditableRole, "name" | "roleType">, appearance: string) {
   const text = `${role.name} ${role.roleType} ${appearance}`;
   return ["无手", "没有手", "无脚", "没有脚", "无手和脚", "没有手和脚", "无四肢", "没有四肢", "蛇", "小蛇", "蚯蚓", "毛毛虫", "蜗牛", "球形"].some((keyword) =>
@@ -154,27 +138,23 @@ function roleReferenceAnatomyClause(role: Pick<EditableRole, "name" | "roleType"
   return "身体结构必须严格符合外观设定；有手、脚、爪或翅膀时可以清晰表现，但不要凭空添加外观没有写到的肢体";
 }
 
-function roleReferencePrompt(role: EditableRole, style: string, appearance: string) {
+function roleReferencePrompt(role: EditableRole, appearance: string) {
   const existingPrompt = role.referenceImagePrompt.trim();
-  if (existingPrompt && !hasConflictingDefaultStyle(existingPrompt, style)) {
-    const styleText = roleReferenceStyle(style);
-    return existingPrompt.includes(styleText) || existingPrompt.includes("画面风格")
-      ? existingPrompt
-      : `${existingPrompt}，画面风格必须与整本绘本一致：${styleText}`;
+  if (existingPrompt) {
+    return existingPrompt;
   }
-  const styleText = roleReferenceStyle(style);
   const anatomy = roleReferenceAnatomyClause(role, appearance);
-  return `${role.name}，${roleTypeLabel(role.roleType)}，${appearance || "绘本角色"}，画面风格必须与整本绘本一致：${styleText}，${anatomy}，表情自然生动、富有神采，姿态自然放松，单一角色标准图，白底或简洁背景，画面只有这个角色，无人类，无其他角色，保持跨页一致，不要僵硬对称的证件照式站姿`;
+  return `${role.name}，${roleTypeLabel(role.roleType)}，${appearance || "绘本角色"}，画面风格必须与整本绘本一致，${anatomy}，表情自然生动、富有神采，姿态自然放松，单一角色标准图，白底或简洁背景，画面只有这个角色，无人类，无其他角色，保持跨页一致，不要僵硬对称的证件照式站姿`;
 }
 
-function rolePayload(role: EditableRole, style: string) {
+function rolePayload(role: EditableRole) {
   const appearance = cleanVisualAppearance(role.appearance);
   return {
     name: role.name,
     role_type: role.roleType,
     appearance,
     story_function: role.storyFunction,
-    reference_image_prompt: role.needsConsistency ? roleReferencePrompt(role, style, appearance) : undefined,
+    reference_image_prompt: role.needsConsistency ? roleReferencePrompt(role, appearance) : undefined,
     needs_consistency: role.needsConsistency,
   };
 }

@@ -74,9 +74,9 @@ pub async fn seed_demo_storybooks(db: &DatabaseConnection) -> Result<(), DbErr> 
             &format!(
                 r#"
                 insert into storybooks
-                  (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
+                  (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, story_style_id, visual_style_id, visual_style_version, page_aspect_ratio, creator_id, created_at, updated_at)
                 values
-                  ('{id}', '{workspace_id}', '{storybook_type}', '{status}', '{visibility}', '{source}', '{title}', '4-5 岁', '{use_scene}', '{teaching_goal}', '温暖、清楚', 'portrait_4_5', '00000000-0000-0000-0000-000000000001', now(), now())
+                  ('{id}', '{workspace_id}', '{storybook_type}', '{status}', '{visibility}', '{source}', '{title}', '4-5 岁', '{use_scene}', '{teaching_goal}', '温暖、清楚', 'daily_warmth', 'watercolor_book', 1, 'portrait_4_5', '00000000-0000-0000-0000-000000000001', now(), now())
                 on conflict (id) do update
                   set status = excluded.status,
                       visibility = excluded.visibility,

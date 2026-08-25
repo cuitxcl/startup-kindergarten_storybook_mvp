@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     application,
+    creative_presets::CreativePresetCatalog,
     error::ApiError,
     models::{
         CreateStorybookCreationSessionRequest, CreationDirectionsResponse,
@@ -19,12 +20,14 @@ use crate::{
         SelectDirectionResponse, StorybookCreationSession, StorybookCreationSessionListItem,
         StorybookCreationSessionListQuery, UpdateCreationOutlineRequest, UpdateOutlinePageRequest,
         UpdateOutlinePageResponse, UpdateOutlineResponse, UpdateStorybookCreationSessionRequest,
+        CreativeSettingsResponse, UpdateCreativeSettingsRequest,
         UpdateVisualPreferencesRequest, VisualPreferencesResponse,
     },
 };
 
 pub fn routes() -> Routes {
     Routes::new()
+        .add("/api/storybook-creative-presets", get(get_creative_presets))
         .add(
             "/api/workspaces/{workspace_id}/storybook-creation-sessions",
             get(list_sessions).post(create_session),
@@ -70,6 +73,10 @@ pub fn routes() -> Routes {
             axum::routing::patch(update_visual_preferences),
         )
         .add(
+            "/api/workspaces/{workspace_id}/storybook-creation-sessions/{session_id}/creative-settings",
+            axum::routing::patch(update_creative_settings),
+        )
+        .add(
             "/api/workspaces/{workspace_id}/storybook-creation-sessions/{session_id}/storybook:generate",
             post(generate_storybook),
         )
@@ -77,6 +84,10 @@ pub fn routes() -> Routes {
             "/api/workspaces/{workspace_id}/storybook-creation-sessions/{session_id}/abandon",
             post(abandon_session),
         )
+}
+
+async fn get_creative_presets() -> Json<Envelope<CreativePresetCatalog>> {
+    Json(Envelope::new(crate::creative_presets::catalog()))
 }
 
 async fn create_session(
@@ -301,6 +312,16 @@ async fn update_visual_preferences(
         payload,
     )
     .await?;
+    Ok(Json(Envelope::new(response)))
+}
+
+async fn update_creative_settings(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, session_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<UpdateCreativeSettingsRequest>,
+) -> Result<Json<Envelope<CreativeSettingsResponse>>, ApiError> {
+    let response = application::storybook_creation::update_creative_settings(&ctx, &headers, workspace_id, session_id, payload).await?;
     Ok(Json(Envelope::new(response)))
 }
 

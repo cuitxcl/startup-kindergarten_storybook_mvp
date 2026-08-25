@@ -106,7 +106,7 @@ const defaultStorybookRequestForm: StorybookRequestForm = {
   title: "",
   theme: "",
   ageGroup: "4-5 岁",
-  pageCount: "6",
+  pageCount: "10",
   useScene: "",
   style: STYLE_PRESETS[0].value,
   pageAspectRatio: "portrait_4_5",
@@ -633,7 +633,9 @@ export function NewStorybookPage() {
         ageGroup: form.ageGroup,
         useScene: storybookUseSceneFor(form),
         teachingGoal: storybookThemeFor(form),
-        coverTone: form.style.trim(),
+        storyStyleId: STORY_STYLE_PRESETS.find((preset) => preset.value === form.storyStyle)?.storyStyleId || "daily_warmth",
+        visualStyleId: STYLE_PRESETS.find((preset) => preset.value === form.style)?.styleId || "watercolor_book",
+        visualStyleVersion: 1,
         pageAspectRatio: form.pageAspectRatio,
       });
       suppressAutoRecoverRef.current = false;
@@ -916,7 +918,6 @@ export function NewStorybookPage() {
       ageGroup: form.ageGroup,
       useScene: storybookUseSceneFor(form),
       teachingGoal: storybookThemeFor(form),
-      coverTone: form.style.trim(),
       pageAspectRatio: form.pageAspectRatio,
     });
   };

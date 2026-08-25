@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { MoreHorizontal } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "good" | "warn" | "danger" | "info" }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
@@ -95,15 +96,32 @@ export function PageHeader({
   );
 }
 
-export function ProgressSteps({ steps, active }: { steps: string[]; active: number }) {
+export function ProgressSteps({
+  steps,
+  active,
+  onStepClick,
+  maxUnlockedStep = active,
+}: {
+  steps: string[];
+  active: number;
+  onStepClick?: (index: number) => void;
+  maxUnlockedStep?: number;
+}) {
   return (
     <ol className="steps" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
-      {steps.map((step, index) => (
-        <li key={step} className={index === active ? "active" : index < active ? "done" : ""}>
-          <span>{index + 1}</span>
-          {step}
-        </li>
-      ))}
+      {steps.map((step, index) => {
+        const canNavigate = Boolean(onStepClick) && index <= maxUnlockedStep && index !== active;
+        return (
+          <li key={step} className={index === active ? "active" : index < active ? "done" : ""}>
+            {canNavigate ? (
+              <button className="step-button" type="button" onClick={() => onStepClick?.(index)}>
+                <span>{index + 1}</span>
+                {step}
+              </button>
+            ) : <><span>{index + 1}</span>{step}</>}
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -183,6 +201,40 @@ export function ActionButton({
     >
       {children}
     </button>
+  );
+}
+
+export function OverflowMenu({
+  label = "更多操作",
+  children,
+}: {
+  label?: string;
+  children: (close: () => void) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = () => {
+    setOpen(false);
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") close();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  return (
+    <div className="more-menu">
+      <button ref={triggerRef} className="icon-button overflow-menu-trigger" type="button" aria-label={label} title={label} aria-expanded={open} aria-controls={open ? menuId : undefined} onClick={() => setOpen((current) => !current)}>
+        <MoreHorizontal size={18} aria-hidden="true" />
+      </button>
+      {open && <><button className="menu-overlay" type="button" tabIndex={-1} aria-hidden="true" onClick={close} /><div id={menuId} className="more-menu-pop">{children(close)}</div></>}
+    </div>
   );
 }
 

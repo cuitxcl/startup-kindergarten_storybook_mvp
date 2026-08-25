@@ -14,8 +14,9 @@ use crate::{
     domains::common,
     error::ApiError,
     models::{
-        CreateGenerationJobRequest, CreateImageTaskRequest, GenerationJob, GenerationJobListQuery,
-        ImageVariantListQuery, PaginationMeta, StorybookImageVariant, WorkspaceRole,
+        BulkImageTaskResponse, CreateBulkImageTasksRequest, CreateGenerationJobRequest,
+        CreateImageTaskRequest, GenerationJob, GenerationJobListQuery, ImageVariantListQuery,
+        PaginationMeta, StorybookImageVariant, WorkspaceRole,
     },
 };
 
@@ -25,6 +26,8 @@ pub use crate::application::generation_image_access::{
 pub use crate::application::generation_job_actions::{
     RecoverGenerationJobsRequest, cancel_job, clear_failed_jobs, recover_jobs, retry_job,
 };
+
+const BULK_IMAGE_STORAGE_RESERVE_BYTES: u64 = 5 * 1024 * 1024;
 
 pub async fn list_image_variants(
     ctx: &AppContext,
@@ -336,6 +339,177 @@ pub async fn create_cover_image_task(
     }
 }
 
+/// Queues every missing cover/page illustration in one server-side operation.
+/// Character references must already be ready, so every queued image sees the same stable inputs.
+pub async fn create_bulk_image_tasks(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    storybook_id: Uuid,
+    _payload: CreateBulkImageTasksRequest,
+) -> Result<BulkImageTaskResponse, ApiError> {
+    #[cfg(feature = "db")]
+    {
+        common::require_editor_db(ctx, headers, workspace_id).await?;
+        let actor_id = common::actor_user_id(headers)?;
+        let book = crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
+            .await
+            .map_err(common::db_error)?;
+        let pending_roles = book
+            .roles
+            .iter()
+            .filter(|role| {
+                role_needs_cross_page_reference(&book, role.name.as_str(), role.needs_consistency)
+                    && (role.reference_status != "ready" || role.reference_image_url.is_none())
+            })
+            .map(|role| role.name.as_str())
+            .collect::<Vec<_>>();
+        if !pending_roles.is_empty() {
+            return Err(ApiError::state_conflict(format!(
+                "请先完成角色参考图：{}",
+                pending_roles.join("、")
+            )));
+        }
+
+        let cover_variants = crate::repositories::storybook_image_variants::list_variants(
+            &ctx.db,
+            workspace_id,
+            storybook_id,
+            ImageVariantListQuery {
+                target_type: Some("cover_illustration".to_string()),
+                target_id: Some(storybook_id),
+            },
+        )
+        .await
+        .map_err(common::db_error)?;
+        let cover_missing = !cover_variants
+            .iter()
+            .any(|variant| variant.is_selected && variant.status == "ready" && variant.image_url.is_some());
+
+        let pages_to_generate = book
+            .pages
+            .iter()
+            .filter(|page| page.status != "ready")
+            .collect::<Vec<_>>();
+        let target_count = pages_to_generate.len() as u64 + u64::from(cover_missing);
+        if target_count > 0 {
+            crate::repositories::storage_quota::ensure_workspace_storage_available_for_user(
+                &ctx.db,
+                workspace_id,
+                Some(actor_id),
+                target_count.saturating_mul(BULK_IMAGE_STORAGE_RESERVE_BYTES),
+            )
+            .await
+            .map_err(common::db_error)?;
+        }
+
+        let mut jobs = Vec::new();
+        if cover_missing {
+            jobs.push(
+                crate::repositories::generation::create_cover_image_job_record(
+                    &ctx.db,
+                    workspace_id,
+                    actor_id,
+                    storybook_id,
+                    CreateImageTaskRequest {
+                        prompt: None,
+                        reference_role_ids: Vec::new(),
+                        reference_image_urls: Vec::new(),
+                        edit_instruction: None,
+                        image_mode: None,
+                        strength: None,
+                    },
+                )
+                .await
+                .map_err(common::db_error)?,
+            );
+        }
+        for page in pages_to_generate {
+            let reference_role_ids = book
+                .roles
+                .iter()
+                .filter(|role| {
+                    role_needs_cross_page_reference(&book, role.name.as_str(), role.needs_consistency)
+                        && role.reference_status == "ready"
+                        && role.reference_image_url.is_some()
+                        && page_mentions_role(page.title.as_str(), page.body.as_str(), page.illustration_prompt.as_str(), role.name.as_str())
+                })
+                .map(|role| role.id)
+                .collect::<Vec<_>>();
+            jobs.push(
+                crate::repositories::generation::create_page_image_job_record(
+                    &ctx.db,
+                    workspace_id,
+                    actor_id,
+                    storybook_id,
+                    page.id,
+                    CreateImageTaskRequest {
+                        prompt: Some(page.illustration_prompt.clone()),
+                        image_mode: (!reference_role_ids.is_empty()).then_some("reference_image".to_string()),
+                        reference_role_ids,
+                        reference_image_urls: Vec::new(),
+                        edit_instruction: None,
+                        strength: None,
+                    },
+                )
+                .await
+                .map_err(common::db_error)?,
+            );
+        }
+        for job in &jobs {
+            enqueue_generation_page_image_job(ctx, workspace_id, job.id)
+                .await
+                .map_err(|err| ApiError::state_conflict(format!("批量插图任务入队失败：{err}")))?;
+        }
+        crate::repositories::audit::log(
+            &ctx.db,
+            Some(workspace_id),
+            Some(actor_id),
+            "storybook_image_batch.queued",
+            "storybook",
+            Some(storybook_id),
+            json!({ "job_count": jobs.len(), "job_ids": jobs.iter().map(|job| job.id).collect::<Vec<_>>() }),
+        )
+        .await
+        .map_err(common::db_error)?;
+        return Ok(BulkImageTaskResponse {
+            jobs,
+            concurrency_limit: crate::workers::generation::image_generation_concurrency_limit() as u32,
+        });
+    }
+
+    #[cfg(not(feature = "db"))]
+    {
+        let _ = (ctx, headers, workspace_id, storybook_id);
+        Err(ApiError::state_conflict("批量插图任务仅在数据库模式下可用"))
+    }
+}
+
+fn page_mentions_role(title: &str, body: &str, illustration_prompt: &str, role_name: &str) -> bool {
+    format!("{title} {body} {illustration_prompt}").contains(role_name)
+}
+
+fn role_needs_cross_page_reference(
+    book: &crate::models::Storybook,
+    role_name: &str,
+    needs_consistency: bool,
+) -> bool {
+    needs_consistency
+        && book
+            .pages
+            .iter()
+            .filter(|page| {
+                page_mentions_role(
+                    page.title.as_str(),
+                    page.body.as_str(),
+                    page.illustration_prompt.as_str(),
+                    role_name,
+                )
+            })
+            .count()
+            >= 2
+}
+
 pub async fn create_role_reference_image_task(
     ctx: &AppContext,
     headers: &HeaderMap,
@@ -459,11 +633,11 @@ pub async fn create_job(
     {
         let workspace = common::require_editor_db(ctx, headers, workspace_id).await?;
         let job_type = common::required(payload.job_type, "job_type")?;
-        if let Some(storybook_id) = payload.storybook_id {
-            crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
+        let storybook = if let Some(storybook_id) = payload.storybook_id {
+            Some(crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
                 .await
-                .map_err(common::db_error)?;
-        }
+                .map_err(common::db_error)?)
+        } else { None };
         if job_type == "customization_plan" {
             if payload.storybook_id.is_none() {
                 return Err(ApiError::validation(
@@ -496,6 +670,22 @@ pub async fn create_job(
                 }
             }
         }
+        let mut input_json = payload.input_json;
+        if matches!(job_type.as_str(), "storybook_plan" | "storybook_roles" | "storybook_pages") {
+            let book = storybook.as_ref().ok_or_else(|| ApiError::validation("storybook_id", "绘本生成任务必须绑定绘本"))?;
+            let visual_style_id = book.visual_style_id.as_deref().ok_or_else(|| ApiError::state_conflict("绘本缺少画面风格设定，请先选择系统预设"))?;
+            let visual_style_version = book.visual_style_version.unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+            let story_style_id = book.story_style_id.as_deref().ok_or_else(|| ApiError::state_conflict("绘本缺少故事风格设定，请先选择系统预设"))?;
+            let visual_prompt = crate::creative_presets::visual_prompt(visual_style_id, visual_style_version).ok_or_else(|| ApiError::state_conflict("绘本画面风格版本不可用，请重新选择预设"))?;
+            let story_prompt = crate::creative_presets::story_prompt(story_style_id).ok_or_else(|| ApiError::state_conflict("绘本故事风格不可用，请重新选择预设"))?;
+            let object = input_json.as_object_mut().ok_or_else(|| ApiError::validation("input_json", "生成输入必须是对象"))?;
+            object.insert("visual_style_id".to_string(), json!(visual_style_id));
+            object.insert("visual_style_version".to_string(), json!(visual_style_version));
+            object.insert("story_style_id".to_string(), json!(story_style_id));
+            // Never trust style prompts in the browser payload. Providers receive server-resolved values only.
+            object.insert("style".to_string(), json!(visual_prompt));
+            object.insert("story_style".to_string(), json!(story_prompt));
+        }
         let queued = crate::repositories::generation::create_generation_job_record(
             &ctx.db,
             workspace_id,
@@ -503,7 +693,7 @@ pub async fn create_job(
             CreateGenerationJobRequest {
                 job_type,
                 storybook_id: payload.storybook_id,
-                input_json: payload.input_json,
+                input_json,
             },
         )
         .await

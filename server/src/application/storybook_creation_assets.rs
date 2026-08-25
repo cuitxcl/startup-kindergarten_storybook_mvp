@@ -328,6 +328,8 @@ pub async fn generate_visual_reference(
         asset_reference_id,
         Some(job.id),
         Some(idempotency_key),
+        session.visual_style_id.clone(),
+        session.visual_style_version,
     )
     .await
     .map_err(common::db_error)?;

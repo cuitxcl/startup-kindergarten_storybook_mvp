@@ -17,8 +17,8 @@ pub async fn create_plain(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, $7, $8, $9, now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, story_style_id, visual_style_id, visual_style_version, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, 'plain', 'plan_pending', 'private', 'blank', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
         "#,
         [
             storybook_id.into(),
@@ -27,12 +27,14 @@ pub async fn create_plain(
             payload.age_group.into(),
             payload.use_scene.into(),
             payload.teaching_goal.into(),
-            // 前端会把用户选择的画风（style）作为 cover_tone 传入；为空时回退默认展示文案。
             payload
                 .cover_tone
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "温暖、清楚".to_string())
                 .into(),
+            payload.story_style_id.into(),
+            payload.visual_style_id.into(),
+            payload.visual_style_version.into(),
             page_aspect_ratio.into(),
             creator_id.into(),
         ],

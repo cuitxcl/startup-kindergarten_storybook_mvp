@@ -21,6 +21,7 @@ use crate::{
         StorybookCreationSessionListItem, StorybookCreationSessionListQuery,
         UpdateCreationOutlineRequest, UpdateOutlinePageRequest, UpdateOutlinePageResponse,
         UpdateOutlineResponse, UpdateStorybookCreationSessionRequest,
+        CreativeSettingsEffects, CreativeSettingsResponse, UpdateCreativeSettingsRequest,
         UpdateVisualPreferencesRequest, VisualPreferences, VisualPreferencesResponse,
     },
     page_aspect::normalize_page_aspect_ratio,
@@ -50,7 +51,7 @@ pub async fn create(
             "创作会话入口只能是 direct_create 或 from_storybook_assets",
         ));
     }
-    let source_storybook_id = if entry_type == "from_storybook_assets" {
+    let source_settings = if entry_type == "from_storybook_assets" {
         let source_storybook_id = payload
             .source_storybook_id
             .ok_or_else(|| ApiError::validation("source_storybook_id", "请选择来源绘本"))?;
@@ -74,17 +75,32 @@ pub async fn create(
         {
             return Ok(existing);
         }
-        Some(source_storybook_id)
+        let visual_style_id = source.visual_style_id.clone().ok_or_else(|| ApiError::state_conflict_with_code(
+            "source_storybook_style_selection_required",
+            "来源绘本缺少可用的绘本风格，请先为来源绘本选择系统预设",
+        ))?;
+        let visual_style_version = source.visual_style_version.unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+        Some((source_storybook_id, visual_style_id, visual_style_version, source.page_aspect_ratio.clone()))
     } else {
         None
     };
+    let source_storybook_id = source_settings.as_ref().map(|settings| settings.0);
     let quick_idea = validate_quick_idea(payload.quick_idea)?;
     let use_scene = clean_or(payload.use_scene, "家庭共读");
     let age_group = clean_or(payload.age_group, "4-5 岁");
     let page_count = normalize_page_count(payload.page_count);
+    let story_style_id = payload.story_style_id.unwrap_or_else(|| crate::creative_presets::DEFAULT_STORY_STYLE_ID.to_string());
+    if crate::creative_presets::story_style(&story_style_id).is_none() {
+        return Err(ApiError::validation_with_code("unknown_story_style", "story_style_id", "请选择系统提供的故事风格"));
+    }
+    let visual_style_id = payload.visual_style_id.or_else(|| source_settings.as_ref().map(|settings| settings.1.clone())).unwrap_or_else(|| crate::creative_presets::DEFAULT_VISUAL_STYLE_ID.to_string());
+    let visual_style_version = source_settings.as_ref().map(|settings| settings.2).unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+    let visual_style_prompt = crate::creative_presets::visual_prompt(&visual_style_id, visual_style_version)
+        .ok_or_else(|| ApiError::validation_with_code("unknown_visual_style", "visual_style_id", "请选择系统提供的绘本风格"))?;
     let visual_preferences = VisualPreferences {
-        style: clean_or(payload.style, "watercolor"),
-        page_aspect_ratio: normalize_page_aspect_ratio(payload.page_aspect_ratio.as_deref()),
+        // `style` remains an internal generation field during the compatibility window.
+        style: visual_style_prompt.to_string(),
+        page_aspect_ratio: payload.page_aspect_ratio.as_deref().map(|value| normalize_page_aspect_ratio(Some(value))).unwrap_or_else(|| source_settings.as_ref().map(|settings| settings.3.clone()).unwrap_or_else(|| "portrait_4_5".to_string())),
         visual_complexity: validate_enum(
             payload.visual_complexity,
             &["simple", "standard", "rich"],
@@ -113,6 +129,9 @@ pub async fn create(
         understanding,
         materials,
         visual_preferences,
+        story_style_id,
+        visual_style_id,
+        visual_style_version,
     )
     .await
     .map_err(common::db_error)
@@ -193,7 +212,12 @@ pub async fn update(
 ) -> Result<CreationSessionUpdateResponse, ApiError> {
     let mut session = editable_session(ctx, headers, workspace_id, session_id).await?;
     ensure_direct_creation_session(&session)?;
-    ensure_not_terminal_for_edit(&session)?;
+    if session.status == "abandoned" {
+        return Err(ApiError::state_conflict("已放弃的创作不能继续编辑"));
+    }
+    if session.status == "generating" {
+        return Err(ApiError::state_conflict("绘本正在制作中，完成后再调整创作设定"));
+    }
     if matches!(session.status.as_str(), "generating") {
         return Err(ApiError::state_conflict("生成中不能修改基础输入"));
     }
@@ -557,6 +581,94 @@ pub async fn update_visual_preferences(
     })
 }
 
+pub async fn update_creative_settings(
+    ctx: &AppContext,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+    session_id: Uuid,
+    payload: UpdateCreativeSettingsRequest,
+) -> Result<CreativeSettingsResponse, ApiError> {
+    common::require_editor_db(ctx, headers, workspace_id).await?;
+    let mut session = crate::repositories::storybook_creation_sessions::find_for_update(&ctx.db, workspace_id, session_id)
+        .await.map_err(common::db_error)?;
+    ensure_not_terminal_for_edit(&session)?;
+    let next_story_style_id = payload.story_style_id.unwrap_or_else(|| session.story_style_id.clone());
+    let next_visual_style_id = payload.visual_style_id.unwrap_or_else(|| session.visual_style_id.clone());
+    let next_visual_prompt = crate::creative_presets::visual_prompt(&next_visual_style_id, crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION)
+        .ok_or_else(|| ApiError::validation_with_code("unknown_visual_style", "visual_style_id", "请选择系统提供的绘本风格"))?;
+    if crate::creative_presets::story_style(&next_story_style_id).is_none() {
+        return Err(ApiError::validation_with_code("unknown_story_style", "story_style_id", "请选择系统提供的故事风格"));
+    }
+    let visual_changed = next_visual_style_id != session.visual_style_id;
+    let story_changed = next_story_style_id != session.story_style_id;
+    let references = crate::repositories::storybook_creation_assets::active_visual_reference_asset_ids(&ctx.db, workspace_id, session_id)
+        .await.map_err(common::db_error)?;
+    if visual_changed && !references.is_empty() && !payload.confirm_reference_regeneration {
+        return Err(ApiError::state_conflict_with_code_and_details(
+            "style_change_requires_reference_regeneration",
+            format!("切换绘本风格会使 {} 张照片的参考图失效", references.len()),
+            json!({ "asset_reference_ids": references, "affected_count": references.len() }),
+        ));
+    }
+    let mut effects = CreativeSettingsEffects {
+        references_invalidated: false,
+        invalidated_asset_reference_ids: Vec::new(),
+        requires_direction_refresh: false,
+        requires_outline_refresh: false,
+        requires_storybook_regeneration: false,
+    };
+    let txn = ctx.db.begin().await.map_err(common::db_error)?;
+    let mut locked = crate::repositories::storybook_creation_sessions::find_for_update(&txn, workspace_id, session_id)
+        .await.map_err(common::db_error)?;
+    if visual_changed && !references.is_empty() {
+        effects.invalidated_asset_reference_ids = crate::repositories::storybook_creation_assets::invalidate_active_visual_references(&txn, workspace_id, session_id)
+            .await.map_err(common::db_error)?;
+        effects.references_invalidated = true;
+    }
+    if story_changed {
+        locked.story_style_id = next_story_style_id;
+        locked.directions.clear();
+        locked.selected_direction_id = None;
+        locked.outline = None;
+        locked.requires_direction_refresh = true;
+        locked.requires_outline_refresh = true;
+        effects.requires_direction_refresh = true;
+        effects.requires_outline_refresh = true;
+        locked.status = "understanding_ready".to_string();
+    }
+    if visual_changed {
+        locked.visual_style_id = next_visual_style_id;
+        locked.visual_style_version = crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION;
+        locked.visual_preferences.style = next_visual_prompt.to_string();
+    }
+    let next_page_count = payload.page_count.map(|value| normalize_page_count(Some(value)));
+    let page_count_changed = next_page_count.is_some_and(|value| value != locked.page_count);
+    if let Some(value) = next_page_count {
+        locked.page_count = value;
+        locked.outline = None;
+        locked.requires_outline_refresh = true;
+        effects.requires_outline_refresh = true;
+        if locked.status == "outline_ready" {
+            locked.status = "direction_selected".to_string();
+        }
+    }
+    let preference_changed = page_count_changed || payload.page_aspect_ratio.is_some() || payload.visual_complexity.is_some() || payload.character_consistency.is_some();
+    if let Some(value) = payload.page_aspect_ratio { locked.visual_preferences.page_aspect_ratio = normalize_page_aspect_ratio(Some(&value)); }
+    if let Some(value) = payload.visual_complexity { locked.visual_preferences.visual_complexity = validate_enum(Some(value), &["simple", "standard", "rich"], "standard", "visual_complexity")?; }
+    if let Some(value) = payload.character_consistency { locked.visual_preferences.character_consistency = validate_enum(Some(value), &["auto", "speed", "confirm_character"], "auto", "character_consistency")?; }
+    if preference_changed && locked.storybook_id.is_some() {
+        locked.generation_summary = CreationGenerationSummary { text_generation_status: "stale".to_string(), image_generation_status: "stale".to_string(), quality_notice: Some("创作设定已调整，需要重新制作绘本分页".to_string()), recoverable_actions: vec!["regenerate_storybook".to_string()] };
+        effects.requires_storybook_regeneration = true;
+        if locked.status == "storybook_ready" {
+            locked.status = "outline_ready".to_string();
+        }
+    }
+    crate::repositories::storybook_creation_sessions::save_in_tx(&txn, &locked).await.map_err(common::db_error)?;
+    txn.commit().await.map_err(common::db_error)?;
+    session = crate::repositories::storybook_creation_sessions::find(&ctx.db, workspace_id, session_id).await.map_err(common::db_error)?;
+    Ok(CreativeSettingsResponse { session, effects })
+}
+
 pub async fn generate_storybook(
     ctx: &AppContext,
     headers: &HeaderMap,
@@ -647,6 +759,16 @@ pub async fn generate_storybook(
             }),
         ));
     }
+    let mismatched_asset_reference_ids = crate::repositories::storybook_creation_assets::style_mismatched_references_for_generation(
+        &ctx.db, workspace_id, session_id, &session.visual_style_id, session.visual_style_version,
+    ).await.map_err(common::db_error)?;
+    if !mismatched_asset_reference_ids.is_empty() {
+        return Err(ApiError::state_conflict_with_code_and_details(
+            "visual_reference_style_mismatch",
+            "照片参考图与当前绘本风格不一致，请按当前风格重新生成并确认",
+            json!({ "blocking_asset_reference_ids": mismatched_asset_reference_ids, "next_action": "regenerate_visual_reference" }),
+        ));
+    }
     let confirmed_asset_references =
         crate::repositories::storybook_creation_assets::confirmed_references_for_generation(
             &ctx.db,
@@ -697,6 +819,9 @@ pub async fn generate_storybook(
                         use_scene: session.understanding.scene.clone(),
                         teaching_goal: session.understanding.goal.clone(),
                         cover_tone: Some(session.visual_preferences.style.clone()),
+                        story_style_id: Some(session.story_style_id.clone()),
+                        visual_style_id: Some(session.visual_style_id.clone()),
+                        visual_style_version: Some(session.visual_style_version),
                         page_aspect_ratio: Some(
                             session.visual_preferences.page_aspect_ratio.clone(),
                         ),
@@ -873,7 +998,11 @@ fn ensure_status_any(session: &StorybookCreationSession, allowed: &[&str]) -> Re
 fn can_refresh_directions_from_status(status: &str) -> bool {
     matches!(
         status,
-        "understanding_ready" | "directions_ready" | "outline_ready" | "failed"
+        "understanding_ready"
+            | "directions_ready"
+            | "direction_selected"
+            | "outline_ready"
+            | "failed"
     )
 }
 
@@ -940,7 +1069,7 @@ fn validate_enum(
 }
 
 fn normalize_page_count(value: Option<u32>) -> u32 {
-    value.unwrap_or(6).clamp(4, 12)
+    value.unwrap_or(10).clamp(4, 32)
 }
 
 async fn create_understanding(
@@ -993,6 +1122,8 @@ async fn create_directions(session: &StorybookCreationSession, count: u32) -> Ve
         let provider = ConfiguredGenerationProvider::from_env();
         let input = json!({
             "quick_idea": session.quick_idea,
+            "story_style": crate::creative_presets::story_prompt(&session.story_style_id).unwrap_or("日常温情型"),
+            "story_style_id": session.story_style_id,
             "understanding": session.understanding,
             "materials": session.materials,
             "direction_count": count,
@@ -1031,6 +1162,8 @@ async fn create_outline(
         let selected_direction = selected_direction(session)?;
         let input = json!({
             "quick_idea": session.quick_idea,
+            "story_style": crate::creative_presets::story_prompt(&session.story_style_id).unwrap_or("日常温情型"),
+            "story_style_id": session.story_style_id,
             "understanding": session.understanding,
             "materials": session.materials,
             "selected_direction": selected_direction,
@@ -1699,7 +1832,7 @@ fn step(key: &str, label: &str, status: &str) -> CreationGenerationStep {
 mod tests {
     use super::{
         can_refresh_directions_from_status, direct_creation_page_evidence,
-        photo_references_by_kind, unplaced_locked_materials,
+        normalize_page_count, photo_references_by_kind, unplaced_locked_materials,
     };
     use crate::models::{
         CreationMaterial, CreationOutline, CreationOutlinePage, StorybookAssetReference,
@@ -1753,9 +1886,19 @@ mod tests {
 
     #[test]
     fn direction_refresh_can_replace_an_existing_outline() {
+        assert!(can_refresh_directions_from_status("direction_selected"));
         assert!(can_refresh_directions_from_status("outline_ready"));
         assert!(!can_refresh_directions_from_status("generating"));
         assert!(!can_refresh_directions_from_status("storybook_ready"));
+    }
+
+    #[test]
+    fn creation_page_count_supports_extended_storybooks() {
+        assert_eq!(normalize_page_count(None), 10);
+        assert_eq!(normalize_page_count(Some(4)), 4);
+        assert_eq!(normalize_page_count(Some(24)), 24);
+        assert_eq!(normalize_page_count(Some(32)), 32);
+        assert_eq!(normalize_page_count(Some(33)), 32);
     }
 
     #[test]
@@ -1790,6 +1933,8 @@ mod tests {
                 failure_reason: None,
                 confirmed_at: Some(chrono::Utc::now()),
                 confirmed_by: Some(Uuid::new_v4()),
+                style_id: Some("watercolor_book".to_string()),
+                style_version: Some(1),
             }),
             revoked_at: None,
             revoked_by: None,

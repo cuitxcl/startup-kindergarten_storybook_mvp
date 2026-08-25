@@ -5,6 +5,8 @@ use loco_rs::{
     prelude::{BackgroundWorker, async_trait},
 };
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Semaphore;
 
 #[cfg(feature = "db")]
 use crate::repositories::generation;
@@ -19,6 +21,24 @@ pub struct GenerationJobArgs {
 pub struct GenerationPageImageArgs {
     pub workspace_id: uuid::Uuid,
     pub job_id: uuid::Uuid,
+}
+
+const DEFAULT_IMAGE_GENERATION_CONCURRENCY: usize = 3;
+static IMAGE_GENERATION_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+pub fn image_generation_concurrency_limit() -> usize {
+    std::env::var("IMAGE_GENERATION_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_IMAGE_GENERATION_CONCURRENCY)
+        .min(8)
+}
+
+fn image_generation_semaphore() -> Arc<Semaphore> {
+    IMAGE_GENERATION_SEMAPHORE
+        .get_or_init(|| Arc::new(Semaphore::new(image_generation_concurrency_limit())))
+        .clone()
 }
 
 pub struct GenerationWorker {
@@ -115,6 +135,12 @@ impl BackgroundWorker<GenerationPageImageArgs> for GenerationPageImageWorker {
     async fn perform(&self, args: GenerationPageImageArgs) -> loco_rs::Result<()> {
         #[cfg(feature = "db")]
         {
+            // The provider call and image write-back both stay inside one permit so every entry
+            // point shares the same external-provider and storage-pressure limit.
+            let _permit = image_generation_semaphore()
+                .acquire_owned()
+                .await
+                .map_err(|_| loco_rs::Error::Message("图片生成并发控制已关闭".to_string()))?;
             return generation::execute_generation_job(
                 &self.ctx.db,
                 args.workspace_id,

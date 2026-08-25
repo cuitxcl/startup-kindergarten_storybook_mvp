@@ -13,7 +13,8 @@ use crate::{
     application::{self, generation::RecoverGenerationJobsRequest},
     error::ApiError,
     models::{
-        CreateGenerationJobRequest, CreateImageTaskRequest, Envelope, GenerationJob,
+        BulkImageTaskResponse, CreateBulkImageTasksRequest, CreateGenerationJobRequest,
+        CreateImageTaskRequest, Envelope, GenerationJob,
         GenerationJobListQuery, ImageVariantListQuery, StorybookImageVariant,
     },
 };
@@ -27,6 +28,10 @@ pub fn routes() -> Routes {
         .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/cover/image-tasks",
             post(create_cover_image_task),
+        )
+        .add(
+            "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/bulk-image-tasks",
+            post(create_bulk_image_tasks),
         )
         .add(
             "/api/workspaces/{workspace_id}/storybooks/{storybook_id}/roles/{role_id}/reference-image-tasks",
@@ -140,6 +145,23 @@ async fn create_cover_image_task(
     )
     .await?;
     Ok((StatusCode::CREATED, Json(Envelope::new(job))))
+}
+
+async fn create_bulk_image_tasks(
+    State(ctx): State<AppContext>,
+    headers: HeaderMap,
+    Path((workspace_id, storybook_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<CreateBulkImageTasksRequest>,
+) -> Result<(StatusCode, Json<Envelope<BulkImageTaskResponse>>), ApiError> {
+    let result = application::generation::create_bulk_image_tasks(
+        &ctx,
+        &headers,
+        workspace_id,
+        storybook_id,
+        payload,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(Envelope::new(result))))
 }
 
 async fn create_role_reference_image_task(
@@ -274,6 +296,9 @@ mod tests {
         ));
         assert!(uris.contains(
             &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/roles/{role_id}/reference-image-tasks"
+        ));
+        assert!(uris.contains(
+            &"/api/workspaces/{workspace_id}/storybooks/{storybook_id}/bulk-image-tasks"
         ));
         assert!(
             uris.contains(

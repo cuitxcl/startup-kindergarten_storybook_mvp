@@ -63,7 +63,7 @@ export function RequestStepForm({
           </span>
         </summary>
         <div className="form-grid">
-          <label>页数<input type="number" min={4} max={16} value={form.pageCount} disabled={disabled} onChange={(event) => onChange({ pageCount: event.target.value })} /></label>
+          <label>页数<input type="number" min={4} max={32} value={form.pageCount} disabled={disabled} onChange={(event) => onChange({ pageCount: event.target.value })} /></label>
           <div className="span-2">
             <span className="field-label">页面比例</span>
             <div className="page-aspect-options compact">
@@ -107,19 +107,7 @@ export function RequestStepForm({
               <button type="button" className="style-preset-toggle" disabled={disabled} onClick={onToggleStyleCards}>
                 {styleCardsExpanded ? "收起风格" : `更多风格（${STYLE_PRESETS.length} 种）`}
               </button>
-              <button type="button" className="style-preset-toggle" disabled={disabled} onClick={onToggleCustomStyle}>
-                {customStyleOpen ? "收起自定义画风" : "自定义画风"}
-              </button>
             </div>
-            {customStyleOpen && (
-              <textarea
-                rows={2}
-                value={form.style}
-                disabled={disabled}
-                placeholder="描述想要的画面风格"
-                onChange={(event) => onChange({ style: event.target.value })}
-              />
-            )}
           </div>
           <div className="span-2">
             <span className="field-label">故事风格</span>

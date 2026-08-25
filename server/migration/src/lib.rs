@@ -25,6 +25,7 @@ mod m20260821_000022_create_storybook_creation_assets;
 mod m20260821_000023_add_storybook_customization_plan;
 mod m20260821_000024_create_storybook_customization_runs;
 mod m20260821_000025_add_storybook_page_review_status;
+mod m20260824_000026_add_creative_setting_ids;
 
 pub struct Migrator;
 
@@ -57,6 +58,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260821_000023_add_storybook_customization_plan::Migration),
             Box::new(m20260821_000024_create_storybook_customization_runs::Migration),
             Box::new(m20260821_000025_add_storybook_page_review_status::Migration),
+            Box::new(m20260824_000026_add_creative_setting_ids::Migration),
         ]
     }
 }

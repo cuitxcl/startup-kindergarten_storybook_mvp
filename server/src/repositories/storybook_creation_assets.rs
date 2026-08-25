@@ -239,6 +239,8 @@ pub async fn create_visual_reference(
     asset_reference_id: Uuid,
     generation_job_id: Option<Uuid>,
     idempotency_key: Option<String>,
+    style_id: String,
+    style_version: i32,
 ) -> Result<StorybookAssetReference, DbErr> {
     if let Some(idempotency_key) = idempotency_key.as_deref() {
         if has_visual_reference_idempotency_key(
@@ -272,9 +274,9 @@ pub async fn create_visual_reference(
         DbBackend::Postgres,
         r#"
         insert into storybook_visual_references
-          (id, workspace_id, asset_reference_id, generation_job_id, status, idempotency_key,
+          (id, workspace_id, asset_reference_id, generation_job_id, status, idempotency_key, style_id, style_version,
            is_active, created_at, updated_at)
-        values ($1, $2, $3, $4, 'queued', $5, true, now(), now())
+        values ($1, $2, $3, $4, 'queued', $5, $6, $7, true, now(), now())
         "#,
         [
             visual_reference_id.into(),
@@ -282,6 +284,8 @@ pub async fn create_visual_reference(
             asset_reference_id.into(),
             generation_job_id.into(),
             idempotency_key.into(),
+            style_id.into(),
+            style_version.into(),
         ],
     ))
     .await?;
@@ -571,6 +575,34 @@ pub async fn blocking_references_for_generation(
         .collect())
 }
 
+pub async fn active_visual_reference_asset_ids(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    session_id: Uuid,
+) -> Result<Vec<Uuid>, DbErr> {
+    let rows = db.query_all(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"select r.id from storybook_asset_references r join storybook_visual_references v on v.workspace_id = r.workspace_id and v.asset_reference_id = r.id where r.workspace_id = $1 and r.creation_session_id = $2 and v.is_active = true"#,
+        [workspace_id.into(), session_id.into()],
+    )).await?;
+    rows.into_iter().map(|row| row.try_get("", "id")).collect()
+}
+
+pub async fn style_mismatched_references_for_generation(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    session_id: Uuid,
+    style_id: &str,
+    style_version: i32,
+) -> Result<Vec<Uuid>, DbErr> {
+    let rows = db.query_all(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"select r.id from storybook_asset_references r left join storybook_visual_references v on v.workspace_id = r.workspace_id and v.asset_reference_id = r.id and v.is_active = true where r.workspace_id = $1 and r.creation_session_id = $2 and r.revoked_at is null and r.usage in ('main_character','story_friend','story_object','background_scene') and (v.id is null or v.status <> 'confirmed' or v.style_id <> $3 or v.style_version <> $4)"#,
+        [workspace_id.into(), session_id.into(), style_id.into(), style_version.into()],
+    )).await?;
+    rows.into_iter().map(|row| row.try_get("", "id")).collect()
+}
+
 pub async fn confirmed_references_for_generation(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -581,6 +613,31 @@ pub async fn confirmed_references_for_generation(
         .into_iter()
         .filter(|reference| reference.status == "ready")
         .collect())
+}
+
+pub async fn invalidate_active_visual_references(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    session_id: Uuid,
+) -> Result<Vec<Uuid>, DbErr> {
+    let rows = db.query_all(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"select r.id from storybook_asset_references r join storybook_visual_references v on v.asset_reference_id = r.id and v.workspace_id = r.workspace_id where r.workspace_id = $1 and r.creation_session_id = $2 and v.is_active = true"#,
+        [workspace_id.into(), session_id.into()],
+    )).await?;
+    let ids = rows.into_iter().map(|row| row.try_get("", "id")).collect::<Result<Vec<Uuid>, _>>()?;
+    if ids.is_empty() { return Ok(ids); }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"update storybook_visual_references v set is_active = false, status = case when v.status in ('queued','generating','awaiting_confirmation') then 'rejected' else v.status end, updated_at = now() from storybook_asset_references r where r.id = v.asset_reference_id and r.workspace_id = v.workspace_id and r.workspace_id = $1 and r.creation_session_id = $2 and v.is_active = true"#,
+        [workspace_id.into(), session_id.into()],
+    )).await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"update storybook_asset_references set status = 'awaiting_reference', updated_at = now() where workspace_id = $1 and creation_session_id = $2 and id = any($3::uuid[]) and revoked_at is null and usage in ('main_character','story_friend','story_object','background_scene')"#,
+        [workspace_id.into(), session_id.into(), ids.clone().into()],
+    )).await?;
+    Ok(ids)
 }
 
 fn select_asset_reference_sql(where_clause: &str) -> String {
@@ -615,7 +672,9 @@ fn select_asset_reference_sql(where_clause: &str) -> String {
           v.image_storage_key,
           v.failure_reason,
           v.confirmed_at,
-          v.confirmed_by
+          v.confirmed_by,
+          v.style_id,
+          v.style_version
         from storybook_asset_references r
         join storybook_assets a on a.id = r.asset_id and a.workspace_id = r.workspace_id
         left join storybook_visual_references v
@@ -646,6 +705,8 @@ fn row_to_asset_reference(row: sea_orm::QueryResult) -> Result<StorybookAssetRef
             failure_reason: row.try_get("", "failure_reason")?,
             confirmed_at: row.try_get("", "confirmed_at")?,
             confirmed_by: row.try_get("", "confirmed_by")?,
+            style_id: row.try_get("", "style_id")?,
+            style_version: row.try_get("", "style_version")?,
         }),
         None => None,
     };

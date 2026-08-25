@@ -348,6 +348,9 @@ type ApiStorybookCreationSession = {
   selected_direction_id?: string | null;
   outline?: ApiCreationOutline | null;
   visual_preferences: ApiVisualPreferences;
+  story_style_id: string;
+  visual_style_id: string;
+  visual_style_version: number;
   storybook_id?: string | null;
   last_job_id?: string | null;
   idempotency_key?: string | null;
@@ -934,6 +937,9 @@ export type StorybookCreationSession = {
     visualComplexity: "simple" | "standard" | "rich";
     characterConsistency: "auto" | "speed" | "confirm_character";
   };
+  storyStyleId: string;
+  visualStyleId: string;
+  visualStyleVersion: number;
   storybookId?: string;
   lastJobId?: string;
   generationSummary: {
@@ -1348,6 +1354,9 @@ export async function createStorybook(
     useScene: string;
     teachingGoal: string;
     coverTone?: string;
+    storyStyleId?: string;
+    visualStyleId?: string;
+    visualStyleVersion?: number;
     pageAspectRatio?: Storybook["pageAspectRatio"];
   },
 ) {
@@ -1358,7 +1367,9 @@ export async function createStorybook(
       age_group: payload.ageGroup,
       use_scene: payload.useScene,
       teaching_goal: payload.teachingGoal,
-      cover_tone: optionalText(payload.coverTone),
+      story_style_id: payload.storyStyleId || "daily_warmth",
+      visual_style_id: payload.visualStyleId || "watercolor_book",
+      visual_style_version: payload.visualStyleVersion || 1,
       page_aspect_ratio: payload.pageAspectRatio || "portrait_4_5",
     }),
   });
@@ -1381,7 +1392,7 @@ export async function getStorybookCreationSession(workspaceId: string, sessionId
 
 export async function createStorybookCreationSession(
   workspaceId: string,
-  payload: { quickIdea: string; entryType?: string; sourceStorybookId?: string; useScene?: string; ageGroup?: string; pageCount?: number },
+  payload: { quickIdea: string; entryType?: string; sourceStorybookId?: string; useScene?: string; ageGroup?: string; pageCount?: number; storyStyleId?: string; visualStyleId?: string },
 ): Promise<StorybookCreationSession> {
   const response = await request<ApiStorybookCreationSession>(
     `/api/workspaces/${workspaceId}/storybook-creation-sessions`,
@@ -1394,10 +1405,32 @@ export async function createStorybookCreationSession(
         use_scene: payload.useScene,
         age_group: payload.ageGroup,
         page_count: payload.pageCount,
+        story_style_id: payload.storyStyleId,
+        visual_style_id: payload.visualStyleId,
       }),
     },
   );
   return mapStorybookCreationSession(response);
+}
+
+export type CreativeSettingsEffects = {
+  referencesInvalidated: boolean;
+  invalidatedAssetReferenceIds: string[];
+  requiresDirectionRefresh: boolean;
+  requiresOutlineRefresh: boolean;
+  requiresStorybookRegeneration: boolean;
+};
+
+export async function updateStorybookCreativeSettings(
+  workspaceId: string,
+  sessionId: string,
+  payload: { storyStyleId?: string; visualStyleId?: string; pageCount?: number; pageAspectRatio?: Storybook["pageAspectRatio"]; visualComplexity?: "simple" | "standard" | "rich"; characterConsistency?: "auto" | "speed" | "confirm_character"; confirmReferenceRegeneration?: boolean },
+): Promise<{ session: StorybookCreationSession; effects: CreativeSettingsEffects }> {
+  const response = await request<{ session: ApiStorybookCreationSession; effects: { references_invalidated: boolean; invalidated_asset_reference_ids: string[]; requires_direction_refresh: boolean; requires_outline_refresh: boolean; requires_storybook_regeneration: boolean } }>(
+    `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/creative-settings`,
+    { method: "PATCH", body: JSON.stringify({ story_style_id: payload.storyStyleId, visual_style_id: payload.visualStyleId, page_count: payload.pageCount, page_aspect_ratio: payload.pageAspectRatio, visual_complexity: payload.visualComplexity, character_consistency: payload.characterConsistency, confirm_reference_regeneration: Boolean(payload.confirmReferenceRegeneration) }) },
+  );
+  return { session: mapStorybookCreationSession(response.session), effects: { referencesInvalidated: response.effects.references_invalidated, invalidatedAssetReferenceIds: response.effects.invalidated_asset_reference_ids, requiresDirectionRefresh: response.effects.requires_direction_refresh, requiresOutlineRefresh: response.effects.requires_outline_refresh, requiresStorybookRegeneration: response.effects.requires_storybook_regeneration } };
 }
 
 export async function updateStorybookCreationSession(
@@ -1556,10 +1589,10 @@ export async function selectStorybookCreationDirection(workspaceId: string, sess
   return mapStoryDirection(response.selected_direction);
 }
 
-export async function generateStorybookCreationOutline(workspaceId: string, sessionId: string): Promise<CreationOutline> {
+export async function generateStorybookCreationOutline(workspaceId: string, sessionId: string, pageCount: number): Promise<CreationOutline> {
   const envelope = await requestEnvelope<{ outline: ApiCreationOutline }>(
     `/api/workspaces/${workspaceId}/storybook-creation-sessions/${sessionId}/outline:generate`,
-    { method: "POST", body: JSON.stringify({ page_count: 6 }) },
+    { method: "POST", body: JSON.stringify({ page_count: pageCount }) },
   );
   const outline = mapCreationOutline(envelope.data.outline);
   outline.warnings = envelope.meta?.warnings || [];
@@ -1792,6 +1825,20 @@ export async function createCoverImageTask(
     },
   );
   return mapGenerationJob(response);
+}
+
+export async function createBulkImageTasks(
+  workspaceId: string,
+  storybookId: string,
+): Promise<{ jobs: GenerationJob[]; concurrencyLimit: number }> {
+  const response = await request<{ jobs: ApiGenerationJob[]; concurrency_limit: number }>(
+    `/api/workspaces/${workspaceId}/storybooks/${storybookId}/bulk-image-tasks`,
+    { method: "POST", body: "{}" },
+  );
+  return {
+    jobs: response.jobs.map(mapGenerationJob),
+    concurrencyLimit: response.concurrency_limit,
+  };
 }
 
 export async function createRoleReferenceImageTask(
@@ -2328,7 +2375,7 @@ export async function buildStorybookCustomizationPlan(
 export async function deriveCustomStorybooksBatch(
   workspaceId: string,
   storybookId: string,
-  payload: { childIds: string[]; intensity: "quick" | "standard"; customizationPlan?: unknown; materialChoices: Record<string, string> },
+  payload: { childIds: string[]; intensity: "quick" | "standard"; customizationPlan?: unknown; materialChoices: Record<string, string>; creationSessionId?: string },
 ) {
   const response = await request<ApiDeriveCustomBatchResponse>(
     `/api/workspaces/${workspaceId}/storybooks/${storybookId}/derive-custom-batch`,
@@ -2339,6 +2386,7 @@ export async function deriveCustomStorybooksBatch(
         intensity: payload.intensity,
         customization_plan: payload.customizationPlan,
         material_choices: payload.materialChoices,
+        creation_session_id: payload.creationSessionId,
       }),
     },
   );
@@ -2804,6 +2852,9 @@ function mapStorybookCreationSession(session: ApiStorybookCreationSession): Stor
       visualComplexity: session.visual_preferences.visual_complexity,
       characterConsistency: session.visual_preferences.character_consistency,
     },
+    storyStyleId: session.story_style_id || "daily_warmth",
+    visualStyleId: session.visual_style_id || "watercolor_book",
+    visualStyleVersion: session.visual_style_version || 1,
     storybookId: session.storybook_id || undefined,
     lastJobId: session.last_job_id || undefined,
     generationSummary: {

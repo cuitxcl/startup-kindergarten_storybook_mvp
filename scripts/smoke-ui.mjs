@@ -237,6 +237,7 @@ async function main() {
   await waitForText(childName);
   await clickCardContaining("小雨");
   await waitForText("儿童档案");
+  await clickByAriaLabel("孩子资料操作");
   await waitForText("编辑资料");
   await clickByText("编辑资料");
   await waitForText("编辑 小雨 的资料");
@@ -259,9 +260,12 @@ async function main() {
   await waitForText("操作成功");
   await waitForText(archiveChildName);
   await clickCardContaining(archiveChildName);
+  await clickByAriaLabel("孩子资料操作");
   await waitForText("归档资料");
   await clickByText("归档资料");
   await waitForText("儿童资料已归档");
+  await clickByAriaLabel("孩子资料操作");
+  await waitForText("恢复资料");
   await clickByText("恢复资料");
   await waitForText("儿童资料已恢复");
 
@@ -974,6 +978,14 @@ async function clickByText(text) {
     const el = candidates.find((item) => item.innerText.trim() === ${JSON.stringify(text)})
       || candidates.find((item) => item.innerText.includes(${JSON.stringify(text)}));
     if (!el) throw new Error('click target not found: ${escapeForError(text)}');
+    el.click();
+  })()`);
+}
+
+async function clickByAriaLabel(label) {
+  await evaluate(`(() => {
+    const el = [...document.querySelectorAll('button, a')].find((item) => !item.disabled && item.getAttribute('aria-label') === ${JSON.stringify(label)});
+    if (!el) throw new Error('aria-label target not found: ${escapeForError(label)}');
     el.click();
   })()`);
 }

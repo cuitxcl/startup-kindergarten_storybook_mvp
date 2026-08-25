@@ -19,6 +19,44 @@ pub async fn derive_custom(
     ensure_source_ready_for_customization(&source)?;
     let child = child_profile_for_custom(db, workspace_id, payload.child_id).await?;
     let customization_plan = payload.customization_plan.clone();
+    let creative_settings = customization_plan
+        .as_ref()
+        .and_then(|plan| plan.get("creative_settings"));
+    let story_style_id = creative_settings
+        .and_then(|settings| settings.get("story_style_id"))
+        .and_then(JsonValue::as_str)
+        .filter(|style_id| crate::creative_presets::story_style(style_id).is_some())
+        .map(str::to_string)
+        .or_else(|| source.story_style_id.clone());
+    let visual_style_id = creative_settings
+        .and_then(|settings| settings.get("visual_style_id"))
+        .and_then(JsonValue::as_str)
+        .filter(|style_id| {
+            crate::creative_presets::visual_prompt(
+                style_id,
+                crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION,
+            )
+            .is_some()
+        })
+        .map(str::to_string)
+        .or_else(|| source.visual_style_id.clone());
+    let visual_style_version = creative_settings
+        .and_then(|settings| settings.get("visual_style_version"))
+        .and_then(JsonValue::as_i64)
+        .and_then(|version| i32::try_from(version).ok())
+        .filter(|version| {
+            visual_style_id
+                .as_deref()
+                .and_then(|style_id| crate::creative_presets::visual_prompt(style_id, *version))
+                .is_some()
+        })
+        .or(source.visual_style_version);
+    let page_aspect_ratio = creative_settings
+        .and_then(|settings| settings.get("page_aspect_ratio"))
+        .and_then(JsonValue::as_str)
+        .filter(|ratio| matches!(*ratio, "portrait_4_5" | "landscape_4_3" | "square_1_1"))
+        .map(str::to_string)
+        .unwrap_or_else(|| source.page_aspect_ratio.clone());
     let plan_strategy = customization_strategy(customization_plan.as_ref());
     let primary_material = payload
         .primary_material
@@ -35,8 +73,8 @@ pub async fn derive_custom(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, customization_plan, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, customization_plan, title, age_group, use_scene, teaching_goal, cover_tone, story_style_id, visual_style_id, visual_style_version, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, 'custom', 'editing', 'private', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
         "#,
         [
             new_id.into(),
@@ -50,7 +88,10 @@ pub async fn derive_custom(
             customization.use_scene.into(),
             customization.teaching_goal.into(),
             customization.cover_tone.into(),
-            source.page_aspect_ratio.into(),
+            story_style_id.into(),
+            visual_style_id.into(),
+            visual_style_version.into(),
+            page_aspect_ratio.into(),
             creator_id.into(),
         ],
     ))
@@ -379,6 +420,9 @@ mod tests {
             use_scene: "规则引导".to_string(),
             teaching_goal: "学习轮流与分享".to_string(),
             cover_tone: "温暖、清楚".to_string(),
+            story_style_id: Some("daily_warmth".to_string()),
+            visual_style_id: Some("watercolor_book".to_string()),
+            visual_style_version: Some(1),
             page_aspect_ratio: "portrait_4_5".to_string(),
             teacher_review_status: "pending".to_string(),
             teacher_reviewed_by: None,

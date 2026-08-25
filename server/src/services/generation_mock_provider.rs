@@ -88,8 +88,8 @@ fn mock_storybook_plan(input: &JsonValue) -> JsonValue {
     let page_count = input
         .get("page_count")
         .and_then(JsonValue::as_u64)
-        .unwrap_or(6)
-        .clamp(1, 12);
+        .unwrap_or(10)
+        .clamp(4, 32);
     let outline = (1..=page_count)
         .map(|page_number| {
             json!({
@@ -415,8 +415,8 @@ fn mock_creation_outline(input: &JsonValue) -> JsonValue {
     let page_count = input
         .get("page_count")
         .and_then(|value| value.as_u64())
-        .unwrap_or(6)
-        .clamp(4, 12);
+        .unwrap_or(10)
+        .clamp(4, 32);
     let material_ids = input
         .get("selected_direction")
         .and_then(|value| value.get("material_ids"))
@@ -454,7 +454,7 @@ fn mock_creation_outline(input: &JsonValue) -> JsonValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{mock_customization_plan, mock_storybook_plan};
+    use super::{mock_creation_outline, mock_customization_plan, mock_storybook_plan};
     use serde_json::json;
 
     #[test]
@@ -472,6 +472,16 @@ mod tests {
         assert!(output["plan"]["outline"][0]["page_range"].is_string());
         assert!(output["plan"]["role_requirements"].is_array());
         assert!(output["plan"]["review_points"].is_array());
+    }
+
+    #[test]
+    fn mock_creation_outline_preserves_extended_page_count() {
+        let output = mock_creation_outline(&json!({
+            "page_count": 32,
+            "selected_direction": { "material_ids": ["mat_1"] }
+        }));
+
+        assert_eq!(output["outline"]["pages"].as_array().unwrap().len(), 32);
     }
 
     #[test]

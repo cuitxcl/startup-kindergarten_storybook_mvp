@@ -98,8 +98,16 @@ pub async fn page_image_job_input(
             reference_images.push(reference);
         }
     }
-    // 第三档场景延续：上一页已有插图时，把它作为场景参考图带上；没有则静默降级。
-    let scene_reference = previous_page_scene_reference(db, storybook_id, page_id).await?;
+    // 场景延续只能在没有角色参考图时启用。上一页若已有人物漂移，作为图片输入会
+    // 覆盖当前角色图的帽子、发型和服装，反而把错误传给后续分页。
+    let has_role_reference = reference_images
+        .iter()
+        .any(|reference| reference.source == "storybook_role");
+    let scene_reference = if has_role_reference {
+        None
+    } else {
+        previous_page_scene_reference(db, storybook_id, page_id).await?
+    };
     let has_scene_reference = scene_reference.is_some();
     if let Some(scene) = scene_reference {
         if !reference_images.iter().any(|item| item.url == scene.url) {
@@ -179,6 +187,18 @@ pub async fn page_image_job_input(
     };
     let image_mode =
         normalize_image_mode(payload.image_mode.as_deref(), !reference_images.is_empty());
+    let prompt = if reference_images.is_empty() {
+        prompt
+    } else {
+        let referenced_names = reference_images
+            .iter()
+            .filter_map(|reference| reference.label.as_deref())
+            .collect::<Vec<_>>();
+        format!(
+            "{prompt} 角色身份必须严格以随附角色参考图为准：{}。必须保留参考图中的脸型、发型、帽子或头饰、服装配色与年龄感；不得改成另一位孩子，不得省略显著头饰或替换服装。",
+            if referenced_names.is_empty() { "全部已提供角色".to_string() } else { referenced_names.join("、") }
+        )
+    };
     let edit_instruction = clean_optional_text(payload.edit_instruction);
     // 场景参考图容易把构图拉得过于雷同，带场景参考且未显式指定强度时收敛到 0.5。
     let strength = payload

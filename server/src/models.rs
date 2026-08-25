@@ -296,6 +296,12 @@ pub struct Storybook {
     pub use_scene: String,
     pub teaching_goal: String,
     pub cover_tone: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story_style_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_style_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_style_version: Option<i32>,
     pub page_aspect_ratio: String,
     pub teacher_review_status: String,
     pub teacher_reviewed_by: Option<Uuid>,
@@ -443,6 +449,10 @@ pub struct StorybookVisualReferenceSummary {
     pub failure_reason: Option<String>,
     pub confirmed_at: Option<DateTime<Utc>>,
     pub confirmed_by: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_version: Option<i32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -573,6 +583,9 @@ pub struct StorybookCreationSession {
     pub selected_direction_id: Option<String>,
     pub outline: Option<CreationOutline>,
     pub visual_preferences: VisualPreferences,
+    pub story_style_id: String,
+    pub visual_style_id: String,
+    pub visual_style_version: i32,
     pub storybook_id: Option<Uuid>,
     pub last_job_id: Option<Uuid>,
     pub idempotency_key: Option<String>,
@@ -658,6 +671,21 @@ pub struct VisualPreferencesResponse {
     pub visual_preferences: VisualPreferences,
     pub requires_storybook_regeneration: bool,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CreativeSettingsEffects {
+    pub references_invalidated: bool,
+    pub invalidated_asset_reference_ids: Vec<Uuid>,
+    pub requires_direction_refresh: bool,
+    pub requires_outline_refresh: bool,
+    pub requires_storybook_regeneration: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CreativeSettingsResponse {
+    pub session: StorybookCreationSession,
+    pub effects: CreativeSettingsEffects,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -895,6 +923,10 @@ pub struct CreateStorybookCreationSessionRequest {
     pub age_group: Option<String>,
     pub page_count: Option<u32>,
     pub style: Option<String>,
+    #[serde(default)]
+    pub story_style_id: Option<String>,
+    #[serde(default)]
+    pub visual_style_id: Option<String>,
     pub page_aspect_ratio: Option<String>,
     pub visual_complexity: Option<String>,
     pub character_consistency: Option<String>,
@@ -963,6 +995,18 @@ pub struct UpdateVisualPreferencesRequest {
     pub page_aspect_ratio: Option<String>,
     pub visual_complexity: Option<String>,
     pub character_consistency: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateCreativeSettingsRequest {
+    pub story_style_id: Option<String>,
+    pub visual_style_id: Option<String>,
+    pub page_count: Option<u32>,
+    pub page_aspect_ratio: Option<String>,
+    pub visual_complexity: Option<String>,
+    pub character_consistency: Option<String>,
+    #[serde(default)]
+    pub confirm_reference_regeneration: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1035,6 +1079,12 @@ pub struct CreateStorybookRequest {
     pub teaching_goal: String,
     /// 可选：用户选择的画风描述，作为绘本级画风持久化（供角色参考图/插图拼接）。
     pub cover_tone: Option<String>,
+    #[serde(default)]
+    pub story_style_id: Option<String>,
+    #[serde(default)]
+    pub visual_style_id: Option<String>,
+    #[serde(default)]
+    pub visual_style_version: Option<i32>,
     pub page_aspect_ratio: Option<String>,
 }
 
@@ -1092,6 +1142,15 @@ pub struct CreateImageTaskRequest {
     pub strength: Option<f32>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct CreateBulkImageTasksRequest {}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BulkImageTaskResponse {
+    pub jobs: Vec<GenerationJob>,
+    pub concurrency_limit: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateGenerationJobRequest {
     pub job_type: String,
@@ -1134,6 +1193,8 @@ pub struct DeriveCustomBatchRequest {
     pub customization_plan: Option<JsonValue>,
     #[serde(default)]
     pub material_choices: HashMap<Uuid, String>,
+    #[serde(default)]
+    pub creation_session_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

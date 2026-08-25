@@ -1,9 +1,10 @@
-import { ArrowRight, CheckCircle2, Copy, Download, MoreHorizontal, Pencil, Send } from "lucide-react";
+import { ArrowRight, CheckCircle2, Copy, Download, Pencil, Send } from "lucide-react";
 import { ChangeEvent, FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   cancelGenerationJob,
+  createBulkImageTasks,
   createCoverImageTask,
   createGenerationJob,
   createPageImageTask,
@@ -33,7 +34,7 @@ import {
   type ShareLink,
   type StorybookCustomizationRun,
 } from "../../api/client";
-import { ActionButton, Badge, Card, ImageLightbox, Modal, Notice, PageHeader, SkeletonBlock, Toast, statusTone } from "../../components/ui";
+import { ActionButton, Badge, Card, ImageLightbox, Modal, Notice, OverflowMenu, PageHeader, SkeletonBlock, Toast, statusTone } from "../../components/ui";
 import type { Storybook, StorybookImageVariant, StorybookPage, StorybookQualityReport, StorybookRole, Workspace } from "../../types/domain";
 import { absoluteAppUrl, copyText } from "../../utils/clipboard";
 import { cacheImagePreview, getCachedImagePreview } from "../../utils/imagePreviewCache";
@@ -162,6 +163,9 @@ type BulkImageStep = {
   jobId?: string;
   error?: string;
 };
+
+// 角色参考图是分页插图的一致性前置条件；参考图完成后，封面和分页可受控并行。
+const BULK_IMAGE_CONCURRENCY = 3;
 
 function customizationPlanSummary(plan: unknown): CustomizationPlanSummary | null {
   if (!plan || typeof plan !== "object" || Array.isArray(plan)) return null;
@@ -351,7 +355,6 @@ export function StorybookDetailPage() {
   const [duplicating, setDuplicating] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [duplicateTitle, setDuplicateTitle] = useState("");
   const [deliverySaving, setDeliverySaving] = useState(false);
@@ -1345,54 +1348,47 @@ export function StorybookDetailPage() {
     setBulkImageSteps(steps);
     setNotice({
       title: "开始生成整本插图",
-      copy: `将依次生成 ${steps.length} 张图片，完成后自动刷新绘本。`,
+      copy: `将先准备角色参考图，再同时生成封面和分页插图（每次最多 ${BULK_IMAGE_CONCURRENCY} 张）。`,
       tone: "info",
     });
 
     let latestBook = book;
     try {
       latestBook = await ensureCoverCharacterReferences(latestBook, (roleId, patch) => updateStep(roleId, patch));
-      if (coverNeeded) {
-        updateStep(COVER_PAGE_ID, { status: "running" });
-        const job = await createCoverImageTask(workspace.id, latestBook.id);
-        updateStep(COVER_PAGE_ID, { jobId: job.id });
-        setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
-        const settled = await waitForImageJob(job);
-        if (settled.status !== "succeeded") {
-          updateStep(COVER_PAGE_ID, { status: "failed", error: generationErrorMessage(settled) });
-          setRetryImageJob(settled);
-          throw new Error(`封面图生成失败：${generationErrorMessage(settled)}`);
-        }
-        updateStep(COVER_PAGE_ID, { status: "done" });
-        await refreshCoverImageVariants(latestBook.id);
-        latestBook = await refreshStorybook(latestBook.id) || latestBook;
-        await refreshGenerationJobs(latestBook.id);
-      }
+      const batch = await createBulkImageTasks(workspace.id, latestBook.id);
+      const failures: Array<{ label: string; message: string; job?: GenerationJob }> = [];
+      const targetIdForJob = (job: GenerationJob) => job.jobType === "storybook_cover_image"
+        ? COVER_PAGE_ID
+        : String((job.input as Record<string, unknown>).page_id || "");
+      const labelForJob = (job: GenerationJob) => job.jobType === "storybook_cover_image"
+        ? "封面图"
+        : `第 ${latestBook.pages.find((page) => page.id === targetIdForJob(job))?.pageNumber || "?"} 页`;
 
-      for (const page of pagesToGenerate) {
-        const currentPage = latestBook.pages.find((item) => item.id === page.id) || page;
-        if (currentPage.status === "ready") {
-          updateStep(page.id, { status: "skipped" });
-          continue;
-        }
-        updateStep(page.id, { status: "running" });
-        const referenceRoles = pageReferenceRoles(latestBook, currentPage);
-        const job = await createPageImageTask(workspace.id, latestBook.id, currentPage.id, {
-          prompt: currentPage.illustrationPrompt,
-          referenceRoleIds: referenceRoles.map((role) => role.id),
-          imageMode: referenceRoles.length ? "reference_image" : "text_to_image",
-        });
-        updateStep(page.id, { jobId: job.id });
+      await Promise.all(batch.jobs.map(async (job) => {
+        const targetId = targetIdForJob(job);
+        const label = labelForJob(job);
+        if (!targetId) return;
+        updateStep(targetId, { status: "running", jobId: job.id });
         setGenerationJobs((jobs) => [job, ...jobs.filter((item) => item.id !== job.id)]);
-        const settled = await waitForImageJob(job);
-        if (settled.status !== "succeeded") {
-          updateStep(page.id, { status: "failed", error: generationErrorMessage(settled) });
-          setRetryImageJob(settled);
-          throw new Error(`第 ${currentPage.pageNumber} 页插图生成失败：${generationErrorMessage(settled)}`);
+        try {
+          const settled = await waitForImageJob(job);
+          if (settled.status !== "succeeded") {
+            const message = generationErrorMessage(settled);
+            updateStep(targetId, { status: "failed", error: message });
+            failures.push({ label, message, job: settled });
+            return;
+          }
+          updateStep(targetId, { status: "done" });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "请稍后重试。";
+          updateStep(targetId, { status: "failed", error: message });
+          failures.push({ label, message });
         }
-        updateStep(page.id, { status: "done" });
-        latestBook = await refreshStorybook(latestBook.id) || latestBook;
-        await refreshGenerationJobs(latestBook.id);
+      }));
+      if (failures.length > 0) {
+        const retryable = failures.find((failure) => failure.job)?.job;
+        if (retryable) setRetryImageJob(retryable);
+        throw new Error(`${failures.length} 张插图生成失败：${failures.map((failure) => failure.label).join("、")}`);
       }
 
       await refreshCoverImageVariants(latestBook.id);
@@ -1803,26 +1799,16 @@ export function StorybookDetailPage() {
               <ActionButton className="button secondary" disabled={!canStartExport} disabledHint={deliveryEvidenceIssueCount > 0 ? "先处理证据缺失问题" : qualityDeliveryBlocker || reviewDeliveryReminder || undefined} onClick={() => setShareOpen(true)}><Send size={16} />分享链接</ActionButton>
             ) : null}
             {/* 其余操作收敛进更多菜单 */}
-            <div className="more-menu">
-              <button className="button secondary" type="button" onClick={() => setMoreMenuOpen((open) => !open)}><MoreHorizontal size={16} />更多</button>
-              {moreMenuOpen && (
-                <>
-                  <button className="menu-overlay" type="button" aria-label="关闭菜单" onClick={() => setMoreMenuOpen(false)} />
-                  <div className="more-menu-pop">
-                    {isReviewRoute && (
-                      <Link to={`/app/${workspace.id}/storybooks/${book.id}?view=detail`} onClick={() => setMoreMenuOpen(false)}>普通详情<ArrowRight size={14} /></Link>
-                    )}
-                    {book.type === "plain" && canCreateCustomVersion && (
-                      <Link to="customize" onClick={() => setMoreMenuOpen(false)}>创作专属版本<ArrowRight size={14} /></Link>
-                    )}
-                    <button type="button" onClick={() => { setMoreMenuOpen(false); setRoleManagerOpen(true); }}><Pencil size={14} />管理角色</button>
-                    <button type="button" onClick={() => { setMoreMenuOpen(false); setMetaOpen(true); }}><Pencil size={14} />编辑信息</button>
-                    <button type="button" disabled={duplicating} onClick={() => { setMoreMenuOpen(false); setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={14} />{duplicating ? "复制中..." : "复制副本"}</button>
-                    <button type="button" className="danger" onClick={() => { setMoreMenuOpen(false); setDeleteOpen(true); }}>删除绘本</button>
-                  </div>
-                </>
-              )}
-            </div>
+            <OverflowMenu>
+              {(close) => <>
+                {isReviewRoute && <Link to={`/app/${workspace.id}/storybooks/${book.id}?view=detail`} onClick={close}>普通详情<ArrowRight size={14} /></Link>}
+                {book.type === "plain" && canCreateCustomVersion && <Link to="customize" onClick={close}>创作专属版本<ArrowRight size={14} /></Link>}
+                <button type="button" onClick={() => { close(); setRoleManagerOpen(true); }}><Pencil size={14} />管理角色</button>
+                <button type="button" onClick={() => { close(); setMetaOpen(true); }}><Pencil size={14} />编辑信息</button>
+                <button type="button" disabled={duplicating} onClick={() => { close(); setDuplicateTitle(`${book.title} 副本`); setDuplicateOpen(true); }}><Copy size={14} />{duplicating ? "复制中..." : "复制副本"}</button>
+                <button type="button" className="danger" onClick={() => { close(); setDeleteOpen(true); }}>删除绘本</button>
+              </>}
+            </OverflowMenu>
           </>
         }
       />
@@ -2259,7 +2245,7 @@ export function StorybookDetailPage() {
                 {bulkImageGenerating ? "生成中" : bulkImageSteps.some((step) => step.status === "failed") ? "需要处理" : bulkImageTotal > 0 ? "待生成" : "已完成"}
               </Badge>
               <h2>{bulkImageTotal > 0 ? "一键生成整本插图" : "整本插图已准备好"}</h2>
-              <p>{bulkImageTotal > 0 ? "会先准备角色参考图，再依次生成封面和缺少插图的分页，保证人物形象一致。" : "封面和分页都有插图，可以继续验收、导出或分享。"}</p>
+              <p>{bulkImageTotal > 0 ? `会先准备角色参考图，再并行生成封面和缺少插图的分页（每次最多 ${BULK_IMAGE_CONCURRENCY} 张），保证人物形象一致。` : "封面和分页都有插图，可以继续验收、导出或分享。"}</p>
             </div>
           </div>
           {bulkImageSteps.length > 0 ? (

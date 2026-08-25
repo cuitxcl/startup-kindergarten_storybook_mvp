@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useOutletContext } from "react-router-dom";
+import { SlidersHorizontal, Trash2, X } from "lucide-react";
 import {
   abandonStorybookCreationSession,
   abandonStorybookCustomizationRunItem,
@@ -38,10 +39,13 @@ import {
   type StorybookCustomizationRun,
   updateStorybookCreationOutlinePage,
   updateStorybookCreationSession,
+  updateStorybookCreativeSettings,
 } from "../../api/client";
 import { ActionButton, Badge, Card, EmptyState, ImageLightbox, Modal, Notice, PageHeader, ProgressSteps, SkeletonBlock } from "../../components/ui";
 import type { ChildProfile, Storybook, Workspace } from "../../types/domain";
 import { customizationBlockerFor } from "./detail/helpers";
+import { STORY_STYLE_PRESETS, STYLE_PRESETS } from "./new/presets";
+import { PAGE_ASPECT_OPTIONS } from "../../utils/pageAspect";
 
 const steps = ["对象与素材", "故事预览", "制作", "修改与交付"];
 const DEFAULT_PHOTO_LIMIT = 5;
@@ -116,6 +120,11 @@ type PhotoMaterial = {
 };
 
 type ZoomedImage = { src: string; alt: string };
+type PhotoUploadBatchItem = {
+  file: File;
+  idempotencyKey: string;
+  status: "pending" | "succeeded" | "failed";
+};
 
 type SourceBatchResultItem = SourceBatchResult["items"][number];
 
@@ -409,6 +418,7 @@ export function PersonalizedStorybookPage() {
   const [zoomedImage, setZoomedImage] = useState<ZoomedImage | null>(null);
   const [sourcePreviewReady, setSourcePreviewReady] = useState(false);
   const [sourceStep, setSourceStep] = useState(0);
+  const [sourceMaxUnlockedStep, setSourceMaxUnlockedStep] = useState(0);
   const [sourceKeepPageIds, setSourceKeepPageIds] = useState<string[]>([]);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceLoadFailed, setSourceLoadFailed] = useState(false);
@@ -416,9 +426,18 @@ export function PersonalizedStorybookPage() {
   const [recipientName, setRecipientName] = useState("");
   const [editingIdea, setEditingIdea] = useState(false);
   const [editingMaterials, setEditingMaterials] = useState(false);
+  const [directViewStep, setDirectViewStep] = useState<number | null>(null);
   const [newMaterial, setNewMaterial] = useState("");
   const [photoMaterials, setPhotoMaterials] = useState<PhotoMaterial[]>([]);
-  const [photoKind, setPhotoKind] = useState<PhotoKind>("person");
+  const [photoKind, setPhotoKind] = useState<PhotoKind | null>(null);
+  const [photoUploadModalOpen, setPhotoUploadModalOpen] = useState(false);
+  const [photoUploadBatch, setPhotoUploadBatch] = useState<PhotoUploadBatchItem[]>([]);
+  const [photoUploadError, setPhotoUploadError] = useState("");
+  const [photoUploadInProgress, setPhotoUploadInProgress] = useState(false);
+  const [photoPendingRemoval, setPhotoPendingRemoval] = useState<PhotoMaterial | null>(null);
+  const [photoRemovalError, setPhotoRemovalError] = useState("");
+  const [materialPendingRemoval, setMaterialPendingRemoval] = useState<CreationMaterial | null>(null);
+  const [materialRemovalError, setMaterialRemovalError] = useState("");
   const [uploadPolicy, setUploadPolicy] = useState<StorybookAssetUploadPolicy | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const photoMaterialsRef = useRef<PhotoMaterial[]>([]);
@@ -429,14 +448,71 @@ export function PersonalizedStorybookPage() {
   const [error, setError] = useState("");
   const [creationWarnings, setCreationWarnings] = useState<ResponseWarning[]>([]);
   const [assetRecoveryNotice, setAssetRecoveryNotice] = useState<{ name: string } | null>(null);
+  const [creativeSettingsSaving, setCreativeSettingsSaving] = useState(false);
+  const [creativeSettingsOpen, setCreativeSettingsOpen] = useState(false);
+  const [creativeSettingsNotice, setCreativeSettingsNotice] = useState("");
+  const [pageCountDraft, setPageCountDraft] = useState("");
+  const [storyStylesExpanded, setStoryStylesExpanded] = useState(false);
+  const [visualStylesExpanded, setVisualStylesExpanded] = useState(false);
+  const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
+  const [pendingVisualStyleChange, setPendingVisualStyleChange] = useState<{ styleId: string; affectedCount: number } | null>(null);
+
+  function applyServerSession(next: StorybookCreationSession) {
+    setSession((current) => {
+      if (!current || current.id !== next.id) return next;
+      return Date.parse(next.updatedAt) >= Date.parse(current.updatedAt) ? next : current;
+    });
+  }
 
   const showingRestoredBatchResult = Boolean(sourceRunId && sourceBatchResult);
-  const activeStep = entryType === "from_storybook" ? showingRestoredBatchResult ? 2 : sourceStep : editingMaterials ? 0 : session?.status === "generating" || session?.status === "storybook_ready"
-    ? session.status === "storybook_ready" ? 3 : 2
-    : session?.outline || session?.directions.length ? 1 : 0;
+  useEffect(() => {
+    if (entryType === "from_storybook") {
+      setSourceMaxUnlockedStep((current) => Math.max(current, sourceStep));
+    }
+  }, [entryType, sourceStep]);
+  const directMaxUnlockedStep = session?.status === "storybook_ready" ? 3
+    : session?.status === "generating" ? 2
+      : session?.outline || session?.directions.length ? 1 : 0;
+  const activeStep = entryType === "from_storybook"
+    ? showingRestoredBatchResult ? 2 : sourceStep
+    : directViewStep !== null && directViewStep <= directMaxUnlockedStep
+      ? directViewStep
+      : editingMaterials ? 0 : directMaxUnlockedStep;
+  const maxUnlockedStep = entryType === "from_storybook"
+    ? showingRestoredBatchResult ? 2 : sourceMaxUnlockedStep
+    : directMaxUnlockedStep;
+
+  useEffect(() => {
+    if (entryType !== "direct_create") return;
+    if (editingMaterials) setDirectViewStep(0);
+  }, [editingMaterials, entryType]);
+
+  useEffect(() => {
+    if (entryType !== "direct_create" || directViewStep === null || directViewStep <= directMaxUnlockedStep) return;
+    setDirectViewStep(directMaxUnlockedStep);
+  }, [directMaxUnlockedStep, directViewStep, entryType]);
+
+  const handleStepClick = (index: number) => {
+    if (entryType === "from_storybook") {
+      if (index === 0 && activeStep > 0) {
+        returnToSourceMaterials();
+      } else if (index === 1 && index <= sourceMaxUnlockedStep) {
+        setSourceBatchResult(null);
+        setSourceStep(1);
+      } else if (index === 2 && sourceBatchResult) {
+        setSourceStep(2);
+      }
+      return;
+    }
+    if (index > directMaxUnlockedStep) return;
+    setDirectViewStep(index);
+    setEditingMaterials(index === 0);
+  };
   const materials = session?.materials || [];
   const directions = session?.directions || [];
   const outline = session?.outline;
+  const photoUploadSucceededCount = photoUploadBatch.filter((item) => item.status === "succeeded").length;
+  const photoUploadPendingCount = photoUploadBatch.length - photoUploadSucceededCount;
 
   useEffect(() => {
     let mounted = true;
@@ -456,6 +532,10 @@ export function PersonalizedStorybookPage() {
     setSourcePreviewReady(false);
     if (sourceStep === 1) setSourceStep(0);
   }, [selectedSource?.id, recipientMode, selectedChildId, singleMaterialChoice, selectedBatchIds.join(",")]);
+
+  useEffect(() => {
+    setSourceMaxUnlockedStep(0);
+  }, [entryType, selectedSource?.id]);
 
   useEffect(() => {
     setSingleMaterialChoice("");
@@ -567,7 +647,7 @@ export function PersonalizedStorybookPage() {
     const timer = window.setInterval(() => {
       getStorybookCreationSession(workspace.id, session.id)
         .then((next) => {
-          setSession(next);
+          applyServerSession(next);
           if (next.storybookId && next.status === "storybook_ready") {
             navigate(`/app/${workspace.id}/storybooks/${next.storybookId}/review?result=personalized`, { replace: true });
           }
@@ -585,7 +665,7 @@ export function PersonalizedStorybookPage() {
     if (!hasRunningVisualReference) return;
     const timer = window.setInterval(() => {
       getStorybookCreationSession(workspace.id, session.id)
-        .then(setSession)
+        .then(applyServerSession)
         .catch(() => setError("照片参考状态暂时无法刷新，请检查网络后稍后重试。"));
     }, 2500);
     return () => window.clearInterval(timer);
@@ -606,9 +686,84 @@ export function PersonalizedStorybookPage() {
   const photoAcceptAttr = acceptedPhotoTypes.join(",");
   const maxPhotoFileSizeBytes = uploadPolicy?.maxFileSizeBytes ?? 0;
   const selectedChild = children.find((child) => child.id === selectedChildId) || null;
+  const latestReadyStorybookId = latestDraft?.status === "storybook_ready" ? latestDraft.storybookId : undefined;
   const batchSelectionsReady = selectedBatchIds.length > 0 && selectedBatchIds.every((childId) => Boolean(batchMaterialChoices[childId]));
   const singleSelectionReady = Boolean(selectedSource && selectedChild && singleMaterialChoice);
   const sourceBlocker = selectedSource ? storybookStatusReason(selectedSource).blocker : "";
+  const hasPendingVisualReferences = Boolean(session?.assetReferences.some((reference) => !["ready", "unused", "revoked"].includes(reference.status)));
+
+  useEffect(() => {
+    if (!creativeSettingsNotice.includes("原参考图") || hasPendingVisualReferences) return;
+    setCreativeSettingsNotice("");
+  }, [creativeSettingsNotice, hasPendingVisualReferences]);
+
+  const visualStylePreset = STYLE_PRESETS.find((preset) => preset.styleId === session?.visualStyleId) || STYLE_PRESETS[2];
+  const storyStylePreset = STORY_STYLE_PRESETS.find((preset) => preset.storyStyleId === session?.storyStyleId) || STORY_STYLE_PRESETS[0];
+  async function saveCreativeSettings(patch: { storyStyleId?: string; visualStyleId?: string; pageCount?: number; pageAspectRatio?: StorybookCreationSession["visualPreferences"]["pageAspectRatio"]; visualComplexity?: "simple" | "standard" | "rich"; characterConsistency?: "auto" | "speed" | "confirm_character"; confirmReferenceRegeneration?: boolean }): Promise<boolean> {
+    if (!session) return false;
+    setCreativeSettingsSaving(true);
+    setError("");
+    try {
+      const response = await updateStorybookCreativeSettings(workspace.id, session.id, patch);
+      const confirmedSession = patch.pageCount === undefined
+        ? response.session
+        : await getStorybookCreationSession(workspace.id, session.id);
+      if (patch.pageCount !== undefined && confirmedSession.pageCount !== patch.pageCount) {
+        throw new Error("页数没有保存成功，请重试。");
+      }
+      applyServerSession(confirmedSession);
+      const notices = [
+        response.effects.referencesInvalidated ? "已切换绘本风格，原参考图已回到待处理，请按新风格重新生成并确认。" : "",
+        response.effects.requiresDirectionRefresh ? "故事风格已更新，原故事走向和大纲已清空，请重新整理故事。" : "",
+        patch.pageCount !== undefined && response.effects.requiresOutlineRefresh ? "页数已更新，当前大纲已清空，请按所选故事重新生成。" : "",
+        response.effects.requiresStorybookRegeneration ? "创作设定已更新，当前绘本已过期，请重新制作绘本分页。" : "",
+      ].filter(Boolean);
+      if (entryType === "from_storybook" && (response.effects.referencesInvalidated || response.effects.requiresDirectionRefresh)) {
+        setSourcePlan(null);
+        setSourcePreviewReady(false);
+        setSourceStep(0);
+        notices.push("请重新预览变化范围后再开始制作。");
+      }
+      setCreativeSettingsNotice(notices.join(" "));
+      return true;
+    } catch (err) {
+      if (isApiClientError(err) && err.code === "style_change_requires_reference_regeneration") {
+        const details = err.details as { affected_count?: number } | undefined;
+        if (patch.visualStyleId) setPendingVisualStyleChange({ styleId: patch.visualStyleId, affectedCount: details?.affected_count || 0 });
+      } else {
+        setError(err instanceof Error ? err.message : "创作设定没有保存，请重试。");
+        try { applyServerSession(await getStorybookCreationSession(workspace.id, session.id)); } catch { /* retain the last known server state */ }
+      }
+      return false;
+    } finally { setCreativeSettingsSaving(false); }
+  }
+
+  useEffect(() => {
+    setPageCountDraft(session ? String(session.pageCount) : "");
+  }, [session?.id, session?.pageCount]);
+
+  const creativeSettingsDrawer = session && creativeSettingsOpen ? (
+    <Modal title="创作设定" className="creative-settings-drawer" onClose={() => !creativeSettingsSaving && setCreativeSettingsOpen(false)}>
+      <div className="drawer-status"><span>风格即时保存，页数确认后保存</span><Badge tone={creativeSettingsSaving ? "warn" : "good"}>{creativeSettingsSaving ? "保存中" : "已保存"}</Badge></div>
+      <div className="creative-settings-group"><span className="field-label">故事风格</span><div className="story-style-chips">{(storyStylesExpanded ? STORY_STYLE_PRESETS : STORY_STYLE_PRESETS.slice(0, 5)).map((preset) => <button key={preset.storyStyleId} type="button" className={`story-style-chip ${session.storyStyleId === preset.storyStyleId ? "active" : ""}`} disabled={creativeSettingsSaving} onClick={() => void saveCreativeSettings({ storyStyleId: preset.storyStyleId })}><strong>{preset.label}</strong><span>{preset.tag}</span></button>)}</div><button className="button ghost compact" type="button" onClick={() => setStoryStylesExpanded((value) => !value)}>{storyStylesExpanded ? "收起故事风格" : "更多故事风格"}</button></div>
+      <div className="creative-settings-group"><span className="field-label">绘本风格</span><div className="style-preset-grid compact-style-grid">{(visualStylesExpanded ? STYLE_PRESETS : STYLE_PRESETS.slice(0, 4)).map((preset) => <button key={preset.styleId} type="button" className={`style-preset ${session.visualStyleId === preset.styleId ? "active" : ""}`} disabled={creativeSettingsSaving} onClick={() => void saveCreativeSettings({ visualStyleId: preset.styleId })}><img src={preset.image} alt={preset.label} /><span className="style-preset-caption"><strong>{preset.label}</strong><em>{preset.tag}</em></span></button>)}</div><button className="button ghost compact" type="button" onClick={() => setVisualStylesExpanded((value) => !value)}>{visualStylesExpanded ? "收起绘本风格" : "更多绘本风格"}</button></div>
+      <div className="creative-settings-group"><span className="field-label">绘本页数</span>{entryType === "from_storybook" ? <p className="form-helper">沿用来源绘本：{session.pageCount} 页。定制版保留原书的页数与阅读节奏。</p> : <div className="inline-form"><label className="field-label compact-field" htmlFor="creative-page-count">页数（4-32 页）<input id="creative-page-count" type="number" min={4} max={32} step={1} value={pageCountDraft} disabled={creativeSettingsSaving} onChange={(event) => setPageCountDraft(event.target.value)} /></label><ActionButton className="button secondary" disabled={creativeSettingsSaving || !Number.isInteger(Number(pageCountDraft)) || Number(pageCountDraft) < 4 || Number(pageCountDraft) > 32 || Number(pageCountDraft) === session.pageCount} disabledHint={!Number.isInteger(Number(pageCountDraft)) || Number(pageCountDraft) < 4 || Number(pageCountDraft) > 32 ? "请输入 4 到 32 之间的整数" : "页数未变化或正在保存"} onClick={() => void saveCreativeSettings({ pageCount: Number(pageCountDraft) })}>保存页数</ActionButton></div>}</div>
+      <div className="creative-settings-group"><span className="field-label">绘本比例</span><div className="page-aspect-options compact">{PAGE_ASPECT_OPTIONS.map((option) => <button key={option.value} type="button" className={`page-aspect-option ${session.visualPreferences.pageAspectRatio === option.value ? "active" : ""}`} disabled={creativeSettingsSaving} onClick={() => void saveCreativeSettings({ pageAspectRatio: option.value })}><span className="page-aspect-shape" style={{ aspectRatio: option.cssRatio }} /><strong>{option.label}</strong></button>)}</div></div>
+      <details open={advancedSettingsOpen} onToggle={(event) => setAdvancedSettingsOpen((event.target as HTMLDetailsElement).open)} className="section-tools"><summary>高级设置</summary><div className="story-style-chips"><button className={`story-style-chip ${session.visualPreferences.visualComplexity === "simple" ? "active" : ""}`} type="button" onClick={() => void saveCreativeSettings({ visualComplexity: "simple" })}>简洁画面</button><button className={`story-style-chip ${session.visualPreferences.visualComplexity === "standard" ? "active" : ""}`} type="button" onClick={() => void saveCreativeSettings({ visualComplexity: "standard" })}>标准丰富度</button><button className={`story-style-chip ${session.visualPreferences.visualComplexity === "rich" ? "active" : ""}`} type="button" onClick={() => void saveCreativeSettings({ visualComplexity: "rich" })}>丰富细节</button></div><div className="story-style-chips"><button className={`story-style-chip ${session.visualPreferences.characterConsistency === "speed" ? "active" : ""}`} type="button" onClick={() => void saveCreativeSettings({ characterConsistency: "speed" })}>快速生成</button><button className={`story-style-chip ${session.visualPreferences.characterConsistency === "auto" ? "active" : ""}`} type="button" onClick={() => void saveCreativeSettings({ characterConsistency: "auto" })}>自动保持一致</button><button className={`story-style-chip ${session.visualPreferences.characterConsistency === "confirm_character" ? "active" : ""}`} type="button" onClick={() => void saveCreativeSettings({ characterConsistency: "confirm_character" })}>优先角色一致</button></div></details>
+    </Modal>
+  ) : null;
+  const creativeSettingsSummary = session ? (
+    <div className="creative-settings-summary-row">
+      <span>创作设定：<strong>{storyStylePreset.label} · {visualStylePreset.label} · {PAGE_ASPECT_OPTIONS.find((item) => item.value === session.visualPreferences.pageAspectRatio)?.label || "竖版 4:5"} · {session.pageCount} 页</strong></span>
+      <button className="button ghost compact" type="button" onClick={() => setCreativeSettingsOpen(true)}><SlidersHorizontal size={16} aria-hidden="true" />调整设定</button>
+    </div>
+  ) : null;
+  const pendingVisualStyleChangeModal = pendingVisualStyleChange ? (
+    <Modal title="切换绘本风格？" onClose={() => !creativeSettingsSaving && setPendingVisualStyleChange(null)}>
+      <p>{pendingVisualStyleChange.affectedCount ? `当前 ${pendingVisualStyleChange.affectedCount} 张照片的参考图会失效并回到待处理。` : "当前已生成的照片参考图会失效并回到待处理。"}开始制作会被阻止，直到按新风格重新生成并确认。</p>
+      <div className="modal-actions"><button className="button secondary" type="button" disabled={creativeSettingsSaving} onClick={() => setPendingVisualStyleChange(null)}>保留当前风格</button><ActionButton className="button danger" disabled={creativeSettingsSaving} disabledHint="正在保存设定" onClick={() => void saveCreativeSettings({ visualStyleId: pendingVisualStyleChange.styleId, confirmReferenceRegeneration: true }).then((saved) => { if (saved) setPendingVisualStyleChange(null); })}>确认切换并重新生成</ActionButton></div>
+    </Modal>
+  ) : null;
 
   async function applySourceRunResult(run: StorybookCustomizationRun) {
     const outputBooks = await Promise.all(
@@ -760,7 +915,7 @@ export function PersonalizedStorybookPage() {
     }
   }
 
-  function openPhotoPicker() {
+  function openPhotoUploadModal() {
     if (!session) {
       setError(entryType === "from_storybook" ? "照片上传入口正在准备，请稍后再试。" : "先写下故事想法并创建草稿，再上传照片。");
       return;
@@ -769,13 +924,34 @@ export function PersonalizedStorybookPage() {
       setError(`最多添加 ${maxPhotoFiles} 张使用中的照片；可以先从本次创作移除一张或改为不使用再继续。`);
       return;
     }
+    if (!photoUploadBatch.some((item) => item.status !== "succeeded")) {
+      setPhotoKind(null);
+      setPhotoUploadBatch([]);
+      setPhotoUploadError("");
+    }
+    setPhotoUploadModalOpen(true);
+  }
+
+  function openPhotoPicker() {
+    if (!photoKind || photoUploadInProgress) return;
     photoInputRef.current?.click();
+  }
+
+  function closePhotoUploadModal() {
+    if (photoUploadInProgress) return;
+    setPhotoUploadModalOpen(false);
+  }
+
+  function clearPhotoInput() {
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
+    }
   }
 
   async function refreshCurrentSession(sessionId = session?.id) {
     if (!sessionId) return null;
     const next = await getStorybookCreationSession(workspace.id, sessionId);
-    setSession(next);
+    applyServerSession(next);
     getStorybookAssetUploadPolicy(workspace.id, sessionId)
       .then(setUploadPolicy)
       .catch(() => undefined);
@@ -784,50 +960,83 @@ export function PersonalizedStorybookPage() {
 
   async function handlePhotoFiles(files: FileList | null) {
     if (!session) {
-      setError(entryType === "from_storybook" ? "照片上传入口正在准备，请稍后再试。" : "先写下故事想法并创建草稿，再上传照片。");
+      setPhotoUploadError(entryType === "from_storybook" ? "照片上传入口正在准备，请稍后再试。" : "先写下故事想法并创建草稿，再上传照片。");
+      clearPhotoInput();
       return;
     }
     if (!files?.length) return;
+    const selectedPhotoKind = photoKind;
+    if (!selectedPhotoKind) {
+      setPhotoUploadError("请先选择这批照片的类型。");
+      clearPhotoInput();
+      return;
+    }
     if (remainingPhotoSlots <= 0) {
-      setError(`最多添加 ${maxPhotoFiles} 张使用中的照片；可以先从本次创作移除一张或改为不使用再继续。`);
+      setPhotoUploadError(`最多添加 ${maxPhotoFiles} 张使用中的照片；可以先从本次创作移除一张或改为不使用再继续。`);
+      clearPhotoInput();
       return;
     }
     const selectedFiles = Array.from(files);
     const supportedFiles = selectedFiles.filter((file) => acceptedPhotoTypes.includes(file.type));
-    if (!supportedFiles.length) {
-      setError("请选择 JPG、PNG 或 WebP 图片。");
+    if (supportedFiles.length !== selectedFiles.length) {
+      setPhotoUploadError("请选择 JPG、PNG 或 WebP 图片。");
+      clearPhotoInput();
       return;
     }
     const oversizedFile = maxPhotoFileSizeBytes > 0
       ? supportedFiles.find((file) => file.size > maxPhotoFileSizeBytes)
       : undefined;
     if (oversizedFile) {
-      setError(`“${oversizedFile.name}”超过上传大小限制，请换一张更小的照片。`);
+      setPhotoUploadError(`“${oversizedFile.name}”超过上传大小限制，请换一张更小的照片。`);
+      clearPhotoInput();
       return;
     }
     const acceptedFiles = supportedFiles.slice(0, remainingPhotoSlots);
+    const batch = acceptedFiles.map((file) => ({ file, idempotencyKey: newIdempotencyKey(), status: "pending" as const }));
+    setPhotoUploadBatch(batch);
+    await uploadPhotoBatch(batch, selectedPhotoKind, selectedFiles.length > acceptedFiles.length);
+  }
+
+  async function uploadPhotoBatch(batch: PhotoUploadBatchItem[], kind: PhotoKind, limitedBySlots = false) {
+    if (!session || photoUploadInProgress) return;
+    setPhotoUploadInProgress(true);
     setBusy("loading");
-    setError("");
+    setPhotoUploadError("");
     try {
-      for (const file of acceptedFiles) {
-        await uploadStorybookCreationAsset(workspace.id, session.id, {
-          file,
-          kind: photoKind,
-          idempotencyKey: newIdempotencyKey(),
-        });
+      for (const item of batch.filter((candidate) => candidate.status !== "succeeded")) {
+        try {
+          await uploadStorybookCreationAsset(workspace.id, session.id, {
+            file: item.file,
+            kind,
+            idempotencyKey: item.idempotencyKey,
+          });
+          setPhotoUploadBatch((current) => current.map((candidate) => candidate.idempotencyKey === item.idempotencyKey ? { ...candidate, status: "succeeded" } : candidate));
+        } catch (err) {
+          setPhotoUploadBatch((current) => current.map((candidate) => candidate.idempotencyKey === item.idempotencyKey ? { ...candidate, status: "failed" } : candidate));
+          setPhotoUploadError(err instanceof Error ? err.message : "照片没有上传成功，请重试剩余照片。");
+          await refreshCurrentSession(session.id).catch(() => undefined);
+          return;
+        }
       }
       await refreshCurrentSession(session.id);
-      if (acceptedFiles.length < selectedFiles.length) {
-        setError(`本次只添加了 ${acceptedFiles.length} 张照片，最多保留 ${maxPhotoFiles} 张使用中的照片。`);
+      setPhotoUploadModalOpen(false);
+      setPhotoUploadBatch([]);
+      setPhotoKind(null);
+      if (limitedBySlots) {
+        setError(`本次只添加了 ${batch.length} 张照片，最多保留 ${maxPhotoFiles} 张使用中的照片。`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "照片没有上传成功，请重试。");
+      setPhotoUploadError(err instanceof Error ? `照片已上传，但素材列表刷新失败：${err.message}` : "照片已上传，但素材列表刷新失败。请重试读取结果。");
     } finally {
       setBusy(null);
+      setPhotoUploadInProgress(false);
+      clearPhotoInput();
     }
-    if (photoInputRef.current) {
-      photoInputRef.current.value = "";
-    }
+  }
+
+  function retryPendingPhotoUploads() {
+    if (!photoKind || photoUploadInProgress) return;
+    void uploadPhotoBatch(photoUploadBatch.filter((item) => item.status !== "succeeded"), photoKind);
   }
 
   async function updatePhotoUsage(photoId: string, usage: string) {
@@ -900,16 +1109,35 @@ export function PersonalizedStorybookPage() {
     if (!session || busy) return;
     const photo = photoMaterials.find((item) => item.id === photoId);
     setBusy("loading");
+    setPhotoRemovalError("");
     setError("");
     try {
       await revokeStorybookAssetReference(workspace.id, session.id, photoId);
-      await refreshCurrentSession(session.id);
+      setPhotoMaterials((current) => current.filter((item) => item.id !== photoId));
+      setSession((current) => current ? { ...current, assetReferences: current.assetReferences.filter((reference) => reference.id !== photoId) } : current);
       setAssetRecoveryNotice({ name: photo?.displayName.trim() || photo?.name || "这张照片" });
+      setPhotoPendingRemoval(null);
+      await refreshCurrentSession(session.id).catch(() => {
+        setError("照片已移除，但素材列表暂时无法刷新；刷新页面后可确认最新结果。");
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "照片没有移除成功。");
+      setPhotoRemovalError(err instanceof Error ? err.message : "照片没有移除成功。");
     } finally {
       setBusy(null);
     }
+  }
+
+  function requestPhotoRemoval(photo: PhotoMaterial) {
+    setPhotoRemovalError("");
+    setPhotoPendingRemoval(photo);
+  }
+
+  function photoRemoveTrigger(photo: PhotoMaterial) {
+    return (
+      <button className="icon-button photo-remove-trigger" type="button" disabled={busy !== null} aria-label={`从本次创作移除${photo.displayName.trim() || photo.name}`} title="从本次创作移除" onClick={() => requestPhotoRemoval(photo)}>
+        <Trash2 size={17} aria-hidden="true" />
+      </button>
+    );
   }
 
   async function recoverAfterAssetRevocation(action: "repreview" | "continue_without_photo" | "cancel") {
@@ -942,7 +1170,7 @@ export function PersonalizedStorybookPage() {
     setBusy("directions");
     setError("");
     try {
-      const created = await createStorybookCreationSession(workspace.id, { quickIdea: value, pageCount: 6 });
+      const created = await createStorybookCreationSession(workspace.id, { quickIdea: value, pageCount: 10 });
       const materialResponse = recipientName.trim()
         ? await patchStorybookCreationMaterials(workspace.id, created.id, [{
           op: "add",
@@ -968,6 +1196,11 @@ export function PersonalizedStorybookPage() {
     setBusy("loading");
     try {
       const restored = await getStorybookCreationSession(workspace.id, latestDraft.id);
+      if (restored.status === "storybook_ready" && restored.storybookId) {
+        setLatestDraft(null);
+        navigate(`/app/${workspace.id}/storybooks/${restored.storybookId}/review?result=personalized`);
+        return;
+      }
       setSession(restored);
       setIdea(restored.quickIdea);
       setRecipientName(restored.materials.find((item) => item.locked && item.type === "character")?.label || "");
@@ -1033,13 +1266,15 @@ export function PersonalizedStorybookPage() {
   async function removeMaterial(material: CreationMaterial) {
     if (!session) return;
     setBusy("loading");
+    setMaterialRemovalError("");
     try {
       const response = await patchStorybookCreationMaterials(workspace.id, session.id, [{ op: "remove", id: material.id }]);
       setSession({ ...session, materials: response.materials, directions: [], outline: undefined, status: response.status });
       setSelectedDirection(null);
       setEditingMaterials(true);
+      setMaterialPendingRemoval(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "没有移除成功。");
+      setMaterialRemovalError(err instanceof Error ? err.message : "没有移除成功。");
     } finally {
       setBusy(null);
     }
@@ -1065,9 +1300,10 @@ export function PersonalizedStorybookPage() {
     setBusy("outline");
     setError("");
     try {
-      const nextOutline = await generateStorybookCreationOutline(workspace.id, session.id);
+      const nextOutline = await generateStorybookCreationOutline(workspace.id, session.id, session.pageCount);
       setCreationWarnings(nextOutline.warnings || []);
       setSession((current) => current ? { ...current, outline: nextOutline, status: "outline_ready", requiresOutlineRefresh: false } : current);
+      setDirectViewStep(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "故事大纲还没有整理完成，可以重试。");
     } finally {
@@ -1095,6 +1331,8 @@ export function PersonalizedStorybookPage() {
       } : current);
       setSelectedDirection(null);
       setEditingMaterials(false);
+      setDirectViewStep(1);
+      setCreativeSettingsNotice("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "没有生成新的故事方向。");
     } finally {
@@ -1150,7 +1388,9 @@ export function PersonalizedStorybookPage() {
       const result = await generateStorybookFromCreationSession(workspace.id, session.id, newIdempotencyKey());
       const next = await getStorybookCreationSession(workspace.id, session.id);
       setSession(next);
+      if (next.status === "generating") setDirectViewStep(2);
       if (result.storybookId && next.status === "storybook_ready") {
+        setDirectViewStep(3);
         navigate(`/app/${workspace.id}/storybooks/${result.storybookId}/review?result=personalized`, { replace: true });
       }
     } catch (err) {
@@ -1197,6 +1437,7 @@ export function PersonalizedStorybookPage() {
       if (!plan) return;
       setSourcePreviewReady(true);
       setSourceStep(1);
+      setCreativeSettingsNotice("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "变化计划没有生成成功，可以重试。");
     } finally {
@@ -1275,6 +1516,7 @@ export function PersonalizedStorybookPage() {
           intensity: "quick",
           materialChoices: batchMaterialChoices,
           customizationPlan: plan,
+          creationSessionId: session?.id,
         });
         setSourceBatchResult(result);
         setSourceStep(2);
@@ -1291,6 +1533,7 @@ export function PersonalizedStorybookPage() {
         intensity: "standard",
         materialChoices: { [childForSingle.id]: singleMaterialChoice },
         customizationPlan: plan,
+        creationSessionId: session?.id,
       });
       setSourceBatchResult(result);
       setSourceStep(2);
@@ -1342,6 +1585,7 @@ export function PersonalizedStorybookPage() {
         </div>
         <Badge tone={activePhotoCount >= maxPhotoFiles ? "warn" : "info"}>{activePhotoCount}/{maxPhotoFiles}</Badge>
       </div>
+      {session && <p className="form-helper">当前参考图风格：<strong>{visualStylePreset.label}</strong></p>}
       {photoMaterials.length > 0 && (
         <div className={unresolvedPhotoMaterials.length ? "photo-summary-bar needs-work" : "photo-summary-bar ready"}>
           <strong>{unresolvedPhotoMaterials.length ? `还差 ${unresolvedPhotoMaterials.length} 张照片需要处理` : "照片素材已准备好"}</strong>
@@ -1376,21 +1620,14 @@ export function PersonalizedStorybookPage() {
           type="file"
           accept={photoAcceptAttr}
           multiple
-          disabled={!canUploadPhotos || remainingPhotoSlots <= 0}
+          disabled={!canUploadPhotos || remainingPhotoSlots <= 0 || photoUploadInProgress}
           onChange={(event) => handlePhotoFiles(event.target.files)}
         />
-        <div className="segmented-control" role="group" aria-label="照片类型">
-          {(["person", "object", "scene"] as PhotoKind[]).map((kind) => (
-            <button key={kind} className={photoKind === kind ? "active" : ""} type="button" disabled={!canUploadPhotos} onClick={() => setPhotoKind(kind)}>
-              {photoKindLabel(kind)}
-            </button>
-          ))}
-        </div>
         <ActionButton
           className="button secondary"
-          disabled={!canUploadPhotos || remainingPhotoSlots <= 0}
-          disabledHint={photoUploadUnavailableReason || `最多添加 ${maxPhotoFiles} 张使用中的照片；可以先从本次创作移除一张或改为不使用`}
-          onClick={openPhotoPicker}
+          disabled={!canUploadPhotos || remainingPhotoSlots <= 0 || photoUploadInProgress}
+          disabledHint={photoUploadInProgress ? "正在上传照片" : photoUploadUnavailableReason || `最多添加 ${maxPhotoFiles} 张使用中的照片；可以先从本次创作移除一张或改为不使用`}
+          onClick={openPhotoUploadModal}
         >
           {remainingPhotoSlots <= 0 ? "管理照片" : "添加照片"}
         </ActionButton>
@@ -1420,7 +1657,7 @@ export function PersonalizedStorybookPage() {
                           <strong>{photo.displayName.trim() || photo.name}</strong>
                           <p>{photo.usage ? `用途：${photo.usage} · ${referenceStatusLabel(photo.referenceStatus, photo.kind)}` : `${photo.fileName} · ${referenceStatusLabel(photo.referenceStatus, photo.kind)}`}</p>
                         </div>
-                        <button className="button text-button subtle" type="button" onClick={() => removePhotoMaterial(photo.id)}>移除</button>
+                        {photoRemoveTrigger(photo)}
                       </div>
                       {(photo.referenceStatus === "awaiting_usage" || photo.referenceStatus === "failed") && (
                         <label className="photo-name-field">
@@ -1513,14 +1750,11 @@ export function PersonalizedStorybookPage() {
                       ? <ProtectedVisualReferencePreview src={photo.visualReferencePreviewUrl} alt={fallbackReferenceName(photo)} onPreview={setZoomedImage} />
                       : <div className="visual-reference-preview warning-preview" aria-label="已确认参考图加载失败">!</div>}
                     <div className="photo-material-body">
-                      <div className="photo-row-head">
-                        <div>
-                          <strong>{photo.displayName.trim() || photo.name}</strong>
-                          <p>{photo.usage || photoKindLabel(photo.kind)} · 已确认</p>
-                        </div>
-                        <button className="button text-button subtle" type="button" onClick={() => removePhotoMaterial(photo.id)}>移除</button>
+                      <div className="photo-row-head compact-photo-row-head">
+                        <div><strong>{photo.displayName.trim() || photo.name}</strong><p>{photo.usage || photoKindLabel(photo.kind)} · 已确认</p></div>
                       </div>
                     </div>
+                    {photoRemoveTrigger(photo)}
                   </div>
                 ))}
               </div>
@@ -1534,14 +1768,11 @@ export function PersonalizedStorybookPage() {
                   <div className="photo-material-row compact-row" key={photo.id}>
                     {photo.previewUrl ? <ProtectedPhotoThumbnail src={photo.previewUrl} alt={photo.displayName.trim() || photo.fileName || photo.name} kind={photo.kind} muted onPreview={setZoomedImage} /> : <div className="photo-thumb muted-thumb placeholder-thumb" aria-hidden="true">{photoKindLabel(photo.kind).slice(0, 1)}</div>}
                     <div className="photo-material-body">
-                      <div className="photo-row-head">
-                        <div>
-                          <strong>{photo.displayName.trim() || photo.name}</strong>
-                          <p>不会进入本次创作计划</p>
-                        </div>
-                        <button className="button text-button subtle" type="button" onClick={() => removePhotoMaterial(photo.id)}>移除</button>
+                      <div className="photo-row-head compact-photo-row-head">
+                        <div><strong>{photo.displayName.trim() || photo.name}</strong><p>不会进入本次创作计划</p></div>
                       </div>
                     </div>
+                    {photoRemoveTrigger(photo)}
                   </div>
                 ))}
               </div>
@@ -1551,6 +1782,52 @@ export function PersonalizedStorybookPage() {
         </div>
       )}
     </Card>
+    {photoUploadModalOpen && (
+      <Modal title="添加照片" className="photo-upload-modal" onClose={closePhotoUploadModal}>
+        <p className="form-helper">先选择这批照片的类型，再选择照片上传。每次上传的照片会按同一种类型生成绘本参考。</p>
+        {photoUploadError && <Notice title="照片上传未完成" copy={photoUploadError} tone="danger" />}
+        {photoUploadBatch.length > 0 && (
+          <p className="form-helper photo-upload-progress" role="status">
+            {photoUploadInProgress ? `正在上传：已完成 ${photoUploadSucceededCount}/${photoUploadBatch.length} 张。` : photoUploadPendingCount ? `本批已完成 ${photoUploadSucceededCount}/${photoUploadBatch.length} 张，还可继续上传 ${photoUploadPendingCount} 张。` : `本批 ${photoUploadBatch.length} 张照片已上传，正在读取素材列表。`}
+          </p>
+        )}
+        <div className="photo-kind-option-grid" aria-label="这批照片的类型">
+          <label className={photoKind === "person" ? "photo-kind-option selected" : "photo-kind-option"}>
+            <input className="visually-hidden" type="radio" name="photo-upload-kind" value="person" checked={photoKind === "person"} disabled={photoUploadInProgress || photoUploadBatch.length > 0} onChange={() => setPhotoKind("person")} />
+            <strong>人物</strong>
+            <span>生成正面站立、完整四肢的角色参考图；不会使用照片背景。</span>
+          </label>
+          <label className={photoKind === "object" ? "photo-kind-option selected" : "photo-kind-option"}>
+            <input className="visually-hidden" type="radio" name="photo-upload-kind" value="object" checked={photoKind === "object"} disabled={photoUploadInProgress || photoUploadBatch.length > 0} onChange={() => setPhotoKind("object")} />
+            <strong>玩具、物品或宠物</strong>
+            <span>生成单个主体的道具参考图，保留关键外观特征。</span>
+          </label>
+          <label className={photoKind === "scene" ? "photo-kind-option selected" : "photo-kind-option"}>
+            <input className="visually-hidden" type="radio" name="photo-upload-kind" value="scene" checked={photoKind === "scene"} disabled={photoUploadInProgress || photoUploadBatch.length > 0} onChange={() => setPhotoKind("scene")} />
+            <strong>场景</strong>
+            <span>生成可用于故事画面的环境参考图。</span>
+          </label>
+        </div>
+        <div className="modal-actions">
+          <button className="button secondary" type="button" disabled={photoUploadInProgress} onClick={closePhotoUploadModal}>取消</button>
+          {photoUploadBatch.length > 0 && !photoUploadInProgress && <button className="button secondary" type="button" onClick={() => { setPhotoUploadBatch([]); setPhotoUploadError(""); }}>重新选择照片</button>}
+          {photoUploadBatch.length > 0
+            ? <ActionButton className="button primary" disabled={photoUploadInProgress} disabledHint="正在上传照片" onClick={retryPendingPhotoUploads}>{photoUploadPendingCount ? `继续上传剩余 ${photoUploadPendingCount} 张` : "重新读取结果"}</ActionButton>
+            : <ActionButton className="button primary" disabled={!photoKind || photoUploadInProgress} disabledHint={photoUploadInProgress ? "正在上传照片" : "先选择照片类型"} onClick={openPhotoPicker}>{photoUploadInProgress ? "正在上传..." : "选择照片"}</ActionButton>}
+        </div>
+      </Modal>
+    )}
+    {photoPendingRemoval && (
+      <Modal title="从本次创作移除照片？" onClose={() => { if (busy === null) { setPhotoRemovalError(""); setPhotoPendingRemoval(null); } }}>
+        <p>“{photoPendingRemoval.displayName.trim() || photoPendingRemoval.name}”将不再进入后续故事计划或新的生成输入。</p>
+        {photoPendingRemoval.referenceStatus === "ready" && <p className="form-helper">已完成的外部绘制不会回收；移除后可在下一步选择重新预览或继续制作。</p>}
+        {photoRemovalError && <p className="form-helper warn" role="alert">{photoRemovalError}</p>}
+        <div className="modal-actions">
+          <button className="button secondary" type="button" disabled={busy !== null} onClick={() => { setPhotoRemovalError(""); setPhotoPendingRemoval(null); }}>保留照片</button>
+          <ActionButton className="button danger" disabled={busy !== null} disabledHint="正在移除照片" onClick={() => void removePhotoMaterial(photoPendingRemoval.id)}>确认移除</ActionButton>
+        </div>
+      </Modal>
+    )}
     {zoomedImage && <ImageLightbox src={zoomedImage.src} alt={zoomedImage.alt} onClose={() => setZoomedImage(null)} />}
     </>
   );
@@ -1566,17 +1843,17 @@ export function PersonalizedStorybookPage() {
         />
         {latestDraft && (
           <Notice
-            title="发现上次创作"
-            copy={`“${latestDraft.quickIdea.slice(0, 30)}${latestDraft.quickIdea.length > 30 ? "..." : ""}”仍可继续。`}
+            title={latestReadyStorybookId ? "上次专属绘本已完成" : "发现上次创作"}
+            copy={latestReadyStorybookId ? `“${latestDraft.quickIdea.slice(0, 30)}${latestDraft.quickIdea.length > 30 ? "..." : ""}”已生成，可以直接进入绘本检查。` : `“${latestDraft.quickIdea.slice(0, 30)}${latestDraft.quickIdea.length > 30 ? "..." : ""}”仍可继续。`}
             tone="info"
-            action={<span className="inline-actions"><button className="button secondary" type="button" onClick={abandonDraft}>放弃并新建</button><button className="button primary" type="button" onClick={() => { setEntryType("direct_create"); resumeDraft(); }}>继续上次创作</button></span>}
+            action={latestReadyStorybookId ? <span className="inline-actions"><button className="button secondary" type="button" onClick={() => { setLatestDraft(null); setEntryType("direct_create"); }}>新建专属绘本</button><Link className="button primary" to={`/app/${workspace.id}/storybooks/${latestReadyStorybookId}/review?result=personalized`}>查看已完成绘本</Link></span> : <span className="inline-actions"><button className="button secondary" type="button" onClick={abandonDraft}>放弃并新建</button><button className="button primary" type="button" onClick={() => { setEntryType("direct_create"); resumeDraft(); }}>继续上次创作</button></span>}
           />
         )}
         <div className="entry-picker-grid">
           <button className="entry-picker-card" type="button" onClick={() => selectEntry("direct_create")}>
             <Badge tone="good">从想法开始</Badge>
             <strong>我有一个想做给孩子的故事</strong>
-            <span>填写一句想法、对象称呼和想留下的元素，系统会生成 3 个方向和 6 页走向。</span>
+            <span>填写一句想法、对象称呼和想留下的元素，系统会生成 3 个方向和默认 10 页走向。</span>
           </button>
           <button className="entry-picker-card" type="button" onClick={() => selectEntry("from_storybook")}>
             <Badge tone="info">基于已有绘本</Badge>
@@ -1598,12 +1875,14 @@ export function PersonalizedStorybookPage() {
       <div className="page-stack personalized-flow">
         <PageHeader
           eyebrow="专属绘本创作"
-          title="基于已有绘本创作专属版本"
-          copy="保留原书主线、页数和阅读节奏，只改变确认的对象和必要画面。"
+          title={sourceStep === 0 ? "对象与素材" : sourceStep === 1 ? "确认变化计划" : "正在制作专属绘本"}
+          copy={sourceStep === 0 ? "选择对象和要保留的照片素材。来源绘本的主线与节奏会保持不变。" : sourceStep === 1 ? "确认哪些页面保持、变化或重绘，再开始制作。" : "正在根据确认的变化计划制作专属版本。"}
           actions={!sourceStorybookId || sourceLoadFailed ? <button className="button secondary" type="button" onClick={() => setEntryType(null)}>重新选择起点</button> : undefined}
         />
-        <ProgressSteps steps={steps} active={activeStep} />
+        <ProgressSteps steps={steps} active={activeStep} maxUnlockedStep={maxUnlockedStep} onStepClick={handleStepClick} />
+        {creativeSettingsSummary}
         {error && <Notice title="暂时无法继续" copy={error} tone="danger" />}
+        {creativeSettingsNotice && <Notice title="创作设定已更新" copy={creativeSettingsNotice} tone="warn" />}
 
         {sourceStep === 0 && (
           <section className="personalized-workspace-grid">
@@ -1718,7 +1997,7 @@ export function PersonalizedStorybookPage() {
               {photoMaterialSection}
 
               {awaitingPhotoReferences.length > 0 && <Notice title="制作前需要处理照片" copy={`还有 ${awaitingPhotoReferences.length} 张照片未确认用途或同画风参考；可以先继续预览变化，开始制作前需要处理。`} tone="warn" />}
-              <div className="wizard-actions">
+              <div className="creation-action-bar">
                 <ActionButton
                   className="button primary"
                   disabled={!canPreview || busy !== null}
@@ -1824,7 +2103,7 @@ export function PersonalizedStorybookPage() {
                 </div>
               )}
             </Card>
-            <div className="wizard-actions">
+            <div className="creation-action-bar">
               <button className="button secondary" type="button" onClick={() => setSourceStep(0)}>返回对象与素材</button>
               <ActionButton
                 className="button primary"
@@ -1909,7 +2188,7 @@ export function PersonalizedStorybookPage() {
                   );
                 })}
               </div>
-              <div className="wizard-actions">
+              <div className="creation-action-bar">
                 {sourceBatchResult.items.some((item) => item.failureReason?.includes("照片素材已被移除")) && (
                   <button className="button secondary" type="button" onClick={returnToSourceMaterials}>
                     调整素材并重新预览
@@ -1937,6 +2216,8 @@ export function PersonalizedStorybookPage() {
             </Card>
           </section>
         )}
+        {creativeSettingsDrawer}
+        {pendingVisualStyleChangeModal}
       </div>
     );
   }
@@ -1952,10 +2233,10 @@ export function PersonalizedStorybookPage() {
         {error && <Notice title="暂时无法继续" copy={error} tone="danger" />}
         {latestDraft && (
           <Notice
-            title="发现上次创作"
-            copy={`“${latestDraft.quickIdea.slice(0, 30)}${latestDraft.quickIdea.length > 30 ? "..." : ""}”仍可继续。`}
+            title={latestReadyStorybookId ? "上次专属绘本已完成" : "发现上次创作"}
+            copy={latestReadyStorybookId ? `“${latestDraft.quickIdea.slice(0, 30)}${latestDraft.quickIdea.length > 30 ? "..." : ""}”已生成，可以直接进入绘本检查。` : `“${latestDraft.quickIdea.slice(0, 30)}${latestDraft.quickIdea.length > 30 ? "..." : ""}”仍可继续。`}
             tone="info"
-            action={<span className="inline-actions"><button className="button secondary" type="button" onClick={abandonDraft}>放弃并新建</button><button className="button primary" type="button" onClick={resumeDraft}>继续上次创作</button></span>}
+            action={latestReadyStorybookId ? <span className="inline-actions"><button className="button secondary" type="button" onClick={() => setLatestDraft(null)}>新建专属绘本</button><Link className="button primary" to={`/app/${workspace.id}/storybooks/${latestReadyStorybookId}/review?result=personalized`}>查看已完成绘本</Link></span> : <span className="inline-actions"><button className="button secondary" type="button" onClick={abandonDraft}>放弃并新建</button><button className="button primary" type="button" onClick={resumeDraft}>继续上次创作</button></span>}
           />
         )}
         <Card className="personalized-idea-card">
@@ -1969,7 +2250,7 @@ export function PersonalizedStorybookPage() {
           <div className="inline-actions personalized-examples">
             {["成长小事", "特别纪念", "自由创作"].map((example) => <button key={example} className="chip-button" type="button" onClick={() => setIdea(example === "成长小事" ? "想做一本帮助孩子理解分享和等待的小故事。" : example === "特别纪念" ? "记录孩子生日那天最开心的一件小事。" : "")}>{example}</button>)}
           </div>
-          <div className="wizard-actions">
+              <div className="creation-action-bar">
             <span className="form-helper">下一步可以补充想留在故事里的真实物品、地点或一句话。</span>
             <ActionButton
               className="button primary"
@@ -1988,9 +2269,11 @@ export function PersonalizedStorybookPage() {
 
   return (
     <div className="page-stack personalized-flow">
-      <PageHeader eyebrow="专属绘本创作" title={activeStep < 2 ? "和你一起整理这个故事" : "正在制作专属绘本"} copy={activeStep < 2 ? "你的想法始终是故事主线；系统只帮你把它讲得更完整。" : "可以离开页面，完成后会保留在作品列表中。"} actions={activeStep < 2 ? <button className="button secondary" type="button" onClick={() => { setIdea(session.quickIdea); setEditingIdea((value) => !value); }}>{editingIdea ? "收起修改" : "修改想法"}</button> : undefined} />
-      <ProgressSteps steps={steps} active={activeStep} />
+      <PageHeader eyebrow="专属绘本创作" title={activeStep === 0 ? "对象与素材" : activeStep === 1 ? "故事预览" : "正在制作专属绘本"} copy={activeStep === 0 ? "补充要留在故事里的对象、真实细节和照片。" : activeStep === 1 ? "选一个喜欢的讲法，再继续完成故事。" : "可以离开页面，完成后会保留在作品列表中。"} actions={activeStep < 2 ? <button className="button secondary" type="button" onClick={() => { setIdea(session.quickIdea); setEditingIdea((value) => !value); }}>{editingIdea ? "收起修改" : "修改想法"}</button> : undefined} />
+      <ProgressSteps steps={steps} active={activeStep} maxUnlockedStep={maxUnlockedStep} onStepClick={handleStepClick} />
+      {creativeSettingsSummary}
       {error && <Notice title="这一步没有完成" copy={error} tone="danger" />}
+      {creativeSettingsNotice && <Notice title="创作设定已更新" copy={creativeSettingsNotice} tone="warn" />}
       {creationWarnings.map((warning) => (
         <Notice
           key={`${warning.code}-${warning.asset_reference_ids?.join("-") || "all"}`}
@@ -2014,7 +2297,7 @@ export function PersonalizedStorybookPage() {
             <div className="material-chip-list">
               {materials.map((material) => (
                 <span className={material.source === "user_added" ? "material-chip confirmed" : "material-chip"} key={material.id}>
-                  {material.label}<small>{material.source === "user_added" ? material.type === "character" ? "制作对象" : "已确认" : "来自想法"}</small>{!(material.source === "user_added" && material.type === "character") && <button type="button" aria-label={`移除${material.label}`} onClick={() => removeMaterial(material)}>x</button>}
+                  {material.label}<small>{material.source === "user_added" ? material.type === "character" ? "制作对象" : "已确认" : "来自想法"}</small>{!(material.source === "user_added" && material.type === "character") && <button className="material-chip-remove" type="button" aria-label={`移除${material.label}`} title={`移除${material.label}`} onClick={() => { setMaterialRemovalError(""); setMaterialPendingRemoval(material); }}><X size={14} aria-hidden="true" /></button>}
                 </span>
               ))}
             </div>
@@ -2022,7 +2305,10 @@ export function PersonalizedStorybookPage() {
               <input value={newMaterial} onChange={(event) => setNewMaterial(event.target.value)} placeholder="添加一个想保留的真实细节" />
               <ActionButton className="button secondary" disabled={!newMaterial.trim() || busy !== null || lockedMaterialCount >= 3} disabledHint={lockedMaterialCount >= 3 ? "最多保留 3 个专属素材" : "先写下一个细节"} onClick={addMaterial}>加入</ActionButton>
             </div>
-            <div className="wizard-actions"><span className="form-helper">已确认 {lockedMaterialCount}/3 个专属素材。可以补充玩具、地点或一句想保留的话；它们会在下一步成为故事约束。</span><ActionButton className="button primary" disabled={busy !== null} disabledHint="正在保存素材" onClick={refreshDirections}>{busy === "directions" ? "正在整理故事..." : "看看故事怎么讲"}</ActionButton></div>
+            <div className="creation-action-bar">
+              <span className="form-helper">已确认 {lockedMaterialCount}/3 个专属素材。</span>
+              {directions.length > 0 ? <button className="button primary" type="button" onClick={() => setEditingMaterials(false)}>返回故事预览</button> : <ActionButton className="button primary" disabled={busy !== null} disabledHint="正在保存素材" onClick={refreshDirections}>{busy === "directions" ? "正在整理故事..." : "看看故事怎么讲"}</ActionButton>}
+            </div>
           </Card>
           {photoMaterialSection}
           {awaitingPhotoReferences.length > 0 && <Notice title="制作前需要处理照片" copy={`还有 ${awaitingPhotoReferences.length} 张照片未确认用途或同画风参考；可以先继续整理故事，开始制作前需要处理。`} tone="warn" />}
@@ -2036,7 +2322,7 @@ export function PersonalizedStorybookPage() {
           <div className="direction-grid">{directions.map((direction) => <button className={`direction-card ${selectedDirection?.id === direction.id ? "selected" : ""}`} type="button" key={direction.id} disabled={busy !== null} onClick={() => chooseDirection(direction)}><strong>{direction.title}</strong><span>{direction.summary}</span><em>会出现：{materialLabels(direction.materialIds).join("、") || "待补充"}</em></button>)}</div>
           {selectedDirection && missingDirectionMaterials.length === 0 && selectedMaterialLabels.length > 0 && <p className="form-helper">专属内容会这样出现：{selectedMaterialLabels.slice(0, 2).join("、")}会进入故事的关键情节。</p>}
           {selectedDirection && missingDirectionMaterials.length > 0 && <Notice title="这个走向还没有安排全部专属素材" copy={`尚未安排：${missingDirectionMaterials.map((item) => item.label).join("、")}。请选择其他走向，或调整素材后重新生成方向。`} tone="warn" />}
-          <div className="wizard-actions"><div className="inline-actions"><button className="button secondary" type="button" onClick={() => setEditingMaterials(true)}>调整对象与素材</button><ActionButton className="button secondary" disabled={busy !== null} disabledHint="正在整理" onClick={refreshDirections}>换一个故事走向</ActionButton></div><ActionButton className="button primary" disabled={!selectedDirection || busy !== null || missingDirectionMaterials.length > 0} disabledHint={!selectedDirection ? "先选一个故事走向" : missingDirectionMaterials.length > 0 ? "先确认每个专属素材都有故事落点" : "正在整理故事大纲"} onClick={generateOutline}>{busy === "outline" ? "正在生成故事大纲..." : "按这个故事继续"}</ActionButton></div>
+          <div className="creation-action-bar"><div className="inline-actions"><button className="button secondary" type="button" onClick={() => setEditingMaterials(true)}>调整对象与素材</button><ActionButton className="button secondary" disabled={busy !== null} disabledHint="正在整理" onClick={refreshDirections}>换一个故事走向</ActionButton></div><ActionButton className="button primary" disabled={!selectedDirection || busy !== null || missingDirectionMaterials.length > 0} disabledHint={!selectedDirection ? "先选一个故事走向" : missingDirectionMaterials.length > 0 ? "先确认每个专属素材都有故事落点" : "正在整理故事大纲"} onClick={generateOutline}>{busy === "outline" ? "正在生成故事大纲..." : "按这个故事继续"}</ActionButton></div>
         </section>
       )}
 
@@ -2046,7 +2332,7 @@ export function PersonalizedStorybookPage() {
           <div className="section-head"><div><p className="eyebrow">故事走向</p><h2>故事会这样展开</h2><p>{outline.summary}</p></div></div>
           <div className="outline-list">{outline.pages.map((page) => <Card key={page.pageNumber} className="outline-row"><Badge tone="info">{page.pageNumber}</Badge><div><strong>{page.summary}</strong><p className="form-helper">本页素材：{materialLabels(page.materialIds).join("、") || "待补充"}</p><div className="inline-form"><input value={pageInstruction[page.pageNumber] || ""} onChange={(event) => setPageInstruction((current) => ({ ...current, [page.pageNumber]: event.target.value }))} placeholder="补充这页（可选）" /><ActionButton className="button secondary" disabled={!pageInstruction[page.pageNumber]?.trim() || busy !== null} disabledHint="先写下这页的要求" onClick={() => updateOutlinePage(page.pageNumber)}>{busy === `page-${page.pageNumber}` ? "更新中..." : "更新这页"}</ActionButton></div></div></Card>)}</div>
           {missingOutlineMaterials.length > 0 && <Notice title="大纲还没有安排全部专属素材" copy={`尚未安排：${missingOutlineMaterials.map((item) => item.label).join("、")}。请回到素材或故事走向调整后再制作。`} tone="warn" />}
-          <div className="wizard-actions"><button className="button secondary" type="button" onClick={() => setEditingMaterials(true)}>调整对象与素材</button><ActionButton className="button secondary" disabled={busy !== null} disabledHint="正在整理新的故事走向" onClick={refreshDirections}>{busy === "directions" ? "正在整理故事..." : "换一个故事走向"}</ActionButton><ActionButton className="button primary" disabled={busy !== null || missingOutlineMaterials.length > 0 || awaitingPhotoReferences.length > 0} disabledHint={awaitingPhotoReferences.length > 0 ? "先处理照片用途和同画风参考" : missingOutlineMaterials.length > 0 ? "先确认每个专属素材都进入大纲" : "正在更新故事走向"} onClick={generateBook}>{busy === "generating" ? "正在开始制作..." : session.status === "failed" ? "重新开始制作" : "开始制作专属绘本"}</ActionButton></div>
+          <div className="creation-action-bar"><div className="inline-actions"><button className="button secondary" type="button" onClick={() => setEditingMaterials(true)}>调整对象与素材</button><ActionButton className="button secondary" disabled={busy !== null} disabledHint="正在整理新的故事走向" onClick={refreshDirections}>{busy === "directions" ? "正在整理故事..." : "换一个故事走向"}</ActionButton></div><ActionButton className="button primary" disabled={busy !== null || missingOutlineMaterials.length > 0 || awaitingPhotoReferences.length > 0} disabledHint={awaitingPhotoReferences.length > 0 ? "先处理照片用途和同画风参考" : missingOutlineMaterials.length > 0 ? "先确认每个专属素材都进入大纲" : "正在更新故事走向"} onClick={generateBook}>{busy === "generating" ? "正在开始制作..." : session.status === "failed" ? "重新开始制作" : "开始制作专属绘本"}</ActionButton></div>
         </section>
       )}
 
@@ -2056,10 +2342,25 @@ export function PersonalizedStorybookPage() {
           <h2>正在把故事画出来</h2>
           <p>{session.generationSummary.textStatus === "succeeded" ? "文字已经完成，正在整理画面。" : "正在确认故事文字和画面。"}</p>
           <div className="creation-stage-list">{generationStages(session).map((stage, index) => <div className={stage.state} key={stage.label}><span>{index + 1}</span>{stage.label}</div>)}</div>
-          <p className="form-helper">完成后会保留在作品列表中，可以随时回来查看。</p>
-          <div className="wizard-actions">
-            <Link className="button primary" to={`/app/${workspace.id}/storybooks`}>先去做别的</Link>
-            <button className="button ghost compact" type="button" disabled={busy !== null} onClick={() => setCancelDirectCreationConfirmOpen(true)}>取消制作</button>
+          <div className="creation-action-bar">
+            <p className="form-helper">完成后会保留在作品列表中，可以随时回来查看。</p>
+            <div className="inline-actions">
+              <Link className="button secondary" to={`/app/${workspace.id}/storybooks`}>先去做别的</Link>
+              <button className="button ghost compact" type="button" disabled={busy !== null} onClick={() => setCancelDirectCreationConfirmOpen(true)}>取消制作</button>
+            </div>
+          </div>
+        </Card>
+      )}
+      {activeStep === 3 && (
+        <Card className="creation-progress-card">
+          <Badge tone="good">制作完成</Badge>
+          <h2>专属绘本已准备好</h2>
+          <p>你可以进入绘本检查内容与画面，也可以稍后从园所绘本列表继续处理。</p>
+          <div className="creation-action-bar">
+            <Link className="button secondary" to={`/app/${workspace.id}/storybooks`}>返回园所绘本</Link>
+            {session.storybookId
+              ? <Link className="button primary" to={`/app/${workspace.id}/storybooks/${session.storybookId}/review?result=personalized`}>查看并检查绘本</Link>
+              : <button className="button primary" type="button" onClick={() => void refreshCurrentSession(session.id)}>刷新作品状态</button>}
           </div>
         </Card>
       )}
@@ -2072,6 +2373,19 @@ export function PersonalizedStorybookPage() {
           </div>
         </Modal>
       )}
+      {pendingVisualStyleChangeModal}
+      {materialPendingRemoval && (
+        <Modal title={`移除“${materialPendingRemoval.label}”？`} onClose={() => { if (busy === null) { setMaterialRemovalError(""); setMaterialPendingRemoval(null); } }}>
+          <p>移除后，这项素材不会再进入后续故事计划或新的生成输入。</p>
+          {(directions.length > 0 || outline) && <p className="form-helper">当前已选故事走向和大纲会清空，需要根据剩余素材重新整理。</p>}
+          {materialRemovalError && <p className="form-helper warn" role="alert">{materialRemovalError}</p>}
+          <div className="modal-actions">
+            <button className="button secondary" type="button" disabled={busy !== null} onClick={() => { setMaterialRemovalError(""); setMaterialPendingRemoval(null); }}>保留素材</button>
+            <ActionButton className="button danger" disabled={busy !== null} disabledHint="正在移除素材" onClick={() => void removeMaterial(materialPendingRemoval)}>确认移除</ActionButton>
+          </div>
+        </Modal>
+      )}
+      {creativeSettingsDrawer}
     </div>
   );
 }
