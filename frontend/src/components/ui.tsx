@@ -1,12 +1,12 @@
-import { MoreHorizontal } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 
 export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "good" | "warn" | "danger" | "info" }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
-export function Card({ children, className = "", id }: { children: ReactNode; className?: string; id?: string }) {
-  return <section id={id} className={`card ${className}`}>{children}</section>;
+export function Card({ children, className = "", ...props }: { children: ReactNode; className?: string } & ComponentPropsWithoutRef<"section">) {
+  return <section {...props} className={`card ${className}`}>{children}</section>;
 }
 
 export function EmptyState({ title, copy, action }: { title: string; copy: string; action?: ReactNode }) {
@@ -329,18 +329,34 @@ export function ImageLightbox({
   src,
   alt,
   onClose,
+  primaryAction,
+  previousAction,
+  nextAction,
+  positionLabel,
 }: {
   src: string;
   alt: string;
   onClose: () => void;
+  primaryAction?: { label: string; onClick: () => void; disabled?: boolean };
+  previousAction?: () => void;
+  nextAction?: () => void;
+  positionLabel?: string;
 }) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft" && previousAction) {
+        event.preventDefault();
+        previousAction();
+      }
+      if (event.key === "ArrowRight" && nextAction) {
+        event.preventDefault();
+        nextAction();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [nextAction, onClose, previousAction]);
 
   return (
     <div
@@ -356,8 +372,26 @@ export function ImageLightbox({
         <button className="icon-button image-lightbox-close" type="button" onClick={onClose} aria-label="关闭放大预览">
           ×
         </button>
-        <img src={src} alt={alt} onClick={onClose} />
+        {previousAction && (
+          <button className="icon-button image-lightbox-nav image-lightbox-nav-prev" type="button" onClick={previousAction} aria-label="查看上一张候选图" title="上一张">
+            <ChevronLeft size={24} aria-hidden="true" />
+          </button>
+        )}
+        <img src={src} alt={alt} />
+        {nextAction && (
+          <button className="icon-button image-lightbox-nav image-lightbox-nav-next" type="button" onClick={nextAction} aria-label="查看下一张候选图" title="下一张">
+            <ChevronRight size={24} aria-hidden="true" />
+          </button>
+        )}
         {alt ? <figcaption>{alt}</figcaption> : null}
+        {positionLabel ? <span className="image-lightbox-position">{positionLabel}</span> : null}
+        {primaryAction && (
+          <div className="image-lightbox-actions">
+            <button className="button primary" type="button" disabled={primaryAction.disabled} onClick={primaryAction.onClick}>
+              {primaryAction.label}
+            </button>
+          </div>
+        )}
       </figure>
     </div>
   );

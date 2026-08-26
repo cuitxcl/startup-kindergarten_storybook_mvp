@@ -167,6 +167,14 @@ type ApiStorybookImageVariant = {
   status: StorybookImageVariant["status"];
   failure_reason?: string | null;
   is_selected: boolean;
+  reference_evidence?: Array<{
+    kind: string;
+    reference_id?: string | null;
+    label?: string | null;
+    image_url?: string | null;
+    generation_job_id?: string | null;
+    style_version?: number | null;
+  }>;
   created_at: string;
   updated_at: string;
 };
@@ -2937,6 +2945,14 @@ function mapStorybookImageVariant(variant: ApiStorybookImageVariant): StorybookI
     status: variant.status,
     failureReason: variant.failure_reason || undefined,
     isSelected: variant.is_selected,
+    referenceEvidence: (variant.reference_evidence || []).map((evidence) => ({
+      kind: evidence.kind,
+      referenceId: evidence.reference_id || undefined,
+      label: evidence.label || undefined,
+      imageUrl: apiResourceUrl(evidence.image_url) || undefined,
+      generationJobId: evidence.generation_job_id || undefined,
+      styleVersion: evidence.style_version || undefined,
+    })),
     createdAt: variant.created_at,
     updatedAt: variant.updated_at,
   };

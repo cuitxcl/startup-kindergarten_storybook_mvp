@@ -14,8 +14,8 @@ use crate::{
     error::ApiError,
     models::{
         BulkImageTaskResponse, CreateBulkImageTasksRequest, CreateGenerationJobRequest,
-        CreateImageTaskRequest, Envelope, GenerationJob,
-        GenerationJobListQuery, ImageVariantListQuery, StorybookImageVariant,
+        CreateImageTaskRequest, Envelope, GenerationJob, GenerationJobListQuery,
+        ImageVariantListQuery, StorybookImageVariant,
     },
 };
 

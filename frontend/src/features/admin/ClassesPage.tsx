@@ -95,7 +95,7 @@ export function ClassesPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="班级管理" title="班级管理" copy="班级是老师授权和儿童档案归属的核心边界。" actions={<button className="button primary" type="button" onClick={() => setOpen(true)}>创建班级</button>} />
+      <PageHeader title="班级管理" copy="班级是老师授权和儿童档案归属的核心边界。" actions={<button className="button primary" type="button" onClick={() => setOpen(true)}>创建班级</button>} />
       {notice && <Notice title={notice.title} copy={notice.copy} tone={notice.title.includes("失败") ? "danger" : "good"} />}
       {initialLoading && <EmptyState title="正在加载班级" copy="正在读取园所班级列表。" />}
       {error && rows.length === 0 && <EmptyState title="班级加载失败" copy={error} />}

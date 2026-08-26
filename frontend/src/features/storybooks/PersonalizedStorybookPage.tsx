@@ -1874,7 +1874,6 @@ export function PersonalizedStorybookPage() {
     return (
       <div className="page-stack personalized-flow">
         <PageHeader
-          eyebrow="专属绘本创作"
           title={sourceStep === 0 ? "对象与素材" : sourceStep === 1 ? "确认变化计划" : "正在制作专属绘本"}
           copy={sourceStep === 0 ? "选择对象和要保留的照片素材。来源绘本的主线与节奏会保持不变。" : sourceStep === 1 ? "确认哪些页面保持、变化或重绘，再开始制作。" : "正在根据确认的变化计划制作专属版本。"}
           actions={!sourceStorybookId || sourceLoadFailed ? <button className="button secondary" type="button" onClick={() => setEntryType(null)}>重新选择起点</button> : undefined}
@@ -2269,7 +2268,7 @@ export function PersonalizedStorybookPage() {
 
   return (
     <div className="page-stack personalized-flow">
-      <PageHeader eyebrow="专属绘本创作" title={activeStep === 0 ? "对象与素材" : activeStep === 1 ? "故事预览" : "正在制作专属绘本"} copy={activeStep === 0 ? "补充要留在故事里的对象、真实细节和照片。" : activeStep === 1 ? "选一个喜欢的讲法，再继续完成故事。" : "可以离开页面，完成后会保留在作品列表中。"} actions={activeStep < 2 ? <button className="button secondary" type="button" onClick={() => { setIdea(session.quickIdea); setEditingIdea((value) => !value); }}>{editingIdea ? "收起修改" : "修改想法"}</button> : undefined} />
+      <PageHeader title={activeStep === 0 ? "对象与素材" : activeStep === 1 ? "故事预览" : "正在制作专属绘本"} copy={activeStep === 0 ? "补充要留在故事里的对象、真实细节和照片。" : activeStep === 1 ? "选一个喜欢的讲法，再继续完成故事。" : "可以离开页面，完成后会保留在作品列表中。"} actions={activeStep < 2 ? <button className="button secondary" type="button" onClick={() => { setIdea(session.quickIdea); setEditingIdea((value) => !value); }}>{editingIdea ? "收起修改" : "修改想法"}</button> : undefined} />
       <ProgressSteps steps={steps} active={activeStep} maxUnlockedStep={maxUnlockedStep} onStepClick={handleStepClick} />
       {creativeSettingsSummary}
       {error && <Notice title="这一步没有完成" copy={error} tone="danger" />}
@@ -2293,7 +2292,7 @@ export function PersonalizedStorybookPage() {
       {activeStep === 0 && (
         <section className="page-stack">
           <Card>
-            <div className="section-head"><div><p className="eyebrow">对象与素材</p><h2>想把什么留在故事里？</h2><p>{session.understanding.summary}</p></div></div>
+            <div className="section-head"><div><h2>想把什么留在故事里？</h2><p>{session.understanding.summary}</p></div></div>
             <div className="material-chip-list">
               {materials.map((material) => (
                 <span className={material.source === "user_added" ? "material-chip confirmed" : "material-chip"} key={material.id}>
@@ -2318,7 +2317,7 @@ export function PersonalizedStorybookPage() {
       {activeStep === 1 && !outline && (
         <section className="page-stack">
           {awaitingPhotoReferences.length > 0 && <Notice title="制作前需要处理照片" copy={`还有 ${awaitingPhotoReferences.length} 张照片未确认用途或同画风参考；可以先继续整理故事，开始制作前需要处理。`} tone="warn" />}
-          <div className="section-head"><div><p className="eyebrow">故事预览</p><h2>这个故事想怎样讲？</h2><p>选一个你喜欢的讲法，系统会继续完成完整故事。</p></div></div>
+          <div className="section-head"><div><h2>这个故事想怎样讲？</h2><p>选一个你喜欢的讲法，系统会继续完成完整故事。</p></div></div>
           <div className="direction-grid">{directions.map((direction) => <button className={`direction-card ${selectedDirection?.id === direction.id ? "selected" : ""}`} type="button" key={direction.id} disabled={busy !== null} onClick={() => chooseDirection(direction)}><strong>{direction.title}</strong><span>{direction.summary}</span><em>会出现：{materialLabels(direction.materialIds).join("、") || "待补充"}</em></button>)}</div>
           {selectedDirection && missingDirectionMaterials.length === 0 && selectedMaterialLabels.length > 0 && <p className="form-helper">专属内容会这样出现：{selectedMaterialLabels.slice(0, 2).join("、")}会进入故事的关键情节。</p>}
           {selectedDirection && missingDirectionMaterials.length > 0 && <Notice title="这个走向还没有安排全部专属素材" copy={`尚未安排：${missingDirectionMaterials.map((item) => item.label).join("、")}。请选择其他走向，或调整素材后重新生成方向。`} tone="warn" />}

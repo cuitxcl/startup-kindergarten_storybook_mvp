@@ -24,6 +24,8 @@ pub struct ImageReference {
     pub source: String,
     pub role_id: Option<String>,
     pub label: Option<String>,
+    #[serde(default)]
+    pub generation_job_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]

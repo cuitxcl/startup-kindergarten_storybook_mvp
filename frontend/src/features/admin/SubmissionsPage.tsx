@@ -183,7 +183,7 @@ export function SubmissionsPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="市场投稿" title="市场投稿" copy="园所普通绘本投稿前必须经过预览和隐私确认。" actions={<button className="button primary" type="button" onClick={() => setOpen("new")}>新建投稿</button>} />
+      <PageHeader title="市场投稿" copy="园所普通绘本投稿前必须经过预览和隐私确认。" actions={<button className="button primary" type="button" onClick={() => setOpen("new")}>新建投稿</button>} />
       {notice && <Notice title={notice.title} copy={notice.copy} tone={notice.title.includes("失败") || notice.title.includes("无法") ? "danger" : "good"} />}
       {initialLoading && <EmptyState title="正在加载投稿" copy="正在读取园所投稿队列和可投稿绘本。" />}
       {error && rows.length > 0 && <Notice title="投稿列表更新失败" copy={error} tone="danger" />}

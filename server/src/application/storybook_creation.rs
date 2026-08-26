@@ -14,14 +14,13 @@ use crate::{
         CreationDirectionsResponse, CreationGenerationStep, CreationGenerationSummary,
         CreationMaterial, CreationMaterialsResponse, CreationOutline, CreationOutlinePage,
         CreationOutlineResponse, CreationSessionUpdateResponse,
-        CreationStorybookGenerationResponse, CreationUnderstanding,
-        GenerateCreationStorybookRequest, GenerateDirectionsRequest, GenerateOutlineRequest,
-        PatchCreationMaterialsRequest, RefreshUnderstandingRequest, SelectDirectionRequest,
-        SelectDirectionResponse, StoryDirection, StorybookCreationSession,
+        CreationStorybookGenerationResponse, CreationUnderstanding, CreativeSettingsEffects,
+        CreativeSettingsResponse, GenerateCreationStorybookRequest, GenerateDirectionsRequest,
+        GenerateOutlineRequest, PatchCreationMaterialsRequest, RefreshUnderstandingRequest,
+        SelectDirectionRequest, SelectDirectionResponse, StoryDirection, StorybookCreationSession,
         StorybookCreationSessionListItem, StorybookCreationSessionListQuery,
-        UpdateCreationOutlineRequest, UpdateOutlinePageRequest, UpdateOutlinePageResponse,
-        UpdateOutlineResponse, UpdateStorybookCreationSessionRequest,
-        CreativeSettingsEffects, CreativeSettingsResponse, UpdateCreativeSettingsRequest,
+        UpdateCreationOutlineRequest, UpdateCreativeSettingsRequest, UpdateOutlinePageRequest,
+        UpdateOutlinePageResponse, UpdateOutlineResponse, UpdateStorybookCreationSessionRequest,
         UpdateVisualPreferencesRequest, VisualPreferences, VisualPreferencesResponse,
     },
     page_aspect::normalize_page_aspect_ratio,
@@ -75,12 +74,21 @@ pub async fn create(
         {
             return Ok(existing);
         }
-        let visual_style_id = source.visual_style_id.clone().ok_or_else(|| ApiError::state_conflict_with_code(
-            "source_storybook_style_selection_required",
-            "来源绘本缺少可用的绘本风格，请先为来源绘本选择系统预设",
-        ))?;
-        let visual_style_version = source.visual_style_version.unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
-        Some((source_storybook_id, visual_style_id, visual_style_version, source.page_aspect_ratio.clone()))
+        let visual_style_id = source.visual_style_id.clone().ok_or_else(|| {
+            ApiError::state_conflict_with_code(
+                "source_storybook_style_selection_required",
+                "来源绘本缺少可用的绘本风格，请先为来源绘本选择系统预设",
+            )
+        })?;
+        let visual_style_version = source
+            .visual_style_version
+            .unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+        Some((
+            source_storybook_id,
+            visual_style_id,
+            visual_style_version,
+            source.page_aspect_ratio.clone(),
+        ))
     } else {
         None
     };
@@ -89,18 +97,47 @@ pub async fn create(
     let use_scene = clean_or(payload.use_scene, "家庭共读");
     let age_group = clean_or(payload.age_group, "4-5 岁");
     let page_count = normalize_page_count(payload.page_count);
-    let story_style_id = payload.story_style_id.unwrap_or_else(|| crate::creative_presets::DEFAULT_STORY_STYLE_ID.to_string());
+    let story_style_id = payload
+        .story_style_id
+        .unwrap_or_else(|| crate::creative_presets::DEFAULT_STORY_STYLE_ID.to_string());
     if crate::creative_presets::story_style(&story_style_id).is_none() {
-        return Err(ApiError::validation_with_code("unknown_story_style", "story_style_id", "请选择系统提供的故事风格"));
+        return Err(ApiError::validation_with_code(
+            "unknown_story_style",
+            "story_style_id",
+            "请选择系统提供的故事风格",
+        ));
     }
-    let visual_style_id = payload.visual_style_id.or_else(|| source_settings.as_ref().map(|settings| settings.1.clone())).unwrap_or_else(|| crate::creative_presets::DEFAULT_VISUAL_STYLE_ID.to_string());
-    let visual_style_version = source_settings.as_ref().map(|settings| settings.2).unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
-    let visual_style_prompt = crate::creative_presets::visual_prompt(&visual_style_id, visual_style_version)
-        .ok_or_else(|| ApiError::validation_with_code("unknown_visual_style", "visual_style_id", "请选择系统提供的绘本风格"))?;
+    let visual_style_id = payload
+        .visual_style_id
+        .or_else(|| source_settings.as_ref().map(|settings| settings.1.clone()))
+        .unwrap_or_else(|| crate::creative_presets::DEFAULT_VISUAL_STYLE_ID.to_string());
+    let visual_style_version = source_settings
+        .as_ref()
+        .map(|settings| settings.2)
+        .unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+    let visual_style_prompt =
+        crate::creative_presets::visual_prompt(&visual_style_id, visual_style_version).ok_or_else(
+            || {
+                ApiError::validation_with_code(
+                    "unknown_visual_style",
+                    "visual_style_id",
+                    "请选择系统提供的绘本风格",
+                )
+            },
+        )?;
     let visual_preferences = VisualPreferences {
         // `style` remains an internal generation field during the compatibility window.
         style: visual_style_prompt.to_string(),
-        page_aspect_ratio: payload.page_aspect_ratio.as_deref().map(|value| normalize_page_aspect_ratio(Some(value))).unwrap_or_else(|| source_settings.as_ref().map(|settings| settings.3.clone()).unwrap_or_else(|| "portrait_4_5".to_string())),
+        page_aspect_ratio: payload
+            .page_aspect_ratio
+            .as_deref()
+            .map(|value| normalize_page_aspect_ratio(Some(value)))
+            .unwrap_or_else(|| {
+                source_settings
+                    .as_ref()
+                    .map(|settings| settings.3.clone())
+                    .unwrap_or_else(|| "portrait_4_5".to_string())
+            }),
         visual_complexity: validate_enum(
             payload.visual_complexity,
             &["simple", "standard", "rich"],
@@ -216,7 +253,9 @@ pub async fn update(
         return Err(ApiError::state_conflict("已放弃的创作不能继续编辑"));
     }
     if session.status == "generating" {
-        return Err(ApiError::state_conflict("绘本正在制作中，完成后再调整创作设定"));
+        return Err(ApiError::state_conflict(
+            "绘本正在制作中，完成后再调整创作设定",
+        ));
     }
     if matches!(session.status.as_str(), "generating") {
         return Err(ApiError::state_conflict("生成中不能修改基础输入"));
@@ -589,20 +628,48 @@ pub async fn update_creative_settings(
     payload: UpdateCreativeSettingsRequest,
 ) -> Result<CreativeSettingsResponse, ApiError> {
     common::require_editor_db(ctx, headers, workspace_id).await?;
-    let mut session = crate::repositories::storybook_creation_sessions::find_for_update(&ctx.db, workspace_id, session_id)
-        .await.map_err(common::db_error)?;
+    let mut session = crate::repositories::storybook_creation_sessions::find_for_update(
+        &ctx.db,
+        workspace_id,
+        session_id,
+    )
+    .await
+    .map_err(common::db_error)?;
     ensure_not_terminal_for_edit(&session)?;
-    let next_story_style_id = payload.story_style_id.unwrap_or_else(|| session.story_style_id.clone());
-    let next_visual_style_id = payload.visual_style_id.unwrap_or_else(|| session.visual_style_id.clone());
-    let next_visual_prompt = crate::creative_presets::visual_prompt(&next_visual_style_id, crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION)
-        .ok_or_else(|| ApiError::validation_with_code("unknown_visual_style", "visual_style_id", "请选择系统提供的绘本风格"))?;
+    let next_story_style_id = payload
+        .story_style_id
+        .unwrap_or_else(|| session.story_style_id.clone());
+    let next_visual_style_id = payload
+        .visual_style_id
+        .unwrap_or_else(|| session.visual_style_id.clone());
+    let next_visual_prompt = crate::creative_presets::visual_prompt(
+        &next_visual_style_id,
+        crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION,
+    )
+    .ok_or_else(|| {
+        ApiError::validation_with_code(
+            "unknown_visual_style",
+            "visual_style_id",
+            "请选择系统提供的绘本风格",
+        )
+    })?;
     if crate::creative_presets::story_style(&next_story_style_id).is_none() {
-        return Err(ApiError::validation_with_code("unknown_story_style", "story_style_id", "请选择系统提供的故事风格"));
+        return Err(ApiError::validation_with_code(
+            "unknown_story_style",
+            "story_style_id",
+            "请选择系统提供的故事风格",
+        ));
     }
     let visual_changed = next_visual_style_id != session.visual_style_id;
     let story_changed = next_story_style_id != session.story_style_id;
-    let references = crate::repositories::storybook_creation_assets::active_visual_reference_asset_ids(&ctx.db, workspace_id, session_id)
-        .await.map_err(common::db_error)?;
+    let references =
+        crate::repositories::storybook_creation_assets::active_visual_reference_asset_ids(
+            &ctx.db,
+            workspace_id,
+            session_id,
+        )
+        .await
+        .map_err(common::db_error)?;
     if visual_changed && !references.is_empty() && !payload.confirm_reference_regeneration {
         return Err(ApiError::state_conflict_with_code_and_details(
             "style_change_requires_reference_regeneration",
@@ -618,11 +685,22 @@ pub async fn update_creative_settings(
         requires_storybook_regeneration: false,
     };
     let txn = ctx.db.begin().await.map_err(common::db_error)?;
-    let mut locked = crate::repositories::storybook_creation_sessions::find_for_update(&txn, workspace_id, session_id)
-        .await.map_err(common::db_error)?;
+    let mut locked = crate::repositories::storybook_creation_sessions::find_for_update(
+        &txn,
+        workspace_id,
+        session_id,
+    )
+    .await
+    .map_err(common::db_error)?;
     if visual_changed && !references.is_empty() {
-        effects.invalidated_asset_reference_ids = crate::repositories::storybook_creation_assets::invalidate_active_visual_references(&txn, workspace_id, session_id)
-            .await.map_err(common::db_error)?;
+        effects.invalidated_asset_reference_ids =
+            crate::repositories::storybook_creation_assets::invalidate_active_visual_references(
+                &txn,
+                workspace_id,
+                session_id,
+            )
+            .await
+            .map_err(common::db_error)?;
         effects.references_invalidated = true;
     }
     if story_changed {
@@ -641,7 +719,9 @@ pub async fn update_creative_settings(
         locked.visual_style_version = crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION;
         locked.visual_preferences.style = next_visual_prompt.to_string();
     }
-    let next_page_count = payload.page_count.map(|value| normalize_page_count(Some(value)));
+    let next_page_count = payload
+        .page_count
+        .map(|value| normalize_page_count(Some(value)));
     let page_count_changed = next_page_count.is_some_and(|value| value != locked.page_count);
     if let Some(value) = next_page_count {
         locked.page_count = value;
@@ -652,20 +732,49 @@ pub async fn update_creative_settings(
             locked.status = "direction_selected".to_string();
         }
     }
-    let preference_changed = page_count_changed || payload.page_aspect_ratio.is_some() || payload.visual_complexity.is_some() || payload.character_consistency.is_some();
-    if let Some(value) = payload.page_aspect_ratio { locked.visual_preferences.page_aspect_ratio = normalize_page_aspect_ratio(Some(&value)); }
-    if let Some(value) = payload.visual_complexity { locked.visual_preferences.visual_complexity = validate_enum(Some(value), &["simple", "standard", "rich"], "standard", "visual_complexity")?; }
-    if let Some(value) = payload.character_consistency { locked.visual_preferences.character_consistency = validate_enum(Some(value), &["auto", "speed", "confirm_character"], "auto", "character_consistency")?; }
+    let preference_changed = page_count_changed
+        || payload.page_aspect_ratio.is_some()
+        || payload.visual_complexity.is_some()
+        || payload.character_consistency.is_some();
+    if let Some(value) = payload.page_aspect_ratio {
+        locked.visual_preferences.page_aspect_ratio = normalize_page_aspect_ratio(Some(&value));
+    }
+    if let Some(value) = payload.visual_complexity {
+        locked.visual_preferences.visual_complexity = validate_enum(
+            Some(value),
+            &["simple", "standard", "rich"],
+            "standard",
+            "visual_complexity",
+        )?;
+    }
+    if let Some(value) = payload.character_consistency {
+        locked.visual_preferences.character_consistency = validate_enum(
+            Some(value),
+            &["auto", "speed", "confirm_character"],
+            "auto",
+            "character_consistency",
+        )?;
+    }
     if preference_changed && locked.storybook_id.is_some() {
-        locked.generation_summary = CreationGenerationSummary { text_generation_status: "stale".to_string(), image_generation_status: "stale".to_string(), quality_notice: Some("创作设定已调整，需要重新制作绘本分页".to_string()), recoverable_actions: vec!["regenerate_storybook".to_string()] };
+        locked.generation_summary = CreationGenerationSummary {
+            text_generation_status: "stale".to_string(),
+            image_generation_status: "stale".to_string(),
+            quality_notice: Some("创作设定已调整，需要重新制作绘本分页".to_string()),
+            recoverable_actions: vec!["regenerate_storybook".to_string()],
+        };
         effects.requires_storybook_regeneration = true;
         if locked.status == "storybook_ready" {
             locked.status = "outline_ready".to_string();
         }
     }
-    crate::repositories::storybook_creation_sessions::save_in_tx(&txn, &locked).await.map_err(common::db_error)?;
+    crate::repositories::storybook_creation_sessions::save_in_tx(&txn, &locked)
+        .await
+        .map_err(common::db_error)?;
     txn.commit().await.map_err(common::db_error)?;
-    session = crate::repositories::storybook_creation_sessions::find(&ctx.db, workspace_id, session_id).await.map_err(common::db_error)?;
+    session =
+        crate::repositories::storybook_creation_sessions::find(&ctx.db, workspace_id, session_id)
+            .await
+            .map_err(common::db_error)?;
     Ok(CreativeSettingsResponse { session, effects })
 }
 
@@ -759,9 +868,16 @@ pub async fn generate_storybook(
             }),
         ));
     }
-    let mismatched_asset_reference_ids = crate::repositories::storybook_creation_assets::style_mismatched_references_for_generation(
-        &ctx.db, workspace_id, session_id, &session.visual_style_id, session.visual_style_version,
-    ).await.map_err(common::db_error)?;
+    let mismatched_asset_reference_ids =
+        crate::repositories::storybook_creation_assets::style_mismatched_references_for_generation(
+            &ctx.db,
+            workspace_id,
+            session_id,
+            &session.visual_style_id,
+            session.visual_style_version,
+        )
+        .await
+        .map_err(common::db_error)?;
     if !mismatched_asset_reference_ids.is_empty() {
         return Err(ApiError::state_conflict_with_code_and_details(
             "visual_reference_style_mismatch",
@@ -1831,8 +1947,8 @@ fn step(key: &str, label: &str, status: &str) -> CreationGenerationStep {
 #[cfg(test)]
 mod tests {
     use super::{
-        can_refresh_directions_from_status, direct_creation_page_evidence,
-        normalize_page_count, photo_references_by_kind, unplaced_locked_materials,
+        can_refresh_directions_from_status, direct_creation_page_evidence, normalize_page_count,
+        photo_references_by_kind, unplaced_locked_materials,
     };
     use crate::models::{
         CreationMaterial, CreationOutline, CreationOutlinePage, StorybookAssetReference,

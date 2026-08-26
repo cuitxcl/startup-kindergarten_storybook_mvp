@@ -3,7 +3,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, 
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
-use crate::models::{GenerationJob, ImageVariantListQuery, StorybookImageVariant};
+use crate::models::{
+    GenerationJob, ImageReferenceEvidence, ImageVariantListQuery, StorybookImageVariant,
+};
 
 pub const TARGET_ROLE_REFERENCE: &str = "role_reference";
 pub const TARGET_PAGE_ILLUSTRATION: &str = "page_illustration";
@@ -58,9 +60,11 @@ pub async fn ensure_variant_for_job(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, workspace_id, storybook_id, target_type, target_id, generation_job_id,
-                   image_url, prompt, provider, status, failure_reason, is_selected, created_at, updated_at
-            from storybook_image_variants
+            select v.id, v.workspace_id, v.storybook_id, v.target_type, v.target_id, v.generation_job_id,
+                   v.image_url, v.prompt, v.provider, v.status, v.failure_reason, v.is_selected, v.created_at, v.updated_at,
+                   j.input_json->'reference_evidence' as reference_evidence
+            from storybook_image_variants v
+            left join generation_jobs j on j.id = v.generation_job_id
             where generation_job_id = $1
             limit 1
             "#,
@@ -173,14 +177,16 @@ pub async fn list_variants(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, workspace_id, storybook_id, target_type, target_id, generation_job_id,
-                   image_url, prompt, provider, status, failure_reason, is_selected, created_at, updated_at
-            from storybook_image_variants
-            where workspace_id = $1
-              and storybook_id = $2
-              and ($3::text is null or target_type = $3)
-              and ($4::uuid is null or target_id = $4)
-            order by created_at desc, id desc
+            select v.id, v.workspace_id, v.storybook_id, v.target_type, v.target_id, v.generation_job_id,
+                   v.image_url, v.prompt, v.provider, v.status, v.failure_reason, v.is_selected, v.created_at, v.updated_at,
+                   j.input_json->'reference_evidence' as reference_evidence
+            from storybook_image_variants v
+            left join generation_jobs j on j.id = v.generation_job_id
+            where v.workspace_id = $1
+              and v.storybook_id = $2
+              and ($3::text is null or v.target_type = $3)
+              and ($4::uuid is null or v.target_id = $4)
+            order by v.created_at desc, v.id desc
             "#,
             [
                 workspace_id.into(),
@@ -203,10 +209,12 @@ pub async fn select_variant(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, workspace_id, storybook_id, target_type, target_id, generation_job_id,
-                   image_url, prompt, provider, status, failure_reason, is_selected, created_at, updated_at
-            from storybook_image_variants
-            where workspace_id = $1 and storybook_id = $2 and id = $3
+            select v.id, v.workspace_id, v.storybook_id, v.target_type, v.target_id, v.generation_job_id,
+                   v.image_url, v.prompt, v.provider, v.status, v.failure_reason, v.is_selected, v.created_at, v.updated_at,
+                   j.input_json->'reference_evidence' as reference_evidence
+            from storybook_image_variants v
+            left join generation_jobs j on j.id = v.generation_job_id
+            where v.workspace_id = $1 and v.storybook_id = $2 and v.id = $3
             limit 1
             "#,
             [workspace_id.into(), storybook_id.into(), variant_id.into()],
@@ -563,10 +571,12 @@ async fn find_variant(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select id, workspace_id, storybook_id, target_type, target_id, generation_job_id,
-                   image_url, prompt, provider, status, failure_reason, is_selected, created_at, updated_at
-            from storybook_image_variants
-            where workspace_id = $1 and storybook_id = $2 and id = $3
+            select v.id, v.workspace_id, v.storybook_id, v.target_type, v.target_id, v.generation_job_id,
+                   v.image_url, v.prompt, v.provider, v.status, v.failure_reason, v.is_selected, v.created_at, v.updated_at,
+                   j.input_json->'reference_evidence' as reference_evidence
+            from storybook_image_variants v
+            left join generation_jobs j on j.id = v.generation_job_id
+            where v.workspace_id = $1 and v.storybook_id = $2 and v.id = $3
             limit 1
             "#,
             [workspace_id.into(), storybook_id.into(), variant_id.into()],
@@ -590,6 +600,12 @@ fn variant_from_row(row: sea_orm::QueryResult) -> Result<StorybookImageVariant, 
         status: row.try_get("", "status")?,
         failure_reason: row.try_get("", "failure_reason")?,
         is_selected: row.try_get("", "is_selected")?,
+        reference_evidence: row
+            .try_get::<Option<JsonValue>>("", "reference_evidence")
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value::<Vec<ImageReferenceEvidence>>(value).ok())
+            .unwrap_or_default(),
         created_at: row.try_get::<DateTime<Utc>>("", "created_at")?,
         updated_at: row.try_get::<DateTime<Utc>>("", "updated_at")?,
     })

@@ -356,6 +356,7 @@ async fn seedream_provider_sends_reference_image_payload_for_edit_mode() {
                 source: "role_reference".to_string(),
                 role_id: Some("role-1".to_string()),
                 label: Some("主角参考图".to_string()),
+                generation_job_id: None,
             }],
             edit_instruction: Some("保持角色身份，改成更清晰的正面半身形象".to_string()),
             image_mode: ImageGenerationMode::EditImage,
@@ -400,6 +401,7 @@ fn seedream_reference_image_input_embeds_local_generated_images() {
         source: "storybook_role".to_string(),
         role_id: Some(Uuid::new_v4().to_string()),
         label: Some("角色参考图".to_string()),
+        generation_job_id: None,
     };
 
     let input =

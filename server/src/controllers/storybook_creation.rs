@@ -14,13 +14,13 @@ use crate::{
     models::{
         CreateStorybookCreationSessionRequest, CreationDirectionsResponse,
         CreationMaterialsResponse, CreationOutlineResponse, CreationSessionUpdateResponse,
-        CreationStorybookGenerationResponse, Envelope, GenerateCreationStorybookRequest,
-        GenerateDirectionsRequest, GenerateOutlineRequest, PatchCreationMaterialsRequest,
-        RefreshUnderstandingRequest, ResponseWarning, SelectDirectionRequest,
-        SelectDirectionResponse, StorybookCreationSession, StorybookCreationSessionListItem,
-        StorybookCreationSessionListQuery, UpdateCreationOutlineRequest, UpdateOutlinePageRequest,
+        CreationStorybookGenerationResponse, CreativeSettingsResponse, Envelope,
+        GenerateCreationStorybookRequest, GenerateDirectionsRequest, GenerateOutlineRequest,
+        PatchCreationMaterialsRequest, RefreshUnderstandingRequest, ResponseWarning,
+        SelectDirectionRequest, SelectDirectionResponse, StorybookCreationSession,
+        StorybookCreationSessionListItem, StorybookCreationSessionListQuery,
+        UpdateCreationOutlineRequest, UpdateCreativeSettingsRequest, UpdateOutlinePageRequest,
         UpdateOutlinePageResponse, UpdateOutlineResponse, UpdateStorybookCreationSessionRequest,
-        CreativeSettingsResponse, UpdateCreativeSettingsRequest,
         UpdateVisualPreferencesRequest, VisualPreferencesResponse,
     },
 };
@@ -321,7 +321,14 @@ async fn update_creative_settings(
     Path((workspace_id, session_id)): Path<(Uuid, Uuid)>,
     Json(payload): Json<UpdateCreativeSettingsRequest>,
 ) -> Result<Json<Envelope<CreativeSettingsResponse>>, ApiError> {
-    let response = application::storybook_creation::update_creative_settings(&ctx, &headers, workspace_id, session_id, payload).await?;
+    let response = application::storybook_creation::update_creative_settings(
+        &ctx,
+        &headers,
+        workspace_id,
+        session_id,
+        payload,
+    )
+    .await?;
     Ok(Json(Envelope::new(response)))
 }
 

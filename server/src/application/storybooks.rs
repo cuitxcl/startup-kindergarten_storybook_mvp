@@ -85,15 +85,32 @@ pub async fn create(
         let use_scene = common::required(payload.use_scene, "use_scene")?;
         let teaching_goal = common::required(payload.teaching_goal, "teaching_goal")?;
         let actor_id = common::actor_user_id(headers)?;
-        let story_style_id = payload.story_style_id.unwrap_or_else(|| crate::creative_presets::DEFAULT_STORY_STYLE_ID.to_string());
+        let story_style_id = payload
+            .story_style_id
+            .unwrap_or_else(|| crate::creative_presets::DEFAULT_STORY_STYLE_ID.to_string());
         if crate::creative_presets::story_style(&story_style_id).is_none() {
-            return Err(ApiError::validation_with_code("unknown_story_style", "story_style_id", "请选择系统提供的故事风格"));
+            return Err(ApiError::validation_with_code(
+                "unknown_story_style",
+                "story_style_id",
+                "请选择系统提供的故事风格",
+            ));
         }
-        let visual_style_id = payload.visual_style_id.unwrap_or_else(|| crate::creative_presets::DEFAULT_VISUAL_STYLE_ID.to_string());
-        let visual_style_version = payload.visual_style_version.unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
-        let cover_tone = crate::creative_presets::visual_prompt(&visual_style_id, visual_style_version)
-            .ok_or_else(|| ApiError::validation_with_code("unknown_visual_style", "visual_style_id", "请选择系统提供的绘本风格"))?
-            .to_string();
+        let visual_style_id = payload
+            .visual_style_id
+            .unwrap_or_else(|| crate::creative_presets::DEFAULT_VISUAL_STYLE_ID.to_string());
+        let visual_style_version = payload
+            .visual_style_version
+            .unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+        let cover_tone =
+            crate::creative_presets::visual_prompt(&visual_style_id, visual_style_version)
+                .ok_or_else(|| {
+                    ApiError::validation_with_code(
+                        "unknown_visual_style",
+                        "visual_style_id",
+                        "请选择系统提供的绘本风格",
+                    )
+                })?
+                .to_string();
         let book = crate::repositories::storybooks::create_plain(
             &ctx.db,
             workspace_id,

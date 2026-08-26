@@ -133,7 +133,7 @@ export function AppShell() {
           <div className="workspace-switcher">
             <Building2 size={18} />
             <label>
-              当前空间
+              <span className="visually-hidden">切换当前空间</span>
               <select
                 value={workspace.id}
                 onChange={(event) => navigate(`/app/${event.target.value}/dashboard`)}

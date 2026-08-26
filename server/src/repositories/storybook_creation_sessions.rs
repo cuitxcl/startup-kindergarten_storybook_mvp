@@ -744,8 +744,12 @@ fn session_from_row(row: sea_orm::QueryResult) -> Result<StorybookCreationSessio
             row.try_get::<JsonValue>("", "visual_preferences_json")?,
         )
         .map_err(|err| DbErr::Custom(format!("visual_preferences_json 格式错误：{err}")))?,
-        story_style_id: row.try_get("", "story_style_id").unwrap_or_else(|_| "daily_warmth".to_string()),
-        visual_style_id: row.try_get("", "visual_style_id").unwrap_or_else(|_| "watercolor_book".to_string()),
+        story_style_id: row
+            .try_get("", "story_style_id")
+            .unwrap_or_else(|_| "daily_warmth".to_string()),
+        visual_style_id: row
+            .try_get("", "visual_style_id")
+            .unwrap_or_else(|_| "watercolor_book".to_string()),
         visual_style_version: row.try_get("", "visual_style_version").unwrap_or(1),
         storybook_id: row.try_get("", "storybook_id")?,
         last_job_id: row.try_get("", "last_job_id")?,

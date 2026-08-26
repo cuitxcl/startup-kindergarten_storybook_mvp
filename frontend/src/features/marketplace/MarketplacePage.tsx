@@ -76,7 +76,7 @@ export function MarketplacePage() {
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="绘本市场" title="绘本市场" copy="平台精选和园所投稿的可复用绘本模板库。" />
+      <PageHeader title="绘本市场" copy="平台精选和园所投稿的可复用绘本模板库。" />
       {error && filteredTemplates.length > 0 && <Notice title="模板更新失败" copy={error} tone="danger" />}
       <section className="list-hero">
         <div>

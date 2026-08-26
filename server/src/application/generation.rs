@@ -382,9 +382,9 @@ pub async fn create_bulk_image_tasks(
         )
         .await
         .map_err(common::db_error)?;
-        let cover_missing = !cover_variants
-            .iter()
-            .any(|variant| variant.is_selected && variant.status == "ready" && variant.image_url.is_some());
+        let cover_missing = !cover_variants.iter().any(|variant| {
+            variant.is_selected && variant.status == "ready" && variant.image_url.is_some()
+        });
 
         let pages_to_generate = book
             .pages
@@ -429,10 +429,18 @@ pub async fn create_bulk_image_tasks(
                 .roles
                 .iter()
                 .filter(|role| {
-                    role_needs_cross_page_reference(&book, role.name.as_str(), role.needs_consistency)
-                        && role.reference_status == "ready"
+                    role_needs_cross_page_reference(
+                        &book,
+                        role.name.as_str(),
+                        role.needs_consistency,
+                    ) && role.reference_status == "ready"
                         && role.reference_image_url.is_some()
-                        && page_mentions_role(page.title.as_str(), page.body.as_str(), page.illustration_prompt.as_str(), role.name.as_str())
+                        && page_mentions_role(
+                            page.title.as_str(),
+                            page.body.as_str(),
+                            page.illustration_prompt.as_str(),
+                            role.name.as_str(),
+                        )
                 })
                 .map(|role| role.id)
                 .collect::<Vec<_>>();
@@ -445,7 +453,8 @@ pub async fn create_bulk_image_tasks(
                     page.id,
                     CreateImageTaskRequest {
                         prompt: Some(page.illustration_prompt.clone()),
-                        image_mode: (!reference_role_ids.is_empty()).then_some("reference_image".to_string()),
+                        image_mode: (!reference_role_ids.is_empty())
+                            .then_some("reference_image".to_string()),
                         reference_role_ids,
                         reference_image_urls: Vec::new(),
                         edit_instruction: None,
@@ -474,7 +483,8 @@ pub async fn create_bulk_image_tasks(
         .map_err(common::db_error)?;
         return Ok(BulkImageTaskResponse {
             jobs,
-            concurrency_limit: crate::workers::generation::image_generation_concurrency_limit() as u32,
+            concurrency_limit: crate::workers::generation::image_generation_concurrency_limit()
+                as u32,
         });
     }
 
@@ -634,10 +644,14 @@ pub async fn create_job(
         let workspace = common::require_editor_db(ctx, headers, workspace_id).await?;
         let job_type = common::required(payload.job_type, "job_type")?;
         let storybook = if let Some(storybook_id) = payload.storybook_id {
-            Some(crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
-                .await
-                .map_err(common::db_error)?)
-        } else { None };
+            Some(
+                crate::repositories::storybooks::find(&ctx.db, workspace_id, storybook_id)
+                    .await
+                    .map_err(common::db_error)?,
+            )
+        } else {
+            None
+        };
         if job_type == "customization_plan" {
             if payload.storybook_id.is_none() {
                 return Err(ApiError::validation(
@@ -671,16 +685,37 @@ pub async fn create_job(
             }
         }
         let mut input_json = payload.input_json;
-        if matches!(job_type.as_str(), "storybook_plan" | "storybook_roles" | "storybook_pages") {
-            let book = storybook.as_ref().ok_or_else(|| ApiError::validation("storybook_id", "绘本生成任务必须绑定绘本"))?;
-            let visual_style_id = book.visual_style_id.as_deref().ok_or_else(|| ApiError::state_conflict("绘本缺少画面风格设定，请先选择系统预设"))?;
-            let visual_style_version = book.visual_style_version.unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
-            let story_style_id = book.story_style_id.as_deref().ok_or_else(|| ApiError::state_conflict("绘本缺少故事风格设定，请先选择系统预设"))?;
-            let visual_prompt = crate::creative_presets::visual_prompt(visual_style_id, visual_style_version).ok_or_else(|| ApiError::state_conflict("绘本画面风格版本不可用，请重新选择预设"))?;
-            let story_prompt = crate::creative_presets::story_prompt(story_style_id).ok_or_else(|| ApiError::state_conflict("绘本故事风格不可用，请重新选择预设"))?;
-            let object = input_json.as_object_mut().ok_or_else(|| ApiError::validation("input_json", "生成输入必须是对象"))?;
+        if matches!(
+            job_type.as_str(),
+            "storybook_plan" | "storybook_roles" | "storybook_pages"
+        ) {
+            let book = storybook
+                .as_ref()
+                .ok_or_else(|| ApiError::validation("storybook_id", "绘本生成任务必须绑定绘本"))?;
+            let visual_style_id = book.visual_style_id.as_deref().ok_or_else(|| {
+                ApiError::state_conflict("绘本缺少画面风格设定，请先选择系统预设")
+            })?;
+            let visual_style_version = book
+                .visual_style_version
+                .unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+            let story_style_id = book.story_style_id.as_deref().ok_or_else(|| {
+                ApiError::state_conflict("绘本缺少故事风格设定，请先选择系统预设")
+            })?;
+            let visual_prompt =
+                crate::creative_presets::visual_prompt(visual_style_id, visual_style_version)
+                    .ok_or_else(|| {
+                        ApiError::state_conflict("绘本画面风格版本不可用，请重新选择预设")
+                    })?;
+            let story_prompt = crate::creative_presets::story_prompt(story_style_id)
+                .ok_or_else(|| ApiError::state_conflict("绘本故事风格不可用，请重新选择预设"))?;
+            let object = input_json
+                .as_object_mut()
+                .ok_or_else(|| ApiError::validation("input_json", "生成输入必须是对象"))?;
             object.insert("visual_style_id".to_string(), json!(visual_style_id));
-            object.insert("visual_style_version".to_string(), json!(visual_style_version));
+            object.insert(
+                "visual_style_version".to_string(),
+                json!(visual_style_version),
+            );
             object.insert("story_style_id".to_string(), json!(story_style_id));
             // Never trust style prompts in the browser payload. Providers receive server-resolved values only.
             object.insert("style".to_string(), json!(visual_prompt));

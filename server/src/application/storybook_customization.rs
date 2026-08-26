@@ -1359,9 +1359,10 @@ async fn attach_source_creation_settings(
     let Some(session_id) = creation_session_id else {
         return Ok(customization_plan);
     };
-    let session = crate::repositories::storybook_creation_sessions::find(db, workspace_id, session_id)
-        .await
-        .map_err(common::db_error)?;
+    let session =
+        crate::repositories::storybook_creation_sessions::find(db, workspace_id, session_id)
+            .await
+            .map_err(common::db_error)?;
     if session.created_by != actor_id
         || session.entry_type != "from_storybook_assets"
         || session.source_storybook_id != Some(source_storybook_id)

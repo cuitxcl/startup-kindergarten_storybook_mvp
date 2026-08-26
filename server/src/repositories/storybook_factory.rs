@@ -5,6 +5,37 @@ use crate::models::{CreateStorybookRequest, MarketplaceTemplate, Storybook};
 use crate::page_aspect::normalize_page_aspect_ratio;
 use crate::repositories::storybook_rules::storybook_type_name;
 
+fn normal_storybook_style_settings(
+    story_style_id: Option<&str>,
+    visual_style_id: Option<&str>,
+    visual_style_version: Option<i32>,
+) -> (String, String, i32, String) {
+    let story_style_id = story_style_id
+        .filter(|id| crate::creative_presets::story_style(id).is_some())
+        .unwrap_or(crate::creative_presets::DEFAULT_STORY_STYLE_ID)
+        .to_string();
+    let requested_version =
+        visual_style_version.unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+    let visual_style_id = visual_style_id
+        .filter(|id| crate::creative_presets::visual_prompt(id, requested_version).is_some())
+        .unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_ID)
+        .to_string();
+    let visual_style_version =
+        crate::creative_presets::visual_prompt(&visual_style_id, requested_version)
+            .map(|_| requested_version)
+            .unwrap_or(crate::creative_presets::DEFAULT_VISUAL_STYLE_VERSION);
+    let cover_tone = crate::creative_presets::visual_prompt(&visual_style_id, visual_style_version)
+        .expect("default visual style preset must exist")
+        .to_string();
+
+    (
+        story_style_id,
+        visual_style_id,
+        visual_style_version,
+        cover_tone,
+    )
+}
+
 pub async fn create_plain(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -50,12 +81,14 @@ pub async fn create_from_marketplace_template(
     template: MarketplaceTemplate,
 ) -> Result<Storybook, DbErr> {
     let storybook_id = Uuid::new_v4();
+    let (story_style_id, visual_style_id, visual_style_version, cover_tone) =
+        normal_storybook_style_settings(None, None, None);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, source_storybook_id, creator_id, created_at, updated_at)
-        values ($1, $2, 'plain', 'draft', 'private', 'marketplace', $3, $4, $5, $6, '柔和、安静', 'portrait_4_5', $7, $8, now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, title, age_group, use_scene, teaching_goal, cover_tone, story_style_id, visual_style_id, visual_style_version, page_aspect_ratio, source_storybook_id, creator_id, created_at, updated_at)
+        values ($1, $2, 'plain', 'draft', 'private', 'marketplace', $3, $4, $5, $6, $7, $8, $9, $10, 'portrait_4_5', $11, $12, now(), now())
         "#,
         [
             storybook_id.into(),
@@ -64,6 +97,10 @@ pub async fn create_from_marketplace_template(
             template.age_group.clone().into(),
             template.use_scene.clone().into(),
             template.summary.clone().into(),
+            cover_tone.into(),
+            story_style_id.into(),
+            visual_style_id.into(),
+            visual_style_version.into(),
             template.source_storybook_id.into(),
             creator_id.into(),
         ],
@@ -88,12 +125,18 @@ pub async fn duplicate(
         crate::repositories::storybook_queries::find(db, workspace_id, storybook_id).await?;
     let new_id = Uuid::new_v4();
     let title = requested_title.unwrap_or_else(|| format!("{} 副本", source.title));
+    let (story_style_id, visual_style_id, visual_style_version, cover_tone) =
+        normal_storybook_style_settings(
+            source.story_style_id.as_deref(),
+            source.visual_style_id.as_deref(),
+            source.visual_style_version,
+        );
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"
         insert into storybooks
-          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, page_aspect_ratio, creator_id, created_at, updated_at)
-        values ($1, $2, $3, 'draft', 'private', 'duplicate', $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
+          (id, workspace_id, storybook_type, status, visibility, source, source_storybook_id, target_child_id, title, age_group, use_scene, teaching_goal, cover_tone, story_style_id, visual_style_id, visual_style_version, page_aspect_ratio, creator_id, created_at, updated_at)
+        values ($1, $2, $3, 'draft', 'private', 'duplicate', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())
         "#,
         [
             new_id.into(),
@@ -105,7 +148,10 @@ pub async fn duplicate(
             source.age_group.into(),
             source.use_scene.into(),
             source.teaching_goal.into(),
-            source.cover_tone.into(),
+            cover_tone.into(),
+            story_style_id.into(),
+            visual_style_id.into(),
+            visual_style_version.into(),
             source.page_aspect_ratio.into(),
             creator_id.into(),
         ],
@@ -239,4 +285,34 @@ pub(crate) async fn clone_pages_and_roles(
     ))
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normal_storybook_style_settings;
+
+    #[test]
+    fn duplicate_style_settings_keep_a_valid_source_preset() {
+        let settings =
+            normal_storybook_style_settings(Some("growth_guidance"), Some("pixar_3d"), Some(1));
+
+        assert_eq!(settings.0, "growth_guidance");
+        assert_eq!(settings.1, "pixar_3d");
+        assert_eq!(settings.2, 1);
+        assert!(settings.3.contains("皮克斯3D"));
+    }
+
+    #[test]
+    fn template_style_settings_fall_back_to_one_consistent_default() {
+        let settings = normal_storybook_style_settings(
+            Some("not-a-story-style"),
+            Some("not-a-visual-style"),
+            Some(99),
+        );
+
+        assert_eq!(settings.0, "daily_warmth");
+        assert_eq!(settings.1, "watercolor_book");
+        assert_eq!(settings.2, 1);
+        assert!(settings.3.contains("水彩绘本"));
+    }
 }

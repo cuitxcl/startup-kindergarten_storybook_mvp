@@ -8,6 +8,22 @@ use crate::models::{CreateImageTaskRequest, GenerationJob};
 use crate::page_aspect::{image_size_for_aspect_with_fallback, page_aspect_spec};
 use crate::services::generation_provider::{ImageGenerationMode, ImageReference};
 
+fn reference_evidence(references: &[ImageReference], style_version: Option<i32>) -> Vec<JsonValue> {
+    references
+        .iter()
+        .map(|reference| {
+            json!({
+                "kind": reference.source,
+                "reference_id": reference.role_id,
+                "label": reference.label,
+                "image_url": reference.url,
+                "generation_job_id": reference.generation_job_id,
+                "style_version": style_version,
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 struct PageNamedRole {
     name: String,
@@ -48,6 +64,7 @@ pub async fn cover_image_job_input(
 ) -> Result<JsonValue, DbErr> {
     let default_prompt = cover_prompt(db, workspace_id, storybook_id).await?;
     let aspect_ratio = storybook_page_aspect_ratio(db, workspace_id, storybook_id).await?;
+    let style_version = storybook_visual_style_version(db, storybook_id).await?;
     let aspect = page_aspect_spec(&aspect_ratio);
     let prompt = payload
         .prompt
@@ -66,6 +83,7 @@ pub async fn cover_image_job_input(
         "aspect_ratio": aspect.key,
         "size": aspect.image_size,
         "reference_images": reference_images,
+        "reference_evidence": reference_evidence(&reference_images, style_version),
         "edit_instruction": clean_optional_text(payload.edit_instruction),
         "strength": payload.strength.map(|value| value.clamp(0.0, 1.0))
     }))
@@ -81,6 +99,7 @@ pub async fn page_image_job_input(
     let page_prompt = page_prompt(db, workspace_id, storybook_id, page_id).await?;
     let cover_tone = storybook_cover_tone(db, workspace_id, storybook_id).await?;
     let aspect_ratio = storybook_page_aspect_ratio(db, workspace_id, storybook_id).await?;
+    let style_version = storybook_visual_style_version(db, storybook_id).await?;
     let aspect = page_aspect_spec(&aspect_ratio);
     let prompt = payload
         .prompt
@@ -196,7 +215,11 @@ pub async fn page_image_job_input(
             .collect::<Vec<_>>();
         format!(
             "{prompt} 角色身份必须严格以随附角色参考图为准：{}。必须保留参考图中的脸型、发型、帽子或头饰、服装配色与年龄感；不得改成另一位孩子，不得省略显著头饰或替换服装。",
-            if referenced_names.is_empty() { "全部已提供角色".to_string() } else { referenced_names.join("、") }
+            if referenced_names.is_empty() {
+                "全部已提供角色".to_string()
+            } else {
+                referenced_names.join("、")
+            }
         )
     };
     let edit_instruction = clean_optional_text(payload.edit_instruction);
@@ -216,6 +239,7 @@ pub async fn page_image_job_input(
         "size": aspect.image_size,
         "reference_role_ids": payload.reference_role_ids,
         "reference_images": reference_images,
+        "reference_evidence": reference_evidence(&reference_images, style_version),
         "edit_instruction": edit_instruction,
         "strength": strength
     }))
@@ -238,6 +262,7 @@ pub async fn role_reference_image_job_input(
             source: "direct".to_string(),
             role_id: None,
             label: None,
+            generation_job_id: None,
         })
         .collect::<Vec<_>>();
     let image_mode =
@@ -501,7 +526,8 @@ async fn storybook_role_reference_images(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r#"
-            select r.id, r.name, coalesce(v.image_url, r.reference_image_url) as image_url
+            select r.id, r.name, coalesce(v.image_url, r.reference_image_url) as image_url,
+                   v.generation_job_id
             from storybook_roles r
             left join storybook_image_variants v
               on v.id = r.selected_image_variant_id
@@ -530,6 +556,9 @@ async fn storybook_role_reference_images(
                 source: "storybook_role".to_string(),
                 role_id: Some(role_id.to_string()),
                 label: Some(name),
+                generation_job_id: row
+                    .try_get::<Option<Uuid>>("", "generation_job_id")?
+                    .map(|id| id.to_string()),
             });
         }
     }
@@ -603,9 +632,11 @@ async fn page_image_reference_images(
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 r#"
-                select id, name, reference_image_url
-                from storybook_roles
-                where storybook_id = $1
+                select r.id, r.name, r.reference_image_url, v.generation_job_id
+                from storybook_roles r
+                left join storybook_image_variants v
+                  on v.id = r.selected_image_variant_id
+                where r.storybook_id = $1
                   and reference_image_url is not null
                 "#,
                 [storybook_id.into()],
@@ -629,6 +660,9 @@ async fn page_image_reference_images(
                 source: "storybook_role".to_string(),
                 role_id: Some(role_id.to_string()),
                 label: row.try_get("", "name").ok(),
+                generation_job_id: row
+                    .try_get::<Option<Uuid>>("", "generation_job_id")?
+                    .map(|id| id.to_string()),
             });
         }
     }
@@ -645,6 +679,7 @@ async fn page_image_reference_images(
             source: "direct".to_string(),
             role_id: None,
             label: None,
+            generation_job_id: None,
         });
     }
 
@@ -771,9 +806,10 @@ async fn page_visual_reference_images(
         }
         references.push(ImageReference {
             url,
-            source: "storybook_visual_reference".to_string(),
+            source: "photo_visual_reference".to_string(),
             role_id: None,
             label: Some("已确认同画风参考".to_string()),
+            generation_job_id: None,
         });
     }
 
@@ -812,9 +848,10 @@ async fn page_visual_reference_images(
         }
         references.push(ImageReference {
             url,
-            source: "storybook_visual_reference".to_string(),
+            source: "photo_visual_reference".to_string(),
             role_id: None,
             label: row.try_get("", "display_name").ok(),
+            generation_job_id: Some(generation_job_id.to_string()),
         });
     }
 
@@ -1138,6 +1175,20 @@ async fn storybook_page_aspect_ratio(
     .try_get("", "page_aspect_ratio")
 }
 
+async fn storybook_visual_style_version(
+    db: &DatabaseConnection,
+    storybook_id: Uuid,
+) -> Result<Option<i32>, DbErr> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "select visual_style_version from storybooks where id = $1 limit 1",
+        [storybook_id.into()],
+    ))
+    .await?
+    .ok_or_else(|| DbErr::RecordNotFound("storybook".to_string()))?
+    .try_get("", "visual_style_version")
+}
+
 fn storybook_style_clause(cover_tone: &str) -> (String, bool) {
     let trimmed = cover_tone.trim().trim_end_matches('。');
     let uses_default_style = trimmed.is_empty() || trimmed == "温暖、清楚";
@@ -1305,6 +1356,7 @@ async fn previous_page_scene_reference(
         source: "previous_page".to_string(),
         role_id: None,
         label: Some("上一页画面".to_string()),
+        generation_job_id: None,
     }))
 }
 
@@ -1531,9 +1583,10 @@ mod tests {
     use super::{
         PageNamedRole, has_typed_page_reference_ids, image_request_from_job, image_target_from_job,
         is_image_job, page_camera_priority_guard, page_photo_reference_clause, page_reference_ids,
-        page_role_relation_clause, page_visual_reference_plan,
+        page_role_relation_clause, page_visual_reference_plan, reference_evidence,
     };
     use crate::models::GenerationJob;
+    use crate::services::generation_provider::ImageReference;
 
     #[test]
     fn page_role_relation_clause_emphasizes_relationships_and_staging() {
@@ -1569,6 +1622,30 @@ mod tests {
         assert!(clause.contains("图图与灰灰之间必须表现具体关系"));
         assert!(clause.contains("图图与关键道具布书包要有明确物理关系"));
         assert!(clause.contains("谁靠前、谁靠后、谁在看谁、谁在回应谁"));
+    }
+
+    #[test]
+    fn reference_evidence_freezes_the_actual_attached_reference() {
+        let evidence = reference_evidence(
+            &[ImageReference {
+                url: "/api/workspaces/demo/generation-jobs/ref/image".to_string(),
+                source: "storybook_role".to_string(),
+                role_id: Some("role-1".to_string()),
+                label: Some("淅淅".to_string()),
+                generation_job_id: Some("job-1".to_string()),
+            }],
+            Some(3),
+        );
+
+        assert_eq!(evidence[0]["kind"], "storybook_role");
+        assert_eq!(evidence[0]["reference_id"], "role-1");
+        assert_eq!(evidence[0]["label"], "淅淅");
+        assert_eq!(
+            evidence[0]["image_url"],
+            "/api/workspaces/demo/generation-jobs/ref/image"
+        );
+        assert_eq!(evidence[0]["generation_job_id"], "job-1");
+        assert_eq!(evidence[0]["style_version"], 3);
     }
 
     #[test]

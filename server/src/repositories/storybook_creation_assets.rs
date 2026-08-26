@@ -625,8 +625,13 @@ pub async fn invalidate_active_visual_references(
         r#"select r.id from storybook_asset_references r join storybook_visual_references v on v.asset_reference_id = r.id and v.workspace_id = r.workspace_id where r.workspace_id = $1 and r.creation_session_id = $2 and v.is_active = true"#,
         [workspace_id.into(), session_id.into()],
     )).await?;
-    let ids = rows.into_iter().map(|row| row.try_get("", "id")).collect::<Result<Vec<Uuid>, _>>()?;
-    if ids.is_empty() { return Ok(ids); }
+    let ids = rows
+        .into_iter()
+        .map(|row| row.try_get("", "id"))
+        .collect::<Result<Vec<Uuid>, _>>()?;
+    if ids.is_empty() {
+        return Ok(ids);
+    }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r#"update storybook_visual_references v set is_active = false, status = case when v.status in ('queued','generating','awaiting_confirmation') then 'rejected' else v.status end, updated_at = now() from storybook_asset_references r where r.id = v.asset_reference_id and r.workspace_id = v.workspace_id and r.workspace_id = $1 and r.creation_session_id = $2 and v.is_active = true"#,

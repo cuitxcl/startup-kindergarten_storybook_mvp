@@ -161,6 +161,7 @@ export function NewStorybookPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const resumeBookId = searchParams.get("bookId");
   const resumedBookIdRef = useRef<string | null>(null);
+  const initializedNewFlowRef = useRef(false);
   const creationSessionStorageKey = `kindleaf.creation-session.${workspace.id}`;
   const suppressAutoRecoverRef = useRef(false);
   // A new generation must be isolated from every previous poll/recovery callback.
@@ -248,6 +249,35 @@ export function NewStorybookPage() {
   });
 
   useEffect(() => {
+    // “新建普通绘本”必须从空白状态开始。只有明确携带 bookId 的“继续完成”
+    // 才允许读取浏览器缓存；否则旧草稿会被错误地当成新建流程恢复。
+    if (!resumeBookId) {
+      window.localStorage.removeItem(creationSessionStorageKey);
+      if (!initializedNewFlowRef.current) {
+        initializedNewFlowRef.current = true;
+        setStep(0);
+        setUnlockedStep(0);
+        setNotice(null);
+        setCreatedBookId(null);
+        setGenerationOutputs({});
+        setPlanDraft(defaultPlanDraft);
+        setEditableRoles([]);
+        setEditablePages([]);
+        setRetryJob(null);
+        setGenerationPhase("idle");
+        setGeneratingStep(null);
+        setFullDraftGenerating(false);
+        setRequestDirtyAfterGeneration(false);
+        setSelectedDirectionId(null);
+        setDirectionSupplement("");
+        setOutlineAdjustPage(null);
+        setImagePreferenceOpen(false);
+        setForm(defaultStorybookRequestForm);
+      }
+      setSessionHydrated(true);
+      return;
+    }
+    initializedNewFlowRef.current = false;
     try {
       const raw = window.localStorage.getItem(creationSessionStorageKey);
       if (!raw) {
@@ -293,7 +323,7 @@ export function NewStorybookPage() {
   }, [creationSessionStorageKey, resumeBookId, workspace.id]);
 
   useEffect(() => {
-    if (!sessionHydrated) return;
+    if (!sessionHydrated || !resumeBookId) return;
     const payload: StoredCreationSession = {
       workspaceId: workspace.id,
       step,
@@ -339,73 +369,6 @@ export function NewStorybookPage() {
   useEffect(() => {
     getWorkspaceGenerationProvider(workspace.id).then(setProvider).catch(() => setProvider(null));
   }, [workspace.id]);
-
-  // 断线恢复：刷新后如果还有向导类生成任务在跑，恢复表单上下文并继续等待结果。
-  useEffect(() => {
-    if (resumeBookId) return;
-    if (suppressAutoRecoverRef.current) return;
-    let mounted = true;
-    const recoveryRunId = generationRunRef.current;
-    listGenerationJobsPage(workspace.id, { limit: 10 })
-      .then((page) => {
-        if (!mounted || !isCurrentGenerationRun(recoveryRunId)) return;
-        const active = page.data.find((job) => (
-          ["storybook_plan", "storybook_roles", "storybook_pages"].includes(job.jobType)
-          && isActiveJobStatus(job.status)
-        ));
-        if (!active) {
-          return;
-        }
-        const input = (active.input || {}) as Record<string, unknown>;
-        setForm((current) => ({
-          ...current,
-          title: typeof input.title === "string" && input.title ? input.title : current.title,
-          theme: typeof input.theme === "string" && input.theme ? input.theme : current.theme,
-          ageGroup: typeof input.age_group === "string" && input.age_group ? input.age_group : current.ageGroup,
-          pageCount: typeof input.page_count === "string" && input.page_count ? input.page_count : current.pageCount,
-          useScene: typeof input.use_scene === "string" && input.use_scene ? input.use_scene : current.useScene,
-          style: typeof input.style === "string" && input.style ? input.style : current.style,
-          pageAspectRatio: input.page_aspect_ratio === "landscape_16_9" || input.page_aspect_ratio === "square_1_1" || input.page_aspect_ratio === "portrait_4_5" ? input.page_aspect_ratio : current.pageAspectRatio,
-          storyStyle: typeof input.story_style === "string" && input.story_style ? input.story_style : current.storyStyle,
-          storyFramework: typeof input.story_framework === "string" ? input.story_framework : current.storyFramework,
-          quickIdea: typeof input.quick_idea === "string" ? input.quick_idea : current.quickIdea,
-        }));
-        if (active.storybookId) {
-          setCreatedBookId(active.storybookId);
-          rememberStorybookInUrl(active.storybookId);
-        }
-        if (active.status === "running" || active.lockedAt) {
-          setRetryJob(active);
-          setNotice(staleRecoveredJobNotice(active));
-          return;
-        }
-        setNotice({
-          title: "已恢复排队中的作品生成",
-          copy: "检测到未完成的作品生成，系统会继续等待结果；如果长时间没有变化，请重新生成。",
-        });
-        setGeneratingStep(active.jobType);
-        waitForGenerationJob(active)
-          .then((settled) => {
-            if (mounted && isCurrentGenerationRun(recoveryRunId)) {
-              void handleGenerationJob(settled, "作品生成已完成", recoveryRunId);
-            }
-          })
-          .catch(() => {
-            if (mounted && isCurrentGenerationRun(recoveryRunId)) {
-              setNotice({
-                title: "原作品生成已失效",
-                copy: "未完成的作品生成已不存在或无法读取，请直接重新生成。",
-              });
-            }
-          })
-          .finally(() => { if (mounted && isCurrentGenerationRun(recoveryRunId)) setGeneratingStep(null); });
-      })
-      .catch(() => undefined);
-    return () => {
-      mounted = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace.id, resumeBookId]);
 
   // 从工作台「继续编辑」带 bookId 进入：恢复向导进度，
   // 载入绘本信息和该绘本最近一次成功的方案/角色/分页产物，跳到对应步骤。

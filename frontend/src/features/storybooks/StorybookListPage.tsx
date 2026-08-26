@@ -149,7 +149,6 @@ export function StorybookListPage() {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow={workspace.type === "personal" ? "我的绘本" : "园所绘本"}
         title={workspace.type === "personal" ? "我的绘本" : "园所绘本"}
         copy="普通绘本用于班级共读，也可以继续派生儿童定制绘本。"
         actions={

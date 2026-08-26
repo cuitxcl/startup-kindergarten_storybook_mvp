@@ -159,7 +159,7 @@ export function MembersPage() {
 
   return (
   <div className="page-stack">
-      <PageHeader eyebrow="成员管理" title="成员管理" copy="邀请老师、查看邀请状态、管理班级授权。" actions={<button className="button primary" type="button" onClick={() => setOpen(true)}>邀请老师</button>} />
+      <PageHeader title="成员管理" copy="邀请老师、查看邀请状态、管理班级授权。" actions={<button className="button primary" type="button" onClick={() => setOpen(true)}>邀请老师</button>} />
       {notice && (
         <Notice
           title={notice.title}

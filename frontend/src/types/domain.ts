@@ -97,8 +97,18 @@ export interface StorybookImageVariant {
   status: "generating" | "ready" | "failed";
   failureReason?: string;
   isSelected: boolean;
+  referenceEvidence: ImageReferenceEvidence[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ImageReferenceEvidence {
+  kind: string;
+  referenceId?: string;
+  label?: string;
+  imageUrl?: string;
+  generationJobId?: string;
+  styleVersion?: number;
 }
 
 export type StorybookQualityStatus = "passed" | "needs_review" | "blocked";

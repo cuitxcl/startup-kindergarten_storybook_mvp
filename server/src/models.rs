@@ -218,8 +218,22 @@ pub struct StorybookImageVariant {
     pub status: String,
     pub failure_reason: Option<String>,
     pub is_selected: bool,
+    #[serde(default)]
+    pub reference_evidence: Vec<ImageReferenceEvidence>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// The reference images that were actually attached when a candidate image task was created.
+/// This is deliberately a snapshot on the generation job instead of a live role lookup.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImageReferenceEvidence {
+    pub kind: String,
+    pub reference_id: Option<Uuid>,
+    pub label: Option<String>,
+    pub image_url: Option<String>,
+    pub generation_job_id: Option<Uuid>,
+    pub style_version: Option<i32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
