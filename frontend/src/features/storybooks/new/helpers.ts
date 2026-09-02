@@ -19,6 +19,23 @@ export function linesFromUnknown(value: unknown): string[] {
   return [];
 }
 
+export function requestedPageCount(form: Pick<StorybookRequestForm, "pageCount">) {
+  const parsed = Number(form.pageCount);
+  if (!Number.isFinite(parsed)) return 10;
+  return Math.min(32, Math.max(4, Math.round(parsed)));
+}
+
+export function outlineLinesForPageCount(plan: EditablePlan, form: Pick<StorybookRequestForm, "pageCount" | "title" | "theme">) {
+  const targetCount = requestedPageCount(form);
+  const sourceLines = linesFromRows(plan.outlineText);
+  const lines = sourceLines.length ? sourceLines : fallbackOutlineLines(form);
+  const expanded = expandOutlineRanges(lines);
+  while (expanded.length < targetCount) {
+    expanded.push(fallbackContinuationLine(expanded.length + 1, form));
+  }
+  return expanded.slice(0, targetCount);
+}
+
 function outlineLinesFromUnknown(value: unknown) {
   if (Array.isArray(value)) {
     return value.flatMap((item, index) => {
@@ -108,15 +125,50 @@ export function generationInputFor(
   return base;
 }
 
-function planPayload(plan: EditablePlan, form: { title: string; theme: string }) {
+function planPayload(plan: EditablePlan, form: StorybookRequestForm) {
   return {
     title: optionalTrimmed(form.title),
     theme: optionalTrimmed(form.theme),
     summary: plan.summary,
-    outline: linesFromRows(plan.outlineText),
+    outline: outlineLinesForPageCount(plan, form),
     role_requirements: linesFromRows(plan.roleRequirementsText),
     review_points: linesFromRows(plan.reviewPointsText),
   };
+}
+
+function fallbackOutlineLines(form: Pick<StorybookRequestForm, "title" | "theme">) {
+  const title = form.title || "主角";
+  const theme = form.theme || "成长目标";
+  return [
+    `${title}进入熟悉场景`,
+    `出现和「${theme}」有关的小挑战`,
+    "主角注意到自己的想法或情绪",
+    "身边的人给出清楚、温柔的办法",
+    "主角第一次尝试新的做法",
+    "朋友或家人给出回应和鼓励",
+    "主角再次练习，把办法用得更自然",
+    "小变化被大家看见，故事继续推进",
+    "主角回头看见自己的进步",
+    "故事在被理解和鼓励中温暖收束",
+  ];
+}
+
+function fallbackContinuationLine(pageNumber: number, form: Pick<StorybookRequestForm, "theme">) {
+  const theme = form.theme || "成长目标";
+  if (pageNumber <= 3) return `继续铺垫和「${theme}」有关的真实情境`;
+  if (pageNumber <= 7) return `主角围绕「${theme}」多尝试一次新的做法`;
+  return `把「${theme}」带来的变化落到一个温暖画面里`;
+}
+
+function expandOutlineRanges(lines: string[]) {
+  return lines.flatMap((line) => {
+    const match = line.match(/^第\s*(\d+)\s*[-~—－]\s*(\d+)\s*页?[：:]\s*(.+)$/);
+    if (!match) return [line];
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start || end - start > 8) return [line];
+    return Array.from({ length: end - start + 1 }, (_, index) => `第 ${start + index} 页：${match[3]}`);
+  });
 }
 
 function optionalTrimmed(value: string) {

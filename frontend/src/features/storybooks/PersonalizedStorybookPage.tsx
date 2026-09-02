@@ -46,8 +46,9 @@ import type { ChildProfile, Storybook, Workspace } from "../../types/domain";
 import { customizationBlockerFor } from "./detail/helpers";
 import { STORY_STYLE_PRESETS, STYLE_PRESETS } from "./new/presets";
 import { PAGE_ASPECT_OPTIONS } from "../../utils/pageAspect";
+import { CreationFrame } from "./components/CreationFrame";
 
-const steps = ["对象与素材", "故事预览", "制作", "修改与交付"];
+const steps = ["内容与素材", "故事预览", "生成制作", "检查与交付"];
 const DEFAULT_PHOTO_LIMIT = 5;
 const SOURCE_PAGE_SIZE = 8;
 const DEFAULT_ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -464,7 +465,10 @@ export function PersonalizedStorybookPage() {
     });
   }
 
-  const showingRestoredBatchResult = Boolean(sourceRunId && sourceBatchResult);
+  const batchMaterialChoicesKey = Object.entries(batchMaterialChoices)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([childId, choice]) => `${childId}:${choice}`)
+    .join("|");
   useEffect(() => {
     if (entryType === "from_storybook") {
       setSourceMaxUnlockedStep((current) => Math.max(current, sourceStep));
@@ -474,12 +478,12 @@ export function PersonalizedStorybookPage() {
     : session?.status === "generating" ? 2
       : session?.outline || session?.directions.length ? 1 : 0;
   const activeStep = entryType === "from_storybook"
-    ? showingRestoredBatchResult ? 2 : sourceStep
+    ? sourceStep
     : directViewStep !== null && directViewStep <= directMaxUnlockedStep
       ? directViewStep
       : editingMaterials ? 0 : directMaxUnlockedStep;
   const maxUnlockedStep = entryType === "from_storybook"
-    ? showingRestoredBatchResult ? 2 : sourceMaxUnlockedStep
+    ? sourceMaxUnlockedStep
     : directMaxUnlockedStep;
 
   useEffect(() => {
@@ -497,7 +501,10 @@ export function PersonalizedStorybookPage() {
       if (index === 0 && activeStep > 0) {
         returnToSourceMaterials();
       } else if (index === 1 && index <= sourceMaxUnlockedStep) {
-        setSourceBatchResult(null);
+        if (!sourcePreviewReady) {
+          setError("本次制作已启动，变化计划不再可编辑。请查看制作进度，或完成后从作品列表发起新的定制。");
+          return;
+        }
         setSourceStep(1);
       } else if (index === 2 && sourceBatchResult) {
         setSourceStep(2);
@@ -531,7 +538,7 @@ export function PersonalizedStorybookPage() {
     setSourcePlan(null);
     setSourcePreviewReady(false);
     if (sourceStep === 1) setSourceStep(0);
-  }, [selectedSource?.id, recipientMode, selectedChildId, singleMaterialChoice, selectedBatchIds.join(",")]);
+  }, [selectedSource?.id, recipientMode, selectedChildId, singleMaterialChoice, selectedBatchIds.join(","), batchMaterialChoicesKey]);
 
   useEffect(() => {
     setSourceMaxUnlockedStep(0);
@@ -755,7 +762,7 @@ export function PersonalizedStorybookPage() {
   const creativeSettingsSummary = session ? (
     <div className="creative-settings-summary-row">
       <span>创作设定：<strong>{storyStylePreset.label} · {visualStylePreset.label} · {PAGE_ASPECT_OPTIONS.find((item) => item.value === session.visualPreferences.pageAspectRatio)?.label || "竖版 4:5"} · {session.pageCount} 页</strong></span>
-      <button className="button ghost compact" type="button" onClick={() => setCreativeSettingsOpen(true)}><SlidersHorizontal size={16} aria-hidden="true" />调整设定</button>
+      <button className="button secondary compact creative-settings-edit-button" type="button" onClick={() => setCreativeSettingsOpen(true)}><SlidersHorizontal size={16} aria-hidden="true" />调整设定</button>
     </div>
   ) : null;
   const pendingVisualStyleChangeModal = pendingVisualStyleChange ? (
@@ -798,6 +805,7 @@ export function PersonalizedStorybookPage() {
       })),
     });
     setSourceStep(2);
+    setSourceMaxUnlockedStep((current) => Math.max(current, 2));
   }
 
   async function abandonSourceBatchItem(runItemId: string) {
@@ -882,11 +890,7 @@ export function PersonalizedStorybookPage() {
   }
 
   function returnToSourceMaterials() {
-    setSourceBatchResult(null);
     setSourceStep(0);
-    if (sourceStorybookId) {
-      navigate(`/app/${workspace.id}/storybooks/personalized/new?sourceStorybookId=${sourceStorybookId}`, { replace: true });
-    }
   }
 
   useEffect(() => {
@@ -1574,6 +1578,18 @@ export function PersonalizedStorybookPage() {
       : "先写下故事想法并创建草稿，再上传照片。"
     : "";
   const canUploadPhotos = !photoUploadUnavailableReason;
+  const lockedPhotoMaterialSection = (
+    <Card className="photo-material-card locked-photo-material-card">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">下一步</p>
+          <h2>照片素材稍后补充</h2>
+          <p>先创建故事草稿，再上传人物、物品或场景照片，系统会按故事需要转成同画风参考。</p>
+        </div>
+        <Badge tone="neutral">未开始</Badge>
+      </div>
+    </Card>
+  );
   const photoMaterialSection = (
     <>
     <Card className="photo-material-card">
@@ -1870,22 +1886,22 @@ export function PersonalizedStorybookPage() {
       ? Boolean(selectedSource && batchSelectionsReady && !sourceBlocker)
       : Boolean(singleSelectionReady && !sourceBlocker);
     const canPreview = canConfirmMaterials;
-
     return (
-      <div className="page-stack personalized-flow">
-        <PageHeader
-          title={sourceStep === 0 ? "对象与素材" : sourceStep === 1 ? "确认变化计划" : "正在制作专属绘本"}
-          copy={sourceStep === 0 ? "选择对象和要保留的照片素材。来源绘本的主线与节奏会保持不变。" : sourceStep === 1 ? "确认哪些页面保持、变化或重绘，再开始制作。" : "正在根据确认的变化计划制作专属版本。"}
-          actions={!sourceStorybookId || sourceLoadFailed ? <button className="button secondary" type="button" onClick={() => setEntryType(null)}>重新选择起点</button> : undefined}
-        />
-        <ProgressSteps steps={steps} active={activeStep} maxUnlockedStep={maxUnlockedStep} onStepClick={handleStepClick} />
-        {creativeSettingsSummary}
+      <>
+      <CreationFrame
+        className="personalized-flow"
+        eyebrow="定制绘本创作"
+        title={sourceStep === 0 ? "内容与素材" : sourceStep === 1 ? "故事预览" : "生成制作"}
+        copy={sourceStep === 0 ? "选择对象和要保留的照片素材。来源绘本的主线与节奏会保持不变。" : sourceStep === 1 ? "确认哪些页面保持、变化或重绘，再开始制作。" : "正在根据确认的变化计划制作专属版本。"}
+        actions={!sourceStorybookId || sourceLoadFailed ? <button className="button secondary" type="button" onClick={() => setEntryType(null)}>重新选择起点</button> : undefined}
+        stageNav={<ProgressSteps steps={steps} active={activeStep} maxUnlockedStep={maxUnlockedStep} onStepClick={handleStepClick} />}
+        settings={creativeSettingsSummary}
+      >
         {error && <Notice title="暂时无法继续" copy={error} tone="danger" />}
         {creativeSettingsNotice && <Notice title="创作设定已更新" copy={creativeSettingsNotice} tone="warn" />}
 
         {sourceStep === 0 && (
-          <section className="personalized-workspace-grid">
-            <div className="page-stack">
+          <section className="page-stack">
               {sourceLoadFailed && <Notice title="需要重新选择来源绘本" copy="原链接中的来源绘本无法读取，下面可以直接选择其他可定制普通绘本继续。" tone="warn" />}
               {(!sourceStorybookId || sourceLoadFailed) && (
                 <Card>
@@ -2014,16 +2030,6 @@ export function PersonalizedStorybookPage() {
                   {busy === "source-generating" ? "正在生成变化计划..." : "确认对象与素材"}
                 </ActionButton>
               </div>
-            </div>
-            <aside className="creation-summary-panel">
-              <p className="eyebrow">本次创作摘要</p>
-              <dl>
-                <div><dt>起点</dt><dd>基于已有绘本</dd></div>
-                <div><dt>来源</dt><dd>{selectedSource?.title || "未选择"}</dd></div>
-                <div><dt>对象</dt><dd>{recipientMode === "batch" ? `${selectedBatchIds.length} 人` : selectedChild?.nickname || "未选择"}</dd></div>
-                <div><dt>照片</dt><dd>{activePhotoCount}/{maxPhotoFiles}</dd></div>
-              </dl>
-            </aside>
           </section>
         )}
 
@@ -2124,7 +2130,7 @@ export function PersonalizedStorybookPage() {
           </section>
         )}
 
-        {(sourceStep === 2 || sourceRunId) && sourceBatchResult && (
+        {sourceStep === 2 && sourceBatchResult && (
           <section className="page-stack">
             <Card>
               <div className="section-head">
@@ -2193,7 +2199,11 @@ export function PersonalizedStorybookPage() {
                     调整素材并重新预览
                   </button>
                 )}
-                <button className="button secondary" type="button" onClick={() => setSourceStep(1)}>返回变化预览</button>
+                {sourcePreviewReady ? (
+                  <button className="button secondary" type="button" onClick={() => setSourceStep(1)}>返回变化预览</button>
+                ) : (
+                  <button className="button secondary" type="button" onClick={returnToSourceMaterials}>查看对象与素材</button>
+                )}
                 {sourceBatchResult.items.some((item) => ["queued", "running", "retrying"].includes(item.status)) && (
                   <button className="button ghost" type="button" disabled={cancelingSourceRun} onClick={cancelSourceRun}>
                     {cancelingSourceRun ? "正在取消..." : "取消本次制作"}
@@ -2215,9 +2225,10 @@ export function PersonalizedStorybookPage() {
             </Card>
           </section>
         )}
-        {creativeSettingsDrawer}
-        {pendingVisualStyleChangeModal}
-      </div>
+      </CreationFrame>
+      {creativeSettingsDrawer}
+      {pendingVisualStyleChangeModal}
+      </>
     );
   }
 
@@ -2227,8 +2238,14 @@ export function PersonalizedStorybookPage() {
 
   if (!session) {
     return (
-      <div className="page-stack">
-        <PageHeader eyebrow="专属绘本创作" title="想做一本怎样的专属绘本？" copy="说一句就可以。你可以写一个人、一件喜欢的东西，或最近发生的小事。" actions={<button className="button secondary" type="button" onClick={() => setEntryType(null)}>重新选择起点</button>} />
+      <CreationFrame
+        className="personalized-flow"
+        eyebrow="定制绘本创作"
+        title="内容与素材"
+        copy="说一句就可以。你可以写一个人、一件喜欢的东西，或最近发生的小事。"
+        actions={<button className="button secondary" type="button" onClick={() => setEntryType(null)}>重新选择起点</button>}
+        stageNav={<ProgressSteps steps={steps} active={0} maxUnlockedStep={0} />}
+      >
         {error && <Notice title="暂时无法继续" copy={error} tone="danger" />}
         {latestDraft && (
           <Notice
@@ -2261,16 +2278,22 @@ export function PersonalizedStorybookPage() {
             </ActionButton>
           </div>
         </Card>
-        {photoMaterialSection}
-      </div>
+        {lockedPhotoMaterialSection}
+      </CreationFrame>
     );
   }
 
   return (
-    <div className="page-stack personalized-flow">
-      <PageHeader title={activeStep === 0 ? "对象与素材" : activeStep === 1 ? "故事预览" : "正在制作专属绘本"} copy={activeStep === 0 ? "补充要留在故事里的对象、真实细节和照片。" : activeStep === 1 ? "选一个喜欢的讲法，再继续完成故事。" : "可以离开页面，完成后会保留在作品列表中。"} actions={activeStep < 2 ? <button className="button secondary" type="button" onClick={() => { setIdea(session.quickIdea); setEditingIdea((value) => !value); }}>{editingIdea ? "收起修改" : "修改想法"}</button> : undefined} />
-      <ProgressSteps steps={steps} active={activeStep} maxUnlockedStep={maxUnlockedStep} onStepClick={handleStepClick} />
-      {creativeSettingsSummary}
+    <>
+    <CreationFrame
+      className="personalized-flow"
+      eyebrow="定制绘本创作"
+      title={activeStep === 0 ? "内容与素材" : activeStep === 1 ? "故事预览" : activeStep === 2 ? "生成制作" : "检查与交付"}
+      copy={activeStep === 0 ? "补充对象、真实细节和照片，确认后将成为本次创作素材。" : activeStep === 1 ? "选择一个喜欢的讲法，再继续完成故事。" : activeStep === 2 ? "可以离开页面，完成后会保留在作品列表中。" : "绘本已准备好，可以进入逐页检查与调整。"}
+      actions={activeStep < 2 ? <button className="button secondary" type="button" onClick={() => { setIdea(session.quickIdea); setEditingIdea((value) => !value); }}>{editingIdea ? "收起修改" : "修改想法"}</button> : undefined}
+      stageNav={<ProgressSteps steps={steps} active={activeStep} maxUnlockedStep={maxUnlockedStep} onStepClick={handleStepClick} />}
+      settings={creativeSettingsSummary}
+    >
       {error && <Notice title="这一步没有完成" copy={error} tone="danger" />}
       {creativeSettingsNotice && <Notice title="创作设定已更新" copy={creativeSettingsNotice} tone="warn" />}
       {creationWarnings.map((warning) => (
@@ -2306,11 +2329,10 @@ export function PersonalizedStorybookPage() {
             </div>
             <div className="creation-action-bar">
               <span className="form-helper">已确认 {lockedMaterialCount}/3 个专属素材。</span>
-              {directions.length > 0 ? <button className="button primary" type="button" onClick={() => setEditingMaterials(false)}>返回故事预览</button> : <ActionButton className="button primary" disabled={busy !== null} disabledHint="正在保存素材" onClick={refreshDirections}>{busy === "directions" ? "正在整理故事..." : "看看故事怎么讲"}</ActionButton>}
+              {directions.length > 0 ? <button className="button primary" type="button" onClick={() => { setEditingMaterials(false); setDirectViewStep(1); }}>返回故事预览</button> : <ActionButton className="button primary" disabled={busy !== null} disabledHint="正在保存素材" onClick={refreshDirections}>{busy === "directions" ? "正在整理故事..." : "看看故事怎么讲"}</ActionButton>}
             </div>
           </Card>
           {photoMaterialSection}
-          {awaitingPhotoReferences.length > 0 && <Notice title="制作前需要处理照片" copy={`还有 ${awaitingPhotoReferences.length} 张照片未确认用途或同画风参考；可以先继续整理故事，开始制作前需要处理。`} tone="warn" />}
         </section>
       )}
 
@@ -2363,6 +2385,7 @@ export function PersonalizedStorybookPage() {
           </div>
         </Card>
       )}
+    </CreationFrame>
       {cancelDirectCreationConfirmOpen && (
         <Modal title="确认取消本次制作？" onClose={() => busy === null && setCancelDirectCreationConfirmOpen(false)}>
           <p>取消后，正在生成的专属绘本会停止，本次未完成的制作不能继续恢复。</p>
@@ -2385,6 +2408,6 @@ export function PersonalizedStorybookPage() {
         </Modal>
       )}
       {creativeSettingsDrawer}
-    </div>
+    </>
   );
 }

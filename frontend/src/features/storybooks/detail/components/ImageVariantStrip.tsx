@@ -23,7 +23,8 @@ export function ImageVariantStrip({
   label?: string;
   onSelect: (variant: StorybookImageVariant) => void;
 }) {
-  const displayVariants = variants.filter((variant) => variant.status !== "failed");
+  const pendingVariantCount = variants.filter((variant) => variant.status === "generating").length;
+  const displayVariants = variants.filter((variant) => variant.status === "ready");
   const [previews, setPreviews] = useState<PreviewState>({});
   const [previewingVariantId, setPreviewingVariantId] = useState<string | null>(null);
 
@@ -60,7 +61,13 @@ export function ImageVariantStrip({
   const previewingIndex = gallery.findIndex((variant) => variant.id === previewingVariantId);
   const previewingVariant = previewingIndex >= 0 ? gallery[previewingIndex] : undefined;
 
-  if (!displayVariants.length) return <div className="image-variant-strip empty">{emptyText}</div>;
+  if (!displayVariants.length) {
+    return (
+      <div className={`image-variant-strip empty ${pendingVariantCount ? "loading" : ""}`}>
+        {pendingVariantCount ? "候选图生成中，完成后会自动出现" : emptyText}
+      </div>
+    );
+  }
 
   return (
     <>

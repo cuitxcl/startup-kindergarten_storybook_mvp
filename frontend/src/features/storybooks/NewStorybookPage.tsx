@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { SlidersHorizontal } from "lucide-react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import {
   createGenerationJob,
@@ -14,7 +15,7 @@ import {
   type GenerationJob,
   type GenerationProviderStatus,
 } from "../../api/client";
-import { ActionButton, Badge, Card, Notice } from "../../components/ui";
+import { ActionButton, Badge, Card, Modal, Notice } from "../../components/ui";
 import { GenerationReviewBlock } from "../../components/GenerationReviewBlock";
 import type { Storybook, StorybookRole, Workspace } from "../../types/domain";
 import {
@@ -32,6 +33,7 @@ import { StorybookGenerationProgress, type GenerationPhase } from "./new/compone
 import { WizardTopNav } from "./new/components/WizardTopNav";
 import {
   generationInputFor,
+  outlineLinesForPageCount,
   pageFromStorybook,
   pagesFromOutput,
   pagesFromStorybook,
@@ -43,8 +45,10 @@ import {
 import { STORY_STYLE_PRESETS, STYLE_PRESETS } from "./new/presets";
 import { storybookPlanItems } from "./new/reviewItems";
 import type { EditablePage, EditablePlan, EditableRole, StorybookRequestForm } from "./new/types";
+import { PAGE_ASPECT_OPTIONS } from "../../utils/pageAspect";
+import { CreationFrame } from "./components/CreationFrame";
 
-const steps = ["想法", "方向", "大纲", "生成"];
+const steps = ["内容与素材", "故事预览", "大纲确认", "生成制作"];
 
 type StoryDirection = {
   id: string;
@@ -68,6 +72,7 @@ type StoredCreationSession = {
   useSceneExplicit: boolean;
   createdBookId: string | null;
   updatedAt: string;
+  recoveryNoticeDismissed?: boolean;
 };
 
 const storyStartExamples = [
@@ -132,6 +137,7 @@ export function NewStorybookPage() {
   const [creating, setCreating] = useState(false);
   const [styleCardsExpanded, setStyleCardsExpanded] = useState(false);
   const [customStyleOpen, setCustomStyleOpen] = useState(false);
+  const [creativeSettingsOpen, setCreativeSettingsOpen] = useState(false);
   const [generatingStep, setGeneratingStep] = useState<string | null>(null);
   const [generationPhase, setGenerationPhase] = useState<GenerationPhase>("idle");
   const [fullDraftGenerating, setFullDraftGenerating] = useState(false);
@@ -144,7 +150,6 @@ export function NewStorybookPage() {
   const [roleVariantRefreshKey, setRoleVariantRefreshKey] = useState(0);
   const [requestDirtyAfterGeneration, setRequestDirtyAfterGeneration] = useState(false);
   const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null);
-  const [imagePreferenceOpen, setImagePreferenceOpen] = useState(false);
   const [directionSupplement, setDirectionSupplement] = useState("");
   const [customMaterials, setCustomMaterials] = useState<string[]>([]);
   const [outlineAdjustPage, setOutlineAdjustPage] = useState<number | null>(null);
@@ -154,6 +159,7 @@ export function NewStorybookPage() {
   const [directionBatch, setDirectionBatch] = useState(0);
   const [sessionHydrated, setSessionHydrated] = useState(false);
   const [restoredSessionAt, setRestoredSessionAt] = useState<string | null>(null);
+  const [recoveryNoticeDismissed, setRecoveryNoticeDismissed] = useState(false);
   const [planDraft, setPlanDraft] = useState<EditablePlan>(defaultPlanDraft);
   const [editableRoles, setEditableRoles] = useState<EditableRole[]>([]);
   const [editablePages, setEditablePages] = useState<EditablePage[]>([]);
@@ -190,10 +196,24 @@ export function NewStorybookPage() {
     "就按这个生成",
     retryJob ? "重试生成" : "开始生成整本绘本",
   ];
+  const frameTitles = ["内容与素材", "故事预览", "故事预览", "生成制作"];
+  const frameCopies = [
+    "填写故事想法与教学信息，再按需要调整创作设定。",
+    "选择故事讲法并确认故事大纲。",
+    "确认故事会如何展开，再开始制作。",
+    "正在准备文字、角色与插图，可随时离开后再回来查看。",
+  ];
+  const storyStyleLabel = STORY_STYLE_PRESETS.find((preset) => preset.value === form.storyStyle)?.label || "日常温情型";
+  const visualStyleLabel = STYLE_PRESETS.find((preset) => preset.value === form.style)?.label || "水彩绘本";
+  const aspectLabel = PAGE_ASPECT_OPTIONS.find((option) => option.value === form.pageAspectRatio)?.label || "竖版 4:5";
   const flowBusy = fullDraftGenerating || Boolean(generatingStep) || isBlockingGenerationPhase(generationPhase);
   const showNotice = (title: string, copy: string) => {
     setRetryJob(null);
     setNotice({ title, copy });
+  };
+  const dismissRecoveryNotice = () => {
+    setRestoredSessionAt(null);
+    setRecoveryNoticeDismissed(true);
   };
   const goToStep = (nextStep: number) => {
     setUnlockedStep((value) => Math.max(value, nextStep));
@@ -222,7 +242,6 @@ export function NewStorybookPage() {
       setSelectedDirectionId(null);
       setEditingReview(null);
       setOutlineAdjustPage(null);
-      setImagePreferenceOpen(false);
     }
     if ("useScene" in patch) {
       setUseSceneExplicit(Boolean(patch.useScene?.trim()));
@@ -268,10 +287,11 @@ export function NewStorybookPage() {
         setGeneratingStep(null);
         setFullDraftGenerating(false);
         setRequestDirtyAfterGeneration(false);
+        setRestoredSessionAt(null);
+        setRecoveryNoticeDismissed(false);
         setSelectedDirectionId(null);
         setDirectionSupplement("");
         setOutlineAdjustPage(null);
-        setImagePreferenceOpen(false);
         setForm(defaultStorybookRequestForm);
       }
       setSessionHydrated(true);
@@ -309,7 +329,12 @@ export function NewStorybookPage() {
       if (typeof saved.characterConsistency === "string") setCharacterConsistency(saved.characterConsistency);
       if (saved.useSceneExplicit === true) setUseSceneExplicit(true);
       if (typeof saved.createdBookId === "string") setCreatedBookId(saved.createdBookId);
-      if (typeof saved.updatedAt === "string") setRestoredSessionAt(saved.updatedAt);
+      setRecoveryNoticeDismissed(saved.recoveryNoticeDismissed === true);
+      if (typeof saved.updatedAt === "string" && saved.recoveryNoticeDismissed !== true && (typeof saved.step !== "number" || saved.step < 3)) {
+        setRestoredSessionAt(saved.updatedAt);
+      } else {
+        setRestoredSessionAt(null);
+      }
       if (typeof saved.step === "number") {
         const restoredStep = Math.min(Math.max(saved.step, 0), steps.length - 1);
         setStep(restoredStep);
@@ -338,6 +363,7 @@ export function NewStorybookPage() {
       useSceneExplicit,
       createdBookId,
       updatedAt: new Date().toISOString(),
+      recoveryNoticeDismissed,
     };
     window.localStorage.setItem(creationSessionStorageKey, JSON.stringify(payload));
   }, [
@@ -348,6 +374,7 @@ export function NewStorybookPage() {
     directionBatch,
     form,
     planDraft,
+    recoveryNoticeDismissed,
     selectedDirectionId,
     sessionHydrated,
     step,
@@ -561,7 +588,6 @@ export function NewStorybookPage() {
     setSelectedDirectionId(null);
     setDirectionSupplement("");
     setOutlineAdjustPage(null);
-    setImagePreferenceOpen(false);
     setDirectionBatch((value) => value + 1);
     resumedBookIdRef.current = null;
     suppressAutoRecoverRef.current = true;
@@ -1076,11 +1102,28 @@ export function NewStorybookPage() {
     showNotice("大纲已调整", `第 ${pageNumber} 页已按「${action}」更新，可以继续生成。`);
   };
   return (
-    <div className="page-stack">
-      <header className="wizard-header">
-        <h1>创建普通绘本</h1>
-        <span>创建在 {workspace.name}</span>
-      </header>
+    <>
+    <CreationFrame
+      className="standard-storybook-flow"
+      eyebrow="普通绘本创作"
+      title={frameTitles[step]}
+      copy={frameCopies[step]}
+      stageNav={(
+        <WizardTopNav
+          steps={steps}
+          active={step}
+          maxUnlockedStep={unlockedStep}
+          disabled={flowBusy}
+          onSelect={(next) => { if (!flowBusy) goToStep(next); }}
+        />
+      )}
+      settings={(
+        <div className="creative-settings-summary-row">
+          <span>创作设定：<strong>{storyStyleLabel} · {visualStyleLabel} · {aspectLabel} · {form.pageCount || 10} 页</strong></span>
+          <button className="button secondary compact creative-settings-edit-button" type="button" onClick={() => setCreativeSettingsOpen(true)}><SlidersHorizontal size={16} aria-hidden="true" />调整设定</button>
+        </div>
+      )}
+    >
       {provider && !provider.realTextReady && (retryJob || step === 3) && (
         <Notice
           title="当前使用演示生成"
@@ -1088,15 +1131,7 @@ export function NewStorybookPage() {
           tone="warn"
         />
       )}
-      <WizardTopNav
-        steps={steps}
-        active={step}
-        maxUnlockedStep={unlockedStep}
-        disabled={flowBusy}
-        onSelect={(next) => { if (!flowBusy) goToStep(next); }}
-      />
-      <div className="wizard-shell wizard-shell-single">
-        <Card className="wizard-card">
+      <Card className="wizard-card">
           {notice && (
             <Notice
               title={notice.title}
@@ -1112,10 +1147,10 @@ export function NewStorybookPage() {
               ) : undefined}
             />
           )}
-          {restoredSessionAt && !notice && (
+          {restoredSessionAt && step < 3 && !notice && (
             <div className="session-recovery-strip" role="status">
               <span>已恢复上次编辑</span>
-              <button type="button" onClick={() => setRestoredSessionAt(null)}>知道了</button>
+              <button type="button" onClick={dismissRecoveryNotice}>知道了</button>
             </div>
           )}
           {step === 0 && (
@@ -1150,12 +1185,13 @@ export function NewStorybookPage() {
                 ))}
               </div>
               <details className="compact-disclosure">
-                <summary>更多故事设置</summary>
+                <summary>补充标题、主题与使用场景</summary>
                 <RequestStepForm
                   form={form}
                   disabled={Boolean(generatingStep)}
                   styleCardsExpanded={styleCardsExpanded}
                   customStyleOpen={customStyleOpen}
+                  mode="content"
                   onChange={updateRequestForm}
                   onToggleStyleCards={() => setStyleCardsExpanded((value) => !value)}
                   onToggleCustomStyle={() => setCustomStyleOpen((value) => !value)}
@@ -1170,10 +1206,39 @@ export function NewStorybookPage() {
                 <span>{understandingFor(form, planDraft)}</span>
               </div>
               <MaterialChips labels={materials} compact prefix="关键细节" />
-              <div className="co-creation-heading">
-                <Badge tone="info">方向</Badge>
-                <h2>想从哪个角度讲这个故事？</h2>
-                <p>选择一个方向后，系统会继续整理故事大纲。</p>
+              <div className="co-creation-heading direction-heading">
+                <div>
+                  <Badge tone="info">方向</Badge>
+                  <h2>想从哪个角度讲这个故事？</h2>
+                  <p>选择一个方向后，系统会继续整理故事大纲。</p>
+                </div>
+                <div className="direction-tools">
+                  <div className="direction-tool-actions" aria-label="调整故事方向候选">
+                    <button className="button secondary compact" type="button" disabled={Boolean(generatingStep)} onClick={() => void regeneratePlanWithCascade()}>换一批方向</button>
+                    <button className="button ghost compact" type="button" onClick={() => setEditingReview(editingReview === "plan" ? null : "plan")}>补充细节</button>
+                  </div>
+                  {editingReview === "plan" && (
+                    <div className="inline-editor-panel direction-refinement-panel">
+                      <label>
+                        保留一个真实细节
+                        <textarea
+                          rows={2}
+                          value={directionSupplement}
+                          disabled={Boolean(generatingStep)}
+                          placeholder="例如：发生在星星班午睡室，主角带着蓝色雨靴。"
+                          onChange={(event) => setDirectionSupplement(event.target.value)}
+                        />
+                      </label>
+                      {selectedDirectionId && (
+                        <p className="direction-refinement-note">会重新生成候选方向，需要再选一次。</p>
+                      )}
+                      <div className="inline-actions">
+                        <button className="button ghost compact" type="button" onClick={() => setEditingReview(null)}>取消</button>
+                        <button className="button primary compact" type="button" disabled={!directionSupplement.trim() || Boolean(generatingStep)} onClick={submitDirectionSupplement}>更新方向</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="story-direction-grid">
                 {storyDirections.map((direction) => (
@@ -1190,31 +1255,6 @@ export function NewStorybookPage() {
                   </button>
                 ))}
               </div>
-              <div className="inline-actions">
-                <button className="button secondary" type="button" disabled={Boolean(generatingStep)} onClick={() => void regeneratePlanWithCascade()}>换一批</button>
-                <button className="button ghost" type="button" onClick={() => setEditingReview(editingReview === "plan" ? null : "plan")}>补充细节</button>
-              </div>
-              {editingReview === "plan" && (
-                <div className="inline-editor-panel direction-refinement-panel">
-                  <label>
-                    添加一句希望保留的真实细节（可选）
-                    <textarea
-                      rows={1}
-                      value={directionSupplement}
-                      disabled={Boolean(generatingStep)}
-                      placeholder="例如：发生在星星班午睡室，主角带着蓝色雨靴。"
-                      onChange={(event) => setDirectionSupplement(event.target.value)}
-                    />
-                  </label>
-                  {selectedDirectionId && (
-                    <p className="direction-refinement-note">更新后会生成新的方向，需要重新选择。</p>
-                  )}
-                  <div className="inline-actions">
-                    <button className="button secondary" type="button" onClick={() => setEditingReview(null)}>取消</button>
-                    <button className="button primary" type="button" disabled={!directionSupplement.trim() || Boolean(generatingStep)} onClick={submitDirectionSupplement}>更新并重新选择方向</button>
-                  </div>
-                </div>
-              )}
             </section>
           )}
           {step === 2 && (
@@ -1259,22 +1299,6 @@ export function NewStorybookPage() {
                     <div><span>页数</span><strong>{form.pageCount || outlineItems.length} 页 + 封面</strong></div>
                     <div><span>画面设置会参与生成</span><strong>{visualSummary}</strong></div>
                   </div>
-                  <button className="button secondary" type="button" onClick={() => setImagePreferenceOpen((value) => !value)}>调整画面</button>
-                  {imagePreferenceOpen && (
-                    <div className="image-preference-drawer">
-                      <ImagePreferenceDrawer
-                        form={form}
-                        disabled={Boolean(generatingStep)}
-                        onChange={updateRequestForm}
-                        complexity={visualComplexity}
-                        onComplexityChange={setVisualComplexity}
-                        consistency={characterConsistency}
-                        onConsistencyChange={setCharacterConsistency}
-                        summary={visualSummary}
-                        onClose={() => setImagePreferenceOpen(false)}
-                      />
-                    </div>
-                  )}
                 </>
               ) : (
                 <StorybookGenerationProgress
@@ -1303,9 +1327,44 @@ export function NewStorybookPage() {
               {creating ? "正在创建..." : flowBusy ? "生成中..." : primaryLabels[step]}
             </ActionButton>
           </div>
-        </Card>
-      </div>
-    </div>
+      </Card>
+    </CreationFrame>
+    {creativeSettingsOpen && (
+      <Modal title="创作设定" className="creative-settings-drawer" onClose={() => setCreativeSettingsOpen(false)}>
+        <div className="drawer-status"><span>调整后会用于后续生成与明确发起的重绘。</span></div>
+        <RequestStepForm
+          form={form}
+          disabled={flowBusy}
+          styleCardsExpanded={styleCardsExpanded}
+          customStyleOpen={customStyleOpen}
+          mode="settings"
+          onChange={updateRequestForm}
+          onToggleStyleCards={() => setStyleCardsExpanded((value) => !value)}
+          onToggleCustomStyle={() => setCustomStyleOpen((value) => !value)}
+        />
+        <div className="creative-settings-group">
+          <span className="field-label">画面复杂度</span>
+          <div className="segmented-wrap">
+            {["simple", "standard", "rich"].map((value) => (
+              <button key={value} type="button" className={visualComplexity === value ? "active" : ""} disabled={flowBusy} onClick={() => setVisualComplexity(value)}>
+                {visualComplexityLabel(value)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="creative-settings-group">
+          <span className="field-label">角色一致性</span>
+          <div className="segmented-wrap">
+            {["auto", "speed", "confirm_character"].map((value) => (
+              <button key={value} type="button" className={characterConsistency === value ? "active" : ""} disabled={flowBusy} onClick={() => setCharacterConsistency(value)}>
+                {characterConsistencyLabel(value)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Modal>
+    )}
+    </>
   );
 }
 
@@ -1544,16 +1603,7 @@ function personalHookFor(materials: string[], idea: string) {
 }
 
 function outlineItemsFor(plan: EditablePlan, form: StorybookRequestForm) {
-  const lines = plan.outlineText.split(/\n+/).map((item) => item.trim()).filter(Boolean);
-  const fallback = [
-    `${form.title || "主角"}进入熟悉场景`,
-    `出现和「${form.theme || "成长目标"}」有关的小挑战`,
-    "主角表达自己的想法或情绪",
-    "身边的人给出清楚、温柔的办法",
-    "主角尝试新的做法",
-    "故事在被理解和鼓励中收束",
-  ];
-  return (lines.length ? lines : fallback).slice(0, 8).map((line, index) => ({
+  return outlineLinesForPageCount(plan, form).map((line, index) => ({
     pageNumber: index + 1,
     summary: line.replace(/^第\s*[^：:]+[：:]\s*/, "").replace(/^\d+[.、]\s*/, ""),
   }));
@@ -1624,68 +1674,6 @@ function normalizeOutlineQuickAdjustment(summary: string) {
   const suffixes = match[1].match(new RegExp(`，(?:${outlineQuickAdjustmentSuffix})`, "g")) || [];
   if (suffixes.length <= 1) return summary;
   return `${summary.slice(0, -match[1].length)}${suffixes[suffixes.length - 1]}`;
-}
-
-function ImagePreferenceDrawer({
-  form,
-  disabled,
-  onChange,
-  complexity,
-  onComplexityChange,
-  consistency,
-  onConsistencyChange,
-  summary,
-  onClose,
-}: {
-  form: StorybookRequestForm;
-  disabled: boolean;
-  onChange: (patch: Partial<StorybookRequestForm>) => void;
-  complexity: string;
-  onComplexityChange: (value: string) => void;
-  consistency: string;
-  onConsistencyChange: (value: string) => void;
-  summary: string;
-  onClose: () => void;
-}) {
-  const styleOptions = STYLE_PRESETS.filter((preset) => ["水彩", "蜡笔", "扁平", "黏土", "国风"].some((keyword) => preset.label.includes(keyword) || preset.tag.includes(keyword))).slice(0, 5);
-  return (
-    <div className="image-preference-content">
-      <fieldset>
-        <legend>画风</legend>
-        <div className="segmented-wrap">
-          {styleOptions.map((preset) => (
-            <button key={preset.value} type="button" className={form.style === preset.value ? "active" : ""} disabled={disabled} onClick={() => onChange({ style: preset.value })}>
-              {preset.label}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-      <fieldset>
-        <legend>画面复杂度</legend>
-        <div className="segmented-wrap">
-          {["simple", "standard", "rich"].map((value) => (
-            <button key={value} type="button" className={complexity === value ? "active" : ""} disabled={disabled} onClick={() => onComplexityChange(value)}>
-              {visualComplexityLabel(value)}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-      <details>
-        <summary>角色一致性</summary>
-        <div className="segmented-wrap">
-          {["auto", "speed", "confirm_character"].map((value) => (
-            <button key={value} type="button" className={consistency === value ? "active" : ""} disabled={disabled} onClick={() => onConsistencyChange(value)}>
-              {characterConsistencyLabel(value)}
-            </button>
-          ))}
-        </div>
-      </details>
-      <div className="image-preference-summary">
-        <span>当前：{summary}</span>
-        <button className="button primary" type="button" onClick={onClose}>保存设置</button>
-      </div>
-    </div>
-  );
 }
 
 function visualComplexityLabel(value: string) {

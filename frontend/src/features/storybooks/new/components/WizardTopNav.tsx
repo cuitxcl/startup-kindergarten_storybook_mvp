@@ -25,7 +25,7 @@ export function WizardTopNav({
               <button
                 type="button"
                 className={locked ? "locked" : current ? "active" : done ? "done" : ""}
-                disabled={locked}
+                disabled={disabled || locked}
                 aria-disabled={disabled || locked || undefined}
                 title={locked ? "请先完成前一步" : disabled ? "生成进行中，请稍候" : undefined}
                 onClick={disabled ? undefined : () => onSelect(index)}

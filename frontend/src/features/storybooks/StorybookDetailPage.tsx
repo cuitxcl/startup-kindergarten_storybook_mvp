@@ -789,6 +789,9 @@ export function StorybookDetailPage() {
     (role) => roleNeedsReference(book, role) && (role.referenceStatus !== "ready" || !role.referenceImageUrl),
   ).length ?? 0;
   const bulkImageTotal = pendingRoleReferenceCount + (missingCoverImage ? 1 : 0) + missingPageImages.length;
+  const bulkImageCompletedCount = bulkImageSteps.filter((step) => step.status === "done" || step.status === "skipped").length;
+  const bulkImageRunningCount = bulkImageSteps.filter((step) => step.status === "running").length;
+  const bulkImageFailedCount = bulkImageSteps.filter((step) => step.status === "failed").length;
   const activeAnyImageJob = Boolean(activeCoverImageJob || activePageImageJobs > 0);
   const readyPageCount = book?.pages.filter((page) => page.status === "ready").length || 0;
   const issuePageCount = book?.pages.filter((page) => page.status === "failed" || page.status === "needs_regeneration").length || 0;
@@ -1067,17 +1070,27 @@ export function StorybookDetailPage() {
     }
   }
 
-  async function savePageReviewStatus(reviewStatus: StorybookPage["reviewStatus"]) {
+  async function savePageReviewStatus(reviewStatus: StorybookPage["reviewStatus"], options?: { goToNextPending?: boolean }) {
     if (!selectedPage || !storybookId) return;
     setPageReviewSaving(true);
     try {
       const updated = await updateStorybookPage(workspace.id, storybookId, selectedPage.id, {
         reviewStatus,
       });
-      await refreshStorybook(storybookId);
+      const updatedBook = await refreshStorybook(storybookId);
+      const nextReviewPage = options?.goToNextPending && updatedBook
+        ? updatedBook.pages.find((page) => page.pageNumber > updated.pageNumber && page.reviewStatus !== "satisfied")
+          || updatedBook.pages.find((page) => page.id !== updated.id && page.reviewStatus !== "satisfied")
+        : undefined;
+      if (nextReviewPage) {
+        setSelectedPageId(nextReviewPage.id);
+        document.getElementById("page-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
       setNotice({
         title: reviewStatus === "satisfied" ? "已记录本页满意" : "已标记需调整",
-        copy: `第 ${updated.pageNumber} 页当前状态：${pageReviewStatusLabel(updated.reviewStatus)}。`,
+        copy: nextReviewPage
+          ? `第 ${updated.pageNumber} 页已满意，已跳到第 ${nextReviewPage.pageNumber} 页继续检查。`
+          : `第 ${updated.pageNumber} 页当前状态：${pageReviewStatusLabel(updated.reviewStatus)}。`,
         tone: reviewStatus === "satisfied" ? "good" : "info",
       });
       setRetryImageJob(null);
@@ -2257,28 +2270,35 @@ export function StorybookDetailPage() {
         <h2>逐页检查与调整</h2>
       </div>
       {(bulkImageSteps.length > 0 || (shouldShowBulkImageAction && bulkImageTotal > 0)) && (
-        <Card className="bulk-image-progress-card review-image-progress">
+        <Card className="bulk-image-progress-card review-image-progress compact-progress">
           <div className="bulk-image-progress-head">
             <div>
               <Badge tone={bulkImageGenerating ? "info" : bulkImageSteps.some((step) => step.status === "failed") ? "danger" : bulkImageTotal > 0 ? "neutral" : "good"}>
                 {bulkImageGenerating ? "生成中" : bulkImageSteps.some((step) => step.status === "failed") ? "需要处理" : bulkImageTotal > 0 ? "待生成" : "已完成"}
               </Badge>
               <h2>{bulkImageTotal > 0 ? "一键生成整本插图" : "整本插图已准备好"}</h2>
-              <p>{bulkImageTotal > 0 ? `会先准备角色参考图，再并行生成封面和缺少插图的分页（每次最多 ${BULK_IMAGE_CONCURRENCY} 张），保证人物形象一致。` : "封面和分页都有插图，可以继续验收、导出或分享。"}</p>
+              <p>
+                {bulkImageSteps.length > 0
+                  ? `已完成 ${bulkImageCompletedCount} / ${bulkImageSteps.length}${bulkImageRunningCount ? `，生成中 ${bulkImageRunningCount}` : ""}${bulkImageFailedCount ? `，失败 ${bulkImageFailedCount}` : ""}。`
+                  : `待生成 ${bulkImageTotal} 张：会先准备角色参考图，再并行生成封面和分页。`}
+              </p>
             </div>
           </div>
           {bulkImageSteps.length > 0 ? (
-            <ol>
-              {bulkImageSteps.map((step) => (
-                <li key={step.id} className={step.status}>
-                  <span>{bulkImageStepIcon(step.status)}</span>
-                  <div>
-                    <strong>{step.label}</strong>
-                    <small>{bulkImageStepCopy(step)}</small>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <details className="bulk-image-progress-details" open={bulkImageFailedCount > 0}>
+              <summary>查看生成详情</summary>
+              <ol>
+                {bulkImageSteps.map((step) => (
+                  <li key={step.id} className={step.status}>
+                    <span>{bulkImageStepIcon(step.status)}</span>
+                    <div>
+                      <strong>{step.label}</strong>
+                      <small>{bulkImageStepCopy(step)}</small>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </details>
           ) : (
             <p className="task-summary">待生成：{missingCoverImage ? "封面图" : ""}{missingCoverImage && missingPageImages.length ? "、" : ""}{missingPageImages.length ? `${missingPageImages.length} 页分页插图` : ""}。</p>
           )}
@@ -2425,7 +2445,7 @@ export function StorybookDetailPage() {
               </>
             )}
             {activeCurrentPageImageJob ? (
-              <div className="preview-image-block">
+              <div className="preview-image-block preview-image-generating">
                 <Badge tone="info">当前页插图生成中</Badge>
                 <div className="image-placeholder-note">
                   <strong>正在生成真实插图</strong>
@@ -2433,6 +2453,7 @@ export function StorybookDetailPage() {
                     当前{generationStatusLabel(activeCurrentPageImageJob.status)}，请稍等。
                   </span>
                 </div>
+                <div className="image-generation-meter" aria-hidden="true"><span /></div>
                 <details className="prompt-details prompt-details-compact">
                   <summary>
                     <span>生成中的插图描述</span>
@@ -2500,7 +2521,7 @@ export function StorybookDetailPage() {
           )}
           {!selectedViewIsCover && selectedPage && (
           <aside className="editor-panel">
-          <Card id="storybook-page-editor">
+          <Card id="storybook-page-editor" className="page-inspector-card">
             <div className="panel-title-row">
               <div>
                 <span className="page-review-page-label">第 {selectedPage.pageNumber} 页</span>
@@ -2511,41 +2532,37 @@ export function StorybookDetailPage() {
                 {pageReviewStatusLabel(selectedPage.reviewStatus)}
               </Badge>
             </div>
-            <div className="review-inspector-actions">
-              <button className="button secondary" type="button" onClick={() => setPageReviewDrawer("content")}>编辑文字</button>
-              <button className="button secondary" type="button" onClick={() => setPageReviewDrawer("illustration")}>插图设定</button>
-              <button className="button ghost compact review-inspector-evidence" type="button" onClick={() => setPageReviewDrawer("evidence")}>查看生成依据</button>
-            </div>
-            {shouldShowImageGenerationAction && !pageEditorOpen && (
-              <div className="image-generation-action-bar inspector-generation-action">
-                <div>
-                  <strong>{currentPageImage ? "重新生成本页" : "生成本页插图"}</strong>
-                  <span>{pageImageReferenceBlocker || (currentPageImage ? "会保留当前图，并新增候选插图。" : "按当前画面设定生成第一张插图。")}</span>
-                </div>
+            <div className="page-inspector-action-group">
+              {shouldShowImageGenerationAction && !pageEditorOpen && (
                 <button
-                  className="button primary"
+                  className="button primary page-inspector-primary-action"
                   type="button"
                   disabled={imageActionBusy || promptRewriting || Boolean(pageImageReferenceBlocker)}
-                  title={pageImageReferenceBlocker || undefined}
+                  title={pageImageReferenceBlocker || (currentPageImage ? "保留当前图，并新增候选插图" : "按当前画面设定生成插图")}
                   onClick={generateIllustration}
                 >
                   {pageImageActionLabel(selectedPage.status, imageActionBusy)}
                 </button>
+              )}
+              <div className="review-inspector-actions page-inspector-tools">
+                <button className="button secondary" type="button" onClick={() => setPageReviewDrawer("content")}>编辑文字</button>
+                <button className="button secondary" type="button" onClick={() => setPageReviewDrawer("illustration")}>插图设定</button>
+                <button className="button ghost compact review-inspector-evidence" type="button" onClick={() => setPageReviewDrawer("evidence")}>查看生成依据</button>
               </div>
-            )}
-            <div className="reference-guard-callout review-status-card">
-              <Badge tone={pageReviewStatusTone(selectedPage.reviewStatus)}>人工检查</Badge>
-              <div>
-                <strong>{selectedPage.reviewStatus === "satisfied" ? "这页已记录满意" : selectedPage.reviewStatus === "needs_changes" ? "这页已标记需调整" : "这页还没有记录满意状态"}</strong>
-              </div>
-              <span className="inline-actions">
+            </div>
+            <div className="page-review-quickbar page-inspector-section">
+              <span className="page-review-quickbar-status">
+                <Badge tone={pageReviewStatusTone(selectedPage.reviewStatus)}>{pageReviewStatusLabel(selectedPage.reviewStatus)}</Badge>
+                <strong>{selectedPage.reviewStatus === "satisfied" ? "已满意" : selectedPage.reviewStatus === "needs_changes" ? "需调整" : "未确认"}</strong>
+              </span>
+              <div className="page-review-quickbar-actions">
                 <button
                   className="button secondary compact"
                   type="button"
                   disabled={pageReviewSaving || selectedPage.reviewStatus === "satisfied"}
-                  onClick={() => savePageReviewStatus("satisfied")}
+                  onClick={() => savePageReviewStatus("satisfied", { goToNextPending: true })}
                 >
-                  {pageReviewSaving ? "记录中..." : "这页满意"}
+                  {pageReviewSaving ? "记录中..." : "满意，下一页"}
                 </button>
                 <button
                   className="button ghost compact"
@@ -2553,9 +2570,9 @@ export function StorybookDetailPage() {
                   disabled={pageReviewSaving || selectedPage.reviewStatus === "needs_changes"}
                   onClick={() => savePageReviewStatus("needs_changes")}
                 >
-                  标记需调整
+                  需调整
                 </button>
-              </span>
+              </div>
             </div>
             {selectedPageQuality && selectedPageQuality.status !== "passed" && (
               <div className="quality-focus-callout">
@@ -2577,10 +2594,26 @@ export function StorybookDetailPage() {
                 </div>
               </div>
             )}
-            <div className={`reference-guard-callout ${pageImageReferenceBlocker ? "needs-reference" : ""}`}>
-              <Badge tone={pageImageReferenceBlocker || selectedPageStaleReferenceRoles.length ? "warn" : selectedPageUsableReferenceRoles.length ? "good" : "neutral"}>插图参考图</Badge>
-              <div>
-                <strong>{pageImageReferenceBlocker ? "先补齐本页角色参考图" : selectedPageStaleReferenceRoles.length ? "本页已有参考图，建议更新" : selectedPageUsableReferenceRoles.length ? "本页会引用角色参考图" : "本页未识别到需固定形象的角色"}</strong>
+            {shouldShowImageGenerationAction && !pageEditorOpen && (
+              <div className="page-inspector-section page-inspector-fix-tools">
+                <span className="page-inspector-section-label">修正工具</span>
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={promptRewriting || imageActionBusy}
+                  title="让 AI 基于本页正文重新整理插图描述"
+                  onClick={rewritePagePrompt}
+                >
+                  {promptRewriting ? "AI 重写中..." : "AI 重写插图描述"}
+                </button>
+              </div>
+            )}
+            <details className={`page-inspector-section page-reference-section ${pageImageReferenceBlocker ? "needs-reference" : ""}`} open={Boolean(pageImageReferenceBlocker || selectedPageStaleReferenceRoles.length)}>
+              <summary>
+                <Badge tone={pageImageReferenceBlocker || selectedPageStaleReferenceRoles.length ? "warn" : selectedPageUsableReferenceRoles.length ? "good" : "neutral"}>插图参考图</Badge>
+                <strong>{pageImageReferenceBlocker ? "先补齐本页角色参考图" : selectedPageStaleReferenceRoles.length ? "建议更新参考图" : selectedPageUsableReferenceRoles.length ? `引用：${selectedPageUsableReferenceRoles.map((role) => role.name).join("、")}` : "未识别固定角色"}</strong>
+              </summary>
+              <div className="page-reference-details">
                 {selectedPageUsableReferenceRoles.length > 0 && (
                   <span>已有参考图：{selectedPageUsableReferenceRoles.map((role) => role.name).join("、")}。</span>
                 )}
@@ -2593,58 +2626,39 @@ export function StorybookDetailPage() {
                 {!selectedPageReferencedRoles.length && (
                   <span>如果本页出现固定主角、老师或关键道具，请在插图描述中写出名称，系统才会带入对应参考图。</span>
                 )}
-              </div>
-              {(selectedPageMissingReferenceRoles[0] || selectedPageStaleReferenceRoles[0]) && (
-                <button className="button secondary" type="button" onClick={() => focusRoleReference(selectedPageMissingReferenceRoles[0] || selectedPageStaleReferenceRoles[0]!)}>
-                  管理角色参考图
-                </button>
-              )}
-            </div>
-            {shouldShowImageGenerationAction && !pageEditorOpen && (
-              <details className="section-tools">
-                <summary>插图修正工具</summary>
-                <div className="rewrite-prompt-action">
-                  <div>
-                    <strong>想先优化画面描述？</strong>
-                    <span>让 AI 根据本页正文重新整理插图描述，确认后再去插图区域重绘。</span>
-                  </div>
-                  <button
-                    className="button secondary"
-                    type="button"
-                    disabled={promptRewriting || imageActionBusy}
-                    title="让 AI 基于本页正文重新创作插图描述"
-                    onClick={rewritePagePrompt}
-                  >
-                    {promptRewriting ? "AI 重写中..." : "AI 重写插图描述"}
+                {(selectedPageMissingReferenceRoles[0] || selectedPageStaleReferenceRoles[0]) && (
+                  <button className="button secondary compact" type="button" onClick={() => focusRoleReference(selectedPageMissingReferenceRoles[0] || selectedPageStaleReferenceRoles[0]!)}>
+                    管理角色参考图
                   </button>
-                </div>
-              </details>
-            )}
+                )}
+              </div>
+            </details>
           </Card>
           </aside>
           )}
           {selectedViewIsCover && (
             <aside className="editor-panel cover-review-inspector">
-              <Card>
+              <Card className="cover-review-card">
                 <div className="panel-title-row">
                   <div>
+                    <span className="page-review-page-label">封面</span>
                     <h2>封面检查</h2>
-                    <p className="page-review-body-summary">{pageAspectLabel(book.pageAspectRatio)} · 正文 {book.pages.length} 页</p>
                   </div>
-                  <Badge tone={currentCoverImage ? "good" : activeCoverImageJob ? "info" : "neutral"}>{currentCoverImage ? "已有封面" : activeCoverImageJob ? "生成中" : "待生成"}</Badge>
+                  <Badge tone={currentCoverImage ? "good" : activeCoverImageJob ? "info" : "neutral"}>
+                    {currentCoverImage ? "已有封面" : activeCoverImageJob ? "生成中" : "待生成"}
+                  </Badge>
                 </div>
+                <div className="cover-review-meta">
+                  <div><span>版式</span><strong>{pageAspectLabel(book.pageAspectRatio)}</strong></div>
+                  <div><span>正文</span><strong>{book.pages.length} 页</strong></div>
+                  <div><span>位置</span><strong>PDF 首页</strong></div>
+                </div>
+                <button className="button primary" type="button" disabled={imageGenerating || Boolean(activeCoverImageJob)} onClick={generateCoverImage}>
+                  {imageGenerating || activeCoverImageJob ? "生成中..." : currentCoverImage ? "重新生成封面" : "生成封面"}
+                </button>
                 <div className="review-inspector-actions cover-inspector-actions">
-                  <button className="button secondary" type="button" onClick={() => setPageReviewDrawer("evidence")}>查看生成依据</button>
-                  <button className="button secondary" type="button" onClick={() => setMetaOpen(true)}>编辑绘本信息</button>
-                </div>
-                <div className="image-generation-action-bar inspector-generation-action">
-                  <div>
-                    <strong>{currentCoverImage ? "重新生成封面" : "生成封面"}</strong>
-                    <span>{currentCoverImage ? "会保留当前图，并新增候选封面图。" : "封面会使用当前绘本设定和已确认角色参考图。"}</span>
-                  </div>
-                  <button className="button primary" type="button" disabled={imageGenerating || Boolean(activeCoverImageJob)} onClick={generateCoverImage}>
-                    {imageGenerating || activeCoverImageJob ? "生成中..." : currentCoverImage ? "重新生成" : "生成封面"}
-                  </button>
+                  <button className="button secondary" type="button" onClick={() => setPageReviewDrawer("evidence")}>生成依据</button>
+                  <button className="button secondary" type="button" onClick={() => setMetaOpen(true)}>编辑信息</button>
                 </div>
               </Card>
             </aside>
@@ -2733,15 +2747,15 @@ export function StorybookDetailPage() {
                       {pageImageActionLabel(selectedPage.status, imageActionBusy)}
                     </button>
                   )}
-                  <div className="reference-guard-callout review-status-card">
-                    <Badge tone={pageReviewStatusTone(selectedPage.reviewStatus)}>人工检查</Badge>
-                    <div>
-                      <strong>{selectedPage.reviewStatus === "satisfied" ? "这页已记录满意" : selectedPage.reviewStatus === "needs_changes" ? "这页已标记需调整" : "这页还没有记录满意状态"}</strong>
-                    </div>
-                    <span className="inline-actions">
-                      <button className="button secondary compact" type="button" disabled={pageReviewSaving || selectedPage.reviewStatus === "satisfied"} onClick={() => savePageReviewStatus("satisfied")}>{pageReviewSaving ? "记录中..." : "这页满意"}</button>
-                      <button className="button ghost compact" type="button" disabled={pageReviewSaving || selectedPage.reviewStatus === "needs_changes"} onClick={() => savePageReviewStatus("needs_changes")}>标记需调整</button>
+                  <div className="page-review-quickbar">
+                    <span className="page-review-quickbar-status">
+                      <Badge tone={pageReviewStatusTone(selectedPage.reviewStatus)}>{pageReviewStatusLabel(selectedPage.reviewStatus)}</Badge>
+                      <strong>{selectedPage.reviewStatus === "satisfied" ? "已满意" : selectedPage.reviewStatus === "needs_changes" ? "需调整" : "未确认"}</strong>
                     </span>
+                    <div className="page-review-quickbar-actions">
+                      <button className="button secondary compact" type="button" disabled={pageReviewSaving || selectedPage.reviewStatus === "satisfied"} onClick={() => savePageReviewStatus("satisfied", { goToNextPending: true })}>{pageReviewSaving ? "记录中..." : "满意，下一页"}</button>
+                      <button className="button ghost compact" type="button" disabled={pageReviewSaving || selectedPage.reviewStatus === "needs_changes"} onClick={() => savePageReviewStatus("needs_changes")}>需调整</button>
+                    </div>
                   </div>
                 </>
               ) : null}

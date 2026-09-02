@@ -1991,11 +1991,7 @@ async fn creation_storybook_pages_input(
         "title": title,
         "theme": job.input_json.get("quick_idea").cloned().unwrap_or(JsonValue::Null),
         "style": visual_preferences.get("style").cloned().unwrap_or_else(|| json!("watercolor")),
-        "page_count": job.input_json.get("outline")
-            .and_then(|value| value.get("pages"))
-            .and_then(JsonValue::as_array)
-            .map(|pages| pages.len())
-            .unwrap_or(6),
+        "page_count": requested_creation_page_count(job),
         "plan": {
             "summary": selected_direction.get("summary").cloned().unwrap_or(JsonValue::Null),
             "outline": job.input_json.get("outline").cloned().unwrap_or_else(|| json!({})),
@@ -2040,7 +2036,8 @@ fn fallback_creation_pages_input(job: &GenerationJob, reason: Option<String>) ->
 }
 
 fn fallback_creation_pages(job: &GenerationJob) -> Vec<JsonValue> {
-    job.input_json
+    let target_count = requested_creation_page_count(job) as usize;
+    let mut pages = job.input_json
         .get("outline")
         .and_then(|value| value.get("pages"))
         .and_then(JsonValue::as_array)
@@ -2075,7 +2072,38 @@ fn fallback_creation_pages(job: &GenerationJob) -> Vec<JsonValue> {
                 "illustration_prompt": "儿童绘本插图，中景，孩子和大人在熟悉场景中互动，画面温暖清楚，不出现文字。",
                 "status": "needs_regeneration"
             })]
-        })
+        });
+    while pages.len() < target_count {
+        let page_number = (pages.len() + 1) as u64;
+        let summary = "这一页继续推进孩子的专属故事。";
+        pages.push(json!({
+            "page_number": page_number,
+            "title": fallback_page_title(summary, page_number),
+            "body": format!("{summary} 孩子在故事里被看见，也得到一次可以尝试的小办法。"),
+            "illustration_prompt": format!("儿童绘本插图，中景，{summary}，画面清楚呈现角色动作、表情和关键素材，不出现文字。"),
+            "status": "needs_regeneration"
+        }));
+    }
+    pages.truncate(target_count);
+    pages
+}
+
+fn requested_creation_page_count(job: &GenerationJob) -> u64 {
+    let explicit = job
+        .input_json
+        .get("page_count")
+        .and_then(|value| match value {
+            JsonValue::Number(number) => number.as_u64(),
+            JsonValue::String(text) => text.trim().parse::<u64>().ok(),
+            _ => None,
+        });
+    let outline_count = job
+        .input_json
+        .get("outline")
+        .and_then(|value| value.get("pages"))
+        .and_then(JsonValue::as_array)
+        .map(|pages| pages.len() as u64);
+    explicit.or(outline_count).unwrap_or(6).clamp(4, 32)
 }
 
 fn fallback_page_title(summary: &str, page_number: u64) -> String {
